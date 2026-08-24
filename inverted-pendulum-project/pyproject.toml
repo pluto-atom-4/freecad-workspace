@@ -1,0 +1,10 @@
+[project]
+name = "inverted-pendulum-project"
+version = "0.1.0"
+description = "Inverted pendulum simulation and modeling project"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+]
