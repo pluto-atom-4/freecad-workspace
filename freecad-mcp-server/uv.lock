@@ -222,20 +222,16 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "freecad-robust-mcp", specifier = ">=0.1.0" }]
+requires-dist = [{ name = "freecad-robust-mcp", git = "https://github.com/spkane/freecad-addon-robust-mcp-server.git" }]
 
 [[package]]
 name = "freecad-robust-mcp"
-version = "0.6.1"
-source = { registry = "https://pypi.org/simple" }
+version = "0.6.3.dev14+gd9a37118a"
+source = { git = "https://github.com/spkane/freecad-addon-robust-mcp-server.git#d9a37118a8331e8739ad45fd97d027437984296f" }
 dependencies = [
     { name = "mcp" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e5/d3/d22564db237bb2a061288faf49a77a526d2e7192252e819e294c952d21aa/freecad_robust_mcp-0.6.1.tar.gz", hash = "sha256:098f29864163de5bb249d7f0a510f962a8ff4c76bd6b955865cf6a1571df9928", size = 1492432, upload-time = "2026-01-13T00:14:08.186Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/63/9b/568b7e062622fdf2f9b1c10f6d6844dc3e3c08a69a0786185488cf604179/freecad_robust_mcp-0.6.1-py3-none-any.whl", hash = "sha256:e0893094381891927dab35615a0d8645cdfc761ca1befe87d0fcd61cc918e1bb", size = 83772, upload-time = "2026-01-13T00:14:06.09Z" },
 ]
 
 [[package]]
@@ -764,8 +760,8 @@ name = "uvicorn"
 version = "0.52.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click" },
-    { name = "h11" },
+    { name = "click", marker = "python_full_version < '3.12' or python_full_version >= '3.14' or sys_platform != 'emscripten'" },
+    { name = "h11", marker = "python_full_version < '3.12' or python_full_version >= '3.14' or sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f2/0f/3f86e61397dd33bf2ccf28188c40db6a740658aeebbbf6e7dbc101a1f487/uvicorn-0.52.4.tar.gz", hash = "sha256:73acfee47a0b133c5de13d219492d62d8a31e935f4fe6e41a232451a15379f86", size = 100627, upload-time = "2026-08-19T06:27:41.821Z" }
 wheels = [

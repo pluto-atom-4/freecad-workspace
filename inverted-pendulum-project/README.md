@@ -77,6 +77,29 @@ use_freecad_direct()
 - No network communication overhead
 - Full FreeCAD Python API available
 
+### Create Parts with MCP Tools
+
+Generate FreeCAD parts using 150+ available MCP tools.
+
+**Simple Example:**
+```bash
+# Start MCP bridge first (in another terminal)
+cd ../freecad-mcp-server
+./scripts/start-mcp-freecad.sh --mode xmlrpc
+
+# Then run the bracket creator
+cd ../inverted-pendulum-project
+uv run python3 03_Parts/simple_bracket.py
+```
+
+**Available MCP Tools:**
+- Primitives: `create_box`, `create_cylinder`, `create_sphere`, `create_cone`, `create_wedge`
+- Operations: `boolean_operation` (union/cut/intersect), `fillet_edges`, `create_sketch`, `pad_sketch`
+- Export: `export_step`, `export_stl`, `export_iges`, `export_3mf`
+- View: `get_screenshot`, `set_view_angle`, `set_object_color`
+
+**Full reference:** `01_Documentation/MCP_TOOLS_REFERENCE.md`
+
 ### Export Simulation Results to FreeCAD
 
 ```python
@@ -104,9 +127,17 @@ inverted-pendulum-project/
 ├── pyproject.toml                      # Project config with dependencies
 ├── README.md                           # This file
 ├── freecad_integration_example.py      # FreeCAD integration examples
-├── simulate.py                         # Pendulum simulation (example)
+├── simulate.py                         # Pendulum simulation
 ├── .venv/                              # Virtual environment
-└── uv.lock                             # Dependency lock file
+├── uv.lock                             # Dependency lock file
+├── 01_Documentation/
+│   └── MCP_TOOLS_REFERENCE.md         # 150+ FreeCAD MCP tools guide
+├── 02_Design_Inputs/                  # Design specifications & parameters
+├── 03_Parts/                          # FreeCAD part files (.FCStd, .step)
+│   └── simple_bracket.py              # Example: Create support bracket via MCP
+├── 04_Assemblies/                     # Assembly definitions
+├── 05_Drafts_Context/                 # Preliminary designs & concepts
+└── 06_Exports/                        # Generated exports (STL, STEP, etc.)
 ```
 
 ## References
