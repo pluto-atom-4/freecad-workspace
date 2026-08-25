@@ -37,6 +37,32 @@ VALIDATE=true
 # State tracking
 MCP_PID=""
 FREECAD_PID=""
+VENV_ACTIVATED=false
+
+################################################################################
+# Virtual Environment Setup
+################################################################################
+
+activate_venv() {
+    if [ -f "$VENV_PATH/bin/activate" ]; then
+        source "$VENV_PATH/bin/activate"
+        VENV_ACTIVATED=true
+        export VIRTUAL_ENV="$VENV_PATH"
+        return 0
+    else
+        return 1
+    fi
+}
+
+run_in_venv() {
+    local cmd="$1"
+    if [ "$VENV_ACTIVATED" = true ]; then
+        eval "$cmd"
+    else
+        # Fallback: use venv python directly
+        "$VENV_PATH/bin/python" -c "import sys; exec('$cmd')"
+    fi
+}
 
 ################################################################################
 # Helper Functions
@@ -122,14 +148,27 @@ check_dependencies() {
 check_freecad_mcp() {
     print_header "Checking FreeCAD MCP Installation"
 
-    # Activate venv and check freecad-robust-mcp
-    if ! source "$VENV_PATH/bin/activate" && python3 -c "import freecad_robust_mcp" 2>/dev/null; then
+    # Activate venv
+    if ! activate_venv; then
+        error "Failed to activate virtual environment"
+        return 1
+    fi
+
+    success "Virtual environment activated: $VENV_PATH"
+
+    # Check if freecad-robust-mcp is installed
+    if ! python3 -c "import freecad_robust_mcp" 2>/dev/null; then
         error "freecad-robust-mcp not installed in venv"
         info "Run: cd $PROJECT_DIR && uv sync"
         return 1
     fi
 
     success "freecad-robust-mcp installed"
+
+    # Show Python info
+    info "Python: $(python3 --version)"
+    info "Python executable: $(which python3)"
+
     return 0
 }
 
@@ -249,26 +288,47 @@ start_mcp_server() {
     # Create log directory
     mkdir -p "$LOG_DIR"
 
-    # Activate venv and start server
+    # Verify venv is activated
+    if [ "$VENV_ACTIVATED" = false ]; then
+        error "Virtual environment not activated"
+        return 1
+    fi
+
     info "Mode: $MODE"
     info "Host: $HOST"
+    info "Virtual Environment: $VIRTUAL_ENV"
 
+    # Export configuration to environment
     export FREECAD_MODE="$MODE"
     export FREECAD_SOCKET_HOST="$HOST"
     export FREECAD_XMLRPC_PORT="$XMLRPC_PORT"
     export FREECAD_SOCKET_PORT="$SOCKET_PORT"
 
     log "Starting: freecad-mcp"
-    source "$VENV_PATH/bin/activate"
+    log "Environment Variables:"
+    log "  FREECAD_MODE=$FREECAD_MODE"
+    log "  FREECAD_SOCKET_HOST=$FREECAD_SOCKET_HOST"
+    log "  FREECAD_XMLRPC_PORT=$FREECAD_XMLRPC_PORT"
+    log "  FREECAD_SOCKET_PORT=$FREECAD_SOCKET_PORT"
+    log "  VIRTUAL_ENV=$VIRTUAL_ENV"
 
-    # Start server in background
-    freecad-mcp >> "$LOG_FILE" 2>&1 &
+    # Start server in background with full venv path for reliability
+    "$VENV_PATH/bin/freecad-mcp" >> "$LOG_FILE" 2>&1 &
     MCP_PID=$!
 
+    # Verify process started
+    sleep 1
+    if ! kill -0 "$MCP_PID" 2>/dev/null; then
+        error "Failed to start MCP server. Check logs:"
+        tail -20 "$LOG_FILE"
+        return 1
+    fi
+
     success "MCP Server started (PID: $MCP_PID)"
+    log "Command: $VENV_PATH/bin/freecad-mcp"
     log "Logs: $LOG_FILE"
 
-    # Wait for server to start
+    # Wait for server to fully initialize
     sleep 2
 
     return 0
@@ -522,9 +582,25 @@ main() {
         interactive_menu
     fi
 
+    # Print startup banner
+    print_header "FreeCAD MCP Server Launcher"
+    info "Project: $PROJECT_DIR"
+    info "Virtual Environment: $VENV_PATH"
+    info "Configuration Dir: $(pwd)"
+    echo
+
     # Run checks
     check_dependencies || exit 1
     check_freecad_mcp || exit 1
+
+    # Verify venv is activated
+    if [ "$VENV_ACTIVATED" = false ]; then
+        warning "Virtual environment not activated. Attempting to activate..."
+        activate_venv || {
+            error "Failed to activate virtual environment"
+            exit 1
+        }
+    fi
 
     # Start services based on configuration
     if [ "$START_FREECAD" = false ]; then

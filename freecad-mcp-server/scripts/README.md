@@ -20,6 +20,9 @@ Main launcher script for FreeCAD with Robust MCP Bridge.
 - ✅ Colored status output
 - ✅ Automatic logging
 - ✅ Service status monitoring
+- ✅ **Virtual Environment Management** (early activation, venv verification)
+- ✅ **Process Verification** (ensures services start successfully)
+- ✅ **Environment Logging** (logs all configuration for debugging)
 
 **Usage:**
 
@@ -136,6 +139,58 @@ Main launcher script for FreeCAD with Robust MCP Bridge.
 - Verifies ports are listening
 - Shows process IDs
 - Reports connection state
+
+### Virtual Environment Management
+
+The script now includes robust virtual environment handling:
+
+**Early Activation:**
+- Virtual environment is activated early in execution flow
+- Provides clear feedback on activation status
+- Ensures all subprocess commands run with proper Python context
+
+**Process Verification:**
+- Uses full venv paths for reliability: `$VENV_PATH/bin/freecad-mcp`
+- Verifies process successfully started before reporting success
+- Prevents silent failures from background process launch
+
+**Environment Logging:**
+- All environment variables logged at startup:
+  - `FREECAD_MODE`, `FREECAD_SOCKET_HOST`
+  - `FREECAD_XMLRPC_PORT`, `FREECAD_SOCKET_PORT`
+  - `VIRTUAL_ENV` (venv path)
+- Python version and executable path displayed
+- Full command paths shown in logs for debugging
+
+**Enhanced Error Messages:**
+- Detailed feedback if venv activation fails
+- Process startup failures show log tail
+- Python version and path validation
+
+**Startup Example Output:**
+```
+[i] Project: /home/user/freecad-workspace/freecad-mcp-server
+[i] Virtual Environment: /home/user/freecad-workspace/freecad-mcp-server/.venv
+
+✓ Virtual environment activated: /home/user/freecad-workspace/freecad-mcp-server/.venv
+✓ Python: Python 3.11.14
+[i] Python executable: /home/user/freecad-workspace/freecad-mcp-server/.venv/bin/python3
+✓ freecad-robust-mcp installed
+
+[i] Mode: xmlrpc
+[i] Host: localhost
+[i] Virtual Environment: /home/user/freecad-workspace/freecad-mcp-server/.venv
+
+[2026-08-24 16:25:52] Environment Variables:
+  FREECAD_MODE=xmlrpc
+  FREECAD_SOCKET_HOST=localhost
+  FREECAD_XMLRPC_PORT=9875
+  FREECAD_SOCKET_PORT=9876
+  VIRTUAL_ENV=/home/user/freecad-workspace/freecad-mcp-server/.venv
+
+✓ MCP Server started (PID: 1234567)
+[2026-08-24 16:25:52] Command: /home/user/freecad-workspace/freecad-mcp-server/.venv/bin/freecad-mcp
+```
 
 ### Logs
 
@@ -293,6 +348,7 @@ tail -f logs/mcp-server.log
 | `FREECAD_SOCKET_HOST` | Set by script | Server host (localhost) |
 | `FREECAD_XMLRPC_PORT` | Set by script | XML-RPC port (9875) |
 | `FREECAD_SOCKET_PORT` | Set by script | Socket port (9876) |
+| `VIRTUAL_ENV` | Set by script | Path to active virtual environment |
 
 ### More Information
 
