@@ -42,14 +42,37 @@ freecad-workspace/
 
 ### Inverted Pendulum Project
 
-**Purpose:** Simulation and numerical modeling of inverted pendulum dynamics.
+**Purpose:** Simulation and numerical modeling of inverted pendulum dynamics with FreeCAD integration.
 
-**Main Dependencies:** numpy, scipy, matplotlib
+**Main Dependencies:** numpy, scipy, matplotlib, freecad-robust-mcp
+
+**Key Features:**
+- Numerical simulation of pendulum dynamics using scipy
+- Data visualization with matplotlib
+- Export simulation results to FreeCAD models (STEP format)
+- Two FreeCAD integration modes: MCP (recommended) or direct Python bindings
+
+**FreeCAD Integration Modes:**
+1. **MCP Mode (Recommended)** — Connect to FreeCAD via Model Context Protocol
+   - Works from any Python environment
+   - Requires FreeCAD with MCP Bridge running (`./freecad-mcp-server/scripts/start-mcp-freecad.sh`)
+   - Uses XML-RPC (port 9875) or Socket (port 9876)
+   - Secure network communication, loose coupling
+
+2. **Direct Bindings Mode (Advanced)** — Access FreeCAD Python API directly
+   - Only works in FreeCAD's Python environment
+   - Direct access to FreeCAD objects
+   - No network overhead, tight coupling to FreeCAD
 
 **Typical Workflow:**
 - Define system dynamics using numpy/scipy
 - Compute solutions numerically
 - Visualize results with matplotlib
+- (Optional) Export to FreeCAD for 3D model visualization
+
+**See Also:**
+- `freecad_integration_example.py` — Integration patterns and code examples
+- `../freecad-mcp-server/scripts/start-mcp-freecad.sh` — Start FreeCAD with MCP Bridge
 
 ## Common Development Commands
 
@@ -109,8 +132,18 @@ uv run python3 -c "import freecad_robust_mcp; print(freecad_robust_mcp.__version
 ```bash
 cd inverted-pendulum-project
 
-# Run Python scripts
+# Run simulation
 uv run python3 simulate.py
+
+# Use FreeCAD integration (MCP mode)
+# 1. Start FreeCAD with MCP Bridge (in another terminal)
+# 2. Run:
+uv run python3 freecad_integration_example.py mcp
+
+# Direct FreeCAD Python bindings (advanced)
+freecad -c "exec(open('freecad_integration_example.py').read()); use_freecad_direct()"
+
+# Run tests
 uv run python3 -m pytest
 
 # Open Python REPL
