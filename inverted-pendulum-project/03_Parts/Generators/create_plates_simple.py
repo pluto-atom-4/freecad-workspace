@@ -101,11 +101,11 @@ class PlateGeometry:
 
         # Left hole
         left_hole = PlateGeometry.create_hole(hole_diameter, thickness)
-        left_hole.Placement = Placement(Vector(-hole_offset, 0, 0))
+        left_hole.Placement = Placement(Vector(-hole_offset, 0, 0), Rotation(Vector(0, 0, 1), 0))
 
         # Right hole
         right_hole = PlateGeometry.create_hole(hole_diameter, thickness)
-        right_hole.Placement = Placement(Vector(hole_offset, 0, 0))
+        right_hole.Placement = Placement(Vector(hole_offset, 0, 0), Rotation(Vector(0, 0, 1), 0))
 
         # Cut holes from plate
         plate = plate.cut(left_hole)
