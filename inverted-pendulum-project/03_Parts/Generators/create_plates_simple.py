@@ -140,7 +140,7 @@ class PlateAssembly:
 
     PLATE_PARAMS = {
         "width": 10.0,
-        "thickness": 5.0,
+        "thickness": 2.5,  # Reduced to 50% (was 5.0mm)
         "hole_diameter": 5.0,
     }
 
@@ -167,13 +167,50 @@ class PlateAssembly:
 
             print(f"  • {name} (length: {spec['overall_length']}mm, C-C: {length}mm)")
 
-            # Create geometry
-            shape = PlateGeometry.create_plate_with_holes(
-                length=length,
-                width=self.PLATE_PARAMS["width"],
-                thickness=self.PLATE_PARAMS["thickness"],
-                hole_diameter=self.PLATE_PARAMS["hole_diameter"],
-            )
+            # Bottom plate has special geometry: 2 holes left side + 1 hole right side
+            if "Bottom" in name:
+                # Create base plate
+                plate = PlateGeometry.create_rounded_plate(
+                    length=length,
+                    width=self.PLATE_PARAMS["width"],
+                    thickness=self.PLATE_PARAMS["thickness"],
+                )
+
+                # Cut 2 holes on LEFT side: leftmost hole at center of left rounded end
+                # 10mm apart along length
+                left_end = -length / 2.0
+                # Leftmost hole: centered at left rounded end
+                left_hole_1 = PlateGeometry.create_hole(self.PLATE_PARAMS["hole_diameter"],
+                                                       self.PLATE_PARAMS["thickness"])
+                left_hole_1.Placement = Placement(Vector(left_end, 0, 0),
+                                                 Rotation(Vector(0, 0, 1), 0))
+                plate = plate.cut(left_hole_1)
+
+                # Second hole: 10mm away from leftmost along length
+                left_hole_2 = PlateGeometry.create_hole(self.PLATE_PARAMS["hole_diameter"],
+                                                       self.PLATE_PARAMS["thickness"])
+                left_hole_2.Placement = Placement(Vector(left_end + 10.0, 0, 0),
+                                                 Rotation(Vector(0, 0, 1), 0))
+                plate = plate.cut(left_hole_2)
+
+                # Cut 1 hole on RIGHT side (centered)
+                right_x = length / 2.0
+                right_hole = PlateGeometry.create_hole(self.PLATE_PARAMS["hole_diameter"],
+                                                      self.PLATE_PARAMS["thickness"])
+                right_hole.Placement = Placement(Vector(right_x, 0, 0),
+                                                Rotation(Vector(0, 0, 1), 0))
+                plate = plate.cut(right_hole)
+
+                shape = plate
+                print(f"    └─ Custom: 2 holes left (10mm apart), 1 hole right (center)")
+            else:
+                # Top and Middle plates: standard 2 holes (center-to-center)
+                shape = PlateGeometry.create_plate_with_holes(
+                    length=length,
+                    width=self.PLATE_PARAMS["width"],
+                    thickness=self.PLATE_PARAMS["thickness"],
+                    hole_diameter=self.PLATE_PARAMS["hole_diameter"],
+                )
 
             # Add to document
             plate_obj = self.doc.addObject("Part::Feature", name)
