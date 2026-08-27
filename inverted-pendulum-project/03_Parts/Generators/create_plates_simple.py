@@ -146,7 +146,15 @@ class PlateAssembly:
 
     def __init__(self):
         self.doc = None
-        self.servo_stl_path = Path(__file__).parent.parent.parent.parent / "Downloads" / "feetech-STS3032_20190118_ASM.stl"
+
+        # Handle both file-based and interactive (console) execution
+        try:
+            script_dir = Path(__file__).parent
+        except NameError:
+            # Running in FreeCAD console - __file__ not defined
+            script_dir = Path.home() / "freecad-workspace" / "inverted-pendulum-project" / "03_Parts" / "Generators"
+
+        self.servo_stl_path = script_dir.parent.parent.parent / "Downloads" / "feetech-STS3032_20190118_ASM.stl"
 
     def create_plates(self):
         """Create all three plate objects in FreeCAD document"""
@@ -224,7 +232,12 @@ class PlateAssembly:
 
         # Save
         if output_path is None:
-            output_path = Path(__file__).parent / "plates_assembly.FCStd"
+            try:
+                output_dir = Path(__file__).parent
+            except NameError:
+                # Running in FreeCAD console - use default location
+                output_dir = Path.home() / "freecad-workspace" / "inverted-pendulum-project" / "03_Parts" / "Generators"
+            output_path = output_dir / "plates_assembly.FCStd"
 
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)

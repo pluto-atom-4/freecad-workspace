@@ -52,7 +52,15 @@ class PlateGenerator:
             PlateConfig("Bottom_Plate", overall_length=52.43, center_to_center=42.43),
         ]
         self.doc = None
-        self.servo_path = Path(__file__).parent.parent.parent.parent / "Downloads" / "feetech-STS3032_20190118_ASM.stl"
+
+        # Handle both file-based and interactive (console) execution
+        try:
+            script_dir = Path(__file__).parent
+        except NameError:
+            # Running in FreeCAD console - __file__ not defined
+            script_dir = Path.home() / "freecad-workspace" / "inverted-pendulum-project" / "03_Parts" / "Generators"
+
+        self.servo_path = script_dir.parent.parent.parent / "Downloads" / "feetech-STS3032_20190118_ASM.stl"
 
     def create_plate_sketch(self, doc, name: str, config: PlateConfig):
         """Create 2D sketch for plate profile"""
@@ -212,7 +220,12 @@ class PlateGenerator:
 
         # Save document
         if output_path is None:
-            output_path = Path(__file__).parent / "plates_assembly.FCStd"
+            try:
+                output_dir = Path(__file__).parent
+            except NameError:
+                # Running in FreeCAD console - use default location
+                output_dir = Path.home() / "freecad-workspace" / "inverted-pendulum-project" / "03_Parts" / "Generators"
+            output_path = output_dir / "plates_assembly.FCStd"
 
         self.doc.saveAs(str(output_path))
         print(f"✓ Assembly saved to {output_path}")
@@ -224,7 +237,11 @@ def main():
     """Main entry point"""
     generator = PlateGenerator()
 
-    output_dir = Path(__file__).parent
+    try:
+        output_dir = Path(__file__).parent
+    except NameError:
+        # Running in FreeCAD console - use default location
+        output_dir = Path.home() / "freecad-workspace" / "inverted-pendulum-project" / "03_Parts" / "Generators"
     output_path = output_dir / "plates_assembly.FCStd"
 
     print(f"Generating 3-plate assembly for inverted pendulum robot...")
