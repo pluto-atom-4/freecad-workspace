@@ -186,10 +186,10 @@ class PlateAssembly:
                                                  Rotation(Vector(0, 0, 1), 0))
                 plate = plate.cut(left_hole_1)
 
-                # Second hole: 10mm away from leftmost along length
+                # Second hole: 12.5mm from left end
                 left_hole_2 = PlateGeometry.create_hole(self.PLATE_PARAMS["hole_diameter"],
                                                        self.PLATE_PARAMS["thickness"])
-                left_hole_2.Placement = Placement(Vector(left_end + 10.0, 0, 0),
+                left_hole_2.Placement = Placement(Vector(left_end + 12.5, 0, 0),
                                                  Rotation(Vector(0, 0, 1), 0))
                 plate = plate.cut(left_hole_2)
 
