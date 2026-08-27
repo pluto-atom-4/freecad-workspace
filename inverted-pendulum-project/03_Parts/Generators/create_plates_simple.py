@@ -71,9 +71,9 @@ class PlateGeometry:
             Vector(0, 0, 1)
         )
 
-        # Union all parts
-        shape = rect.union(left_cyl)
-        shape = shape.union(right_cyl)
+        # Union all parts (fuse = union in Part module)
+        shape = rect.fuse(left_cyl)
+        shape = shape.fuse(right_cyl)
 
         return shape
 
