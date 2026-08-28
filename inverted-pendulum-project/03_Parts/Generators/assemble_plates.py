@@ -152,8 +152,8 @@ class PlateAssembly:
         # Position Plate 1 (Top) at explicit position
         top_plate = self.plates.get("Top_Plate")
         if top_plate:
-            # Explicit position from image analysis: [-2.21, 32.00, 3.00] mm
-            position = Vector(-2.21, 32.00, 3.00)
+            # Position from image measurement: [-1.98, 32.75, 3.00] mm
+            position = Vector(-1.98, 32.75, 3.00)
             angle = self.PLATE_ROTATIONS.get("Top_Plate", 0)
             top_plate.Placement = Placement(
                 position,
@@ -167,8 +167,8 @@ class PlateAssembly:
         # Position Plate 2 (Middle) at explicit position
         middle_plate = self.plates.get("Middle_Plate")
         if middle_plate:
-            # Explicit position from image analysis: [12.64, 15.00, 3.00] mm
-            position = Vector(12.64, 15.00, 3.00)
+            # Position from image measurement: [13.05, 15.23, 3.00] mm
+            position = Vector(13.05, 15.23, 3.00)
             angle = self.PLATE_ROTATIONS.get("Middle_Plate", 0)
             middle_plate.Placement = Placement(
                 position,
