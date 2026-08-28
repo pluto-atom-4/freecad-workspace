@@ -41,6 +41,7 @@ wheels/
 *.FCStd
 *.FCStd1
 *.FCStd2
+*.FCBak
 
 # Testing
 .pytest_cache/
