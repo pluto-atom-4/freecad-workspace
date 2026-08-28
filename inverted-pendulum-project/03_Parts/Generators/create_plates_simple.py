@@ -132,8 +132,8 @@ class PlateAssembly:
         },
         {
             "name": "Bottom_Plate",
-            "overall_length": 52.43,
-            "center_to_center": 42.43,
+            "overall_length": 60.0,
+            "center_to_center": 50.0,
             "z_position": -20.0,
         },
     ]

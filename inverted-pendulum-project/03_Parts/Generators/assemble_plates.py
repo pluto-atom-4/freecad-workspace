@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-Assemble Three Plates - Position Plate 1 & 2 on Plate 3 with Hole Alignment
+Assemble Three Plates - Position with Explicit Coordinates
 
-Creates an assembly where:
-- Plate 1 (Top): positioned so its center hole matches Plate 3's leftmost hole
-- Plate 2 (Mid): positioned so its center hole matches Plate 3's 2nd left hole
-- Plate 3 (Bottom): remains at origin
+Creates an assembly with three plates positioned at precise coordinates
+and rotated according to image analysis:
+- Plate 1 (Top): [-1.98, 33.30, 6.00] mm, rotated 53.1°
+- Plate 2 (Middle): [13.00, 15.76, 4.00] mm, rotated 26.6°
+- Plate 3 (Bottom): [3.01, -1.73, 3.00] mm, rotated -36.9°
 
-Hole alignment principle:
-  Plate N hole position = Plate N offset + Plate N hole offset
-  To align: Plate N offset = Target hole position - Plate N hole offset
+All positions and rotations derived from mechanical linkage diagram.
 """
 
 import sys
@@ -27,11 +26,11 @@ except ImportError:
 class PlateHoleCalculator:
     """Calculate hole positions for plate alignment"""
 
-    # Plate specifications (center-to-center distances)
+    # Plate hole specifications (for reference only - positions are hardcoded)
     PLATE_SPECS = {
         "Top_Plate": 50.0,      # Holes ±25mm from center
         "Middle_Plate": 44.72,  # Holes ±22.36mm from center
-        "Bottom_Plate": 42.43,  # Special: leftmost at -21.215mm, 2nd at -8.715mm, right at +21.215mm
+        "Bottom_Plate": 50.0,   # Special: left_1=-21.215mm, left_2=-8.715mm, right=28.0mm
     }
 
     @staticmethod
@@ -43,12 +42,12 @@ class PlateHoleCalculator:
             return {}
 
         if "Bottom" in plate_name:
-            # Special configuration: 3 holes
-            half_cc = cc_dist / 2.0
+            # Special configuration: 3 holes (right side stretched)
+            # Left holes fixed, right hole extended beyond original center-to-center
             return {
-                "left_1": -half_cc,           # At rounded end center
-                "left_2": -half_cc + 12.5,   # 12.5mm from left end
-                "right": half_cc,             # Right end centered
+                "left_1": -21.215,        # Fixed at rounded end center
+                "left_2": -8.715,         # Fixed at 12.5mm from left end
+                "right": 28.0,            # Extended right (stretched from original 21.215mm)
             }
         else:
             # Standard: 2 holes at center-to-center distance
@@ -135,25 +134,19 @@ class PlateAssembly:
             print("ERROR: Need at least 3 plate objects")
             return False
 
-        print("\nCalculating alignments...")
+        print("\nPositioning plates...")
 
-        # Plate 3 (Bottom) stays at origin
+        # Get plate objects
         bottom_plate = self.plates.get("Bottom_Plate")
         if not bottom_plate:
             print("ERROR: Bottom_Plate not found")
             return False
 
-        bottom_holes = PlateHoleCalculator.get_plate_holes("Bottom_Plate")
-        print(f"\nBottom Plate holes (reference):")
-        print(f"  Leftmost (left_1): x = {bottom_holes['left_1']:.2f}mm")
-        print(f"  2nd left (left_2): x = {bottom_holes['left_2']:.2f}mm")
-        print(f"  Right: x = {bottom_holes['right']:.2f}mm")
-
         # Position Plate 1 (Top) at explicit position
         top_plate = self.plates.get("Top_Plate")
         if top_plate:
-            # Position from image measurement: [-1.98, 32.75, 3.00] mm
-            position = Vector(-1.98, 32.75, 3.00)
+            # Position from image measurement: [-1.98, 33.30, 6.00] mm
+            position = Vector(-1.98, 33.30, 6.00)
             angle = self.PLATE_ROTATIONS.get("Top_Plate", 0)
             top_plate.Placement = Placement(
                 position,
@@ -167,8 +160,8 @@ class PlateAssembly:
         # Position Plate 2 (Middle) at explicit position
         middle_plate = self.plates.get("Middle_Plate")
         if middle_plate:
-            # Position from image measurement: [13.05, 15.23, 3.00] mm
-            position = Vector(13.05, 15.23, 3.00)
+            # Position from image measurement: [13.00, 15.76, 4.00] mm
+            position = Vector(13.00, 15.76, 4.00)
             angle = self.PLATE_ROTATIONS.get("Middle_Plate", 0)
             middle_plate.Placement = Placement(
                 position,
@@ -179,15 +172,17 @@ class PlateAssembly:
             print(f"  Position: X={position.x:.2f}mm, Y={position.y:.2f}mm, Z={position.z:.2f}mm")
             print(f"  Rotation: {angle}° around Z-axis")
 
-        # Position Bottom Plate at origin with rotation
+        # Position Bottom Plate at explicit position with rotation
         if bottom_plate:
+            # Position from image measurement: [3.01, -1.73, 3.00] mm
+            position = Vector(3.01, -1.73, 3.00)
             angle = self.PLATE_ROTATIONS.get("Bottom_Plate", 0)
             bottom_plate.Placement = Placement(
-                Vector(0, 0, 0),
+                position,
                 Rotation(Vector(0, 0, 1), angle)  # Rotation around Z-axis
             )
             print(f"\nBottom Plate positioning:")
-            print(f"  Position: origin (0, 0, 0)")
+            print(f"  Position: X={position.x:.2f}mm, Y={position.y:.2f}mm, Z={position.z:.2f}mm")
             print(f"  Rotation: {angle}° around Z-axis")
 
         return True
