@@ -149,51 +149,35 @@ class PlateAssembly:
         print(f"  2nd left (left_2): x = {bottom_holes['left_2']:.2f}mm")
         print(f"  Right: x = {bottom_holes['right']:.2f}mm")
 
-        # Position Plate 1 (Top) to align with Plate 3's leftmost hole
+        # Position Plate 1 (Top) at explicit position
         top_plate = self.plates.get("Top_Plate")
         if top_plate:
-            target_x = bottom_holes["left_1"]
-            offset_x = PlateHoleCalculator.calculate_plate_offset(
-                "Top_Plate", target_x, "left"
-            )
+            # Explicit position from image analysis: [-2.21, 32.00, 3.00] mm
+            position = Vector(-2.21, 32.00, 3.00)
             angle = self.PLATE_ROTATIONS.get("Top_Plate", 0)
             top_plate.Placement = Placement(
-                Vector(offset_x, 0, 10),  # Z = 10mm (above bottom plate)
+                position,
                 Rotation(Vector(0, 0, 1), angle)  # Rotation around Z-axis
             )
-
-            top_holes = PlateHoleCalculator.get_plate_holes("Top_Plate")
-            actual_hole_x = offset_x + top_holes["left"]
 
             print(f"\nTop Plate positioning:")
-            print(f"  Target: align with bottom leftmost hole at x={target_x:.2f}mm")
-            print(f"  Offset: {offset_x:.2f}mm")
-            print(f"  Rotation: {self.PLATE_ROTATIONS.get('Top_Plate', 0)}° around Z-axis")
-            print(f"  Actual hole position: x={actual_hole_x:.2f}mm")
-            print(f"  Match: {'✓' if abs(actual_hole_x - target_x) < 0.01 else '✗'}")
+            print(f"  Position: X={position.x:.2f}mm, Y={position.y:.2f}mm, Z={position.z:.2f}mm")
+            print(f"  Rotation: {angle}° around Z-axis")
 
-        # Position Plate 2 (Middle) to align with Plate 3's 2nd left hole
+        # Position Plate 2 (Middle) at explicit position
         middle_plate = self.plates.get("Middle_Plate")
         if middle_plate:
-            target_x = bottom_holes["left_2"]
-            offset_x = PlateHoleCalculator.calculate_plate_offset(
-                "Middle_Plate", target_x, "left"
-            )
+            # Explicit position from image analysis: [12.64, 15.00, 3.00] mm
+            position = Vector(12.64, 15.00, 3.00)
             angle = self.PLATE_ROTATIONS.get("Middle_Plate", 0)
             middle_plate.Placement = Placement(
-                Vector(offset_x, 0, 5),  # Z = 5mm (between top and bottom)
+                position,
                 Rotation(Vector(0, 0, 1), angle)  # Rotation around Z-axis
             )
 
-            middle_holes = PlateHoleCalculator.get_plate_holes("Middle_Plate")
-            actual_hole_x = offset_x + middle_holes["left"]
-
             print(f"\nMiddle Plate positioning:")
-            print(f"  Target: align with bottom 2nd left hole at x={target_x:.2f}mm")
-            print(f"  Offset: {offset_x:.2f}mm")
-            print(f"  Rotation: {self.PLATE_ROTATIONS.get('Middle_Plate', 0)}° around Z-axis")
-            print(f"  Actual hole position: x={actual_hole_x:.2f}mm")
-            print(f"  Match: {'✓' if abs(actual_hole_x - target_x) < 0.01 else '✗'}")
+            print(f"  Position: X={position.x:.2f}mm, Y={position.y:.2f}mm, Z={position.z:.2f}mm")
+            print(f"  Rotation: {angle}° around Z-axis")
 
         # Position Bottom Plate at origin with rotation
         if bottom_plate:
