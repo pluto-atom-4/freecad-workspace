@@ -341,9 +341,34 @@ class AssemblyExporter:
 
             output_path = Path(output_path)
 
-            # Create mesh from shape
+            # Create mesh from compound by meshing individual solids
             start_time = time.time()
-            mesh = Mesh.Mesh(self.merged_shape)
+            try:
+                # Try direct mesh first (works for Solid/Shell/Face)
+                mesh = Mesh.Mesh(self.merged_shape)
+            except TypeError as e:
+                if "Part.Compound" in str(e):
+                    # Compound detected - mesh individual components
+                    print(f"  Compound detected, meshing individual components...")
+                    mesh = Mesh.Mesh()  # Empty mesh to accumulate
+
+                    solids = list(self.merged_shape.Solids)
+                    print(f"    Found {len(solids)} solid(s)")
+
+                    for i, solid in enumerate(solids):
+                        try:
+                            component_mesh = Mesh.Mesh(solid)
+                            mesh.addMesh(component_mesh)
+                            print(f"    ✓ Meshed component {i+1}/{len(solids)} ({len(component_mesh.Facets)} triangles)")
+                        except Exception as component_e:
+                            print(f"    ⚠ Could not mesh component {i+1}: {component_e}")
+                            continue
+
+                    if mesh.CountFacets == 0:
+                        raise RuntimeError("No components could be meshed")
+                else:
+                    # Different error - re-raise
+                    raise
             mesh_creation_time = time.time() - start_time
 
             # Export mesh to STL (binary format)
