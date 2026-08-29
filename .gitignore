@@ -53,3 +53,6 @@ htmlcov/
 *.log
 .env
 .env.local
+/inverted-pendulum-project/03_Parts/Mechanical/*.step
+
+issue-content*.json

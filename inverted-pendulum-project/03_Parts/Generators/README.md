@@ -1,8 +1,202 @@
 # Part Generators
 
-Python scripts for parametric FreeCAD model generation.
+Python scripts for parametric FreeCAD model generation and servo motor integration.
 
-## Scripts
+---
+
+## Servo Motor Integration (Phases 1-4)
+
+Complete workflow for integrating Feetech STS3032 servo motor with three-plate assembly.
+
+### Phase 1: STL to STEP Conversion
+
+**Script:** `01_convert_servo_stl_to_step.py`
+
+Converts servo motor STL mesh to STEP format for assembly integration.
+
+**Requirements:**
+- FreeCAD system installation
+- `freecad` command in PATH
+
+**Usage:**
+```bash
+python3 01_convert_servo_stl_to_step.py
+# or
+freecad -c "exec(open('01_convert_servo_stl_to_step_via_freecad.py').read())"
+```
+
+**Output:**
+- `../Mechanical/feetech-STS3032.step` (36.13 MB)
+- `../Mechanical/feetech-STS3032_conversion_report.json` (validation report)
+
+**Time:** ~30-60 seconds
+
+### Phase 2: Servo Motor Position Calculation
+
+**Script:** `02_position_servo.py`
+
+Calculates precise servo placement based on plate geometry (Edge26, Edge34).
+
+**Requirements:**
+- FreeCAD with Python access
+- `plates_assembled.FCStd` in current directory
+
+**Usage:**
+```bash
+freecad --python 02_position_servo.py
+```
+
+**Output:**
+- `servo_placement.json` (placement matrix + validation data)
+- Console: Detailed calculation logs
+
+**Placement Data:**
+- Position: X ≈ 10mm, Y ≈ 15mm, Z ≈ -11.25mm
+- Rotation: Roll=0°, Pitch=90°, Yaw=0°
+- Z-offset: 10mm below middle plate surface
+- Validations: 6 checks (alignment, clearances)
+
+**Time:** ~5-10 seconds
+
+### Phase 3: External Servo Link
+
+**Script:** `03_link_servo_to_assembly.py`
+
+Creates external link to servo STEP file in assembly, applies placement.
+
+**Requirements:**
+- FreeCAD with Python access
+- Servo STEP file from Phase 1
+- `servo_placement.json` from Phase 2
+
+**Usage:**
+```bash
+freecad --python 03_link_servo_to_assembly.py
+```
+
+**Output:**
+- Updated `plates_assembled.FCStd` (< 20 KB with external link)
+- `servo_link_config.json` (link configuration + validation data)
+- Console: Link configuration logs
+
+**Key Benefits:**
+- Small assembly files (external link)
+- Precise placement matrix
+- 7+ validation checks
+
+**Time:** ~5-10 seconds
+
+### Phase 4: Export Merged Assembly
+
+**Script:** `04_export_assembly_merged.py`
+
+Merges plates + servo into single geometry, exports to multiple formats.
+
+**Requirements:**
+- FreeCAD with Python access
+- `plates_assembled.FCStd` (with servo link)
+- Servo STEP file
+
+**Usage:**
+```bash
+freecad --python 04_export_assembly_merged.py
+```
+
+**Output:**
+- `plates_assembled_with_servo.step` (2.0-2.5 MB STEP format)
+- `plates_assembled_with_servo.stl` (1.8-2.0 MB STL mesh)
+- `plates_assembled_with_servo.3mf` (optional, if supported)
+- `export_metadata.json` (export statistics + validation)
+- Console: Export metrics and validation results
+
+**Use Cases:**
+- CAD Software Import: Use STEP file
+- 3D Printing: Use STL file
+- Documentation: Use either format
+
+**Time:** ~15-30 seconds
+
+---
+
+## Testing & Validation (Phase 5)
+
+### Unit Tests (No FreeCAD Required)
+
+**Script:** `test_05_integration.py`
+
+Comprehensive test suite for all phases (validating JSON outputs, file existence, formats).
+
+**Usage:**
+```bash
+python3 test_05_integration.py
+```
+
+**Output:**
+- Console: Test summary (pass/fail counts, coverage)
+- `test_results.json` (machine-readable results)
+
+**Test Coverage:**
+- Phase 1: 5 tests (file existence, format, size)
+- Phase 2: 6 tests (JSON structure, values, tolerances)
+- Phase 3: 5 tests (link config, validation counts)
+- Phase 4: 7 tests (export files, metadata, sizes)
+- **Total:** 23 tests
+
+**Current Status:**
+- Phase 1: ✓ PASSED (5/5)
+- Phases 2-4: ⏳ Pending (require FreeCAD execution)
+
+**Time:** ~2-5 seconds
+
+### Live Integration Tests (FreeCAD Required)
+
+**Script:** `test_05_integration_live.py`
+
+End-to-end tests requiring FreeCAD Python environment.
+
+**Usage:**
+```bash
+freecad --python test_05_integration_live.py
+```
+
+**Tests:**
+1. Assembly loading with servo link
+2. Servo visibility verification
+3. Servo position validation
+4. STEP export performance
+5. STL export performance
+6. Performance benchmarks
+
+**Time:** ~30-60 seconds
+
+---
+
+## Quick Workflow
+
+Run all phases sequentially:
+
+```bash
+# Phase 1: Convert STL → STEP (if not done)
+python3 01_convert_servo_stl_to_step.py
+
+# Phase 2: Calculate servo position
+freecad --python 02_position_servo.py
+
+# Phase 3: Link servo to assembly
+freecad --python 03_link_servo_to_assembly.py
+
+# Phase 4: Export merged assembly
+freecad --python 04_export_assembly_merged.py
+
+# Run tests
+python3 test_05_integration.py
+```
+
+**Total Time:** ~60-120 seconds
+
+---
+
+## Legacy Scripts
 
 ### `simple_part.py`
 Direct FreeCAD part generation using AppImage Python interpreter.
@@ -15,46 +209,39 @@ Direct FreeCAD part generation using AppImage Python interpreter.
 
 **Usage:**
 ```bash
-# Via wrapper script (recommended)
 ./run_part.sh
-
-# Direct execution
-~/tmp/squashfs-root/usr/bin/python simple_part.py
 ```
-
-**Output:**
-- `../Mechanical/T101pwb01_02_Part.FCStd`
-- `../Mechanical/T101pwb01_02_Part.step`
 
 ### `simple_bracket.py`
 Support bracket generation via FreeCAD MCP Bridge.
 
-**Requirements:**
-- FreeCAD running with MCP Bridge on port 9875
-- `freecad-robust-mcp` package
-
 **Usage:**
 ```bash
-# Start FreeCAD with MCP Bridge (in another terminal)
-cd ../../freecad-mcp-server
-./scripts/start-mcp-freecad.sh --mode xmlrpc
-
-# Run script
 uv run python3 simple_bracket.py
 ```
 
-**Output:**
-- `../Mechanical/support_bracket.FCStd`
-- `../Mechanical/support_bracket.step`
+---
 
 ## Directory Structure
 
 ```
 Generators/
-├── simple_part.py       # Direct AppImage generation
-├── simple_bracket.py    # MCP bridge generation  
-├── run_part.sh          # Wrapper script (simple_part.py)
-└── README.md            # This file
+├── 01_convert_servo_stl_to_step.py
+├── 01_convert_servo_stl_to_step_via_freecad.py
+├── 02_position_servo.py
+├── 03_link_servo_to_assembly.py
+├── 04_export_assembly_merged.py
+├── test_05_integration.py
+├── test_05_integration_live.py
+├── plates_assembled.FCStd
+├── servo_placement.json
+├── servo_link_config.json
+├── export_metadata.json
+├── test_results.json
+├── simple_part.py
+├── simple_bracket.py
+├── run_part.sh
+└── README.md
 ```
 
 ## Best Practices
