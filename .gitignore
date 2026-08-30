@@ -48,7 +48,7 @@ wheels/
 .coverage
 htmlcov/
 .tox/
-test_*_results.json
+test*_results.json
 *_test_results.json
 
 # Project-specific
@@ -56,6 +56,5 @@ test_*_results.json
 .env
 .env.local
 inverted-pendulum-project/03_Parts/Mechanical/*.step
-inverted-pendulum-project/03_Parts/**/test_*.json
 
 issue-content*.json
