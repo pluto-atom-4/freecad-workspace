@@ -55,6 +55,7 @@ test_*_results.json
 *.log
 .env
 .env.local
-/inverted-pendulum-project/03_Parts/Mechanical/*.step
+inverted-pendulum-project/03_Parts/Mechanical/*.step
+inverted-pendulum-project/03_Parts/**/test_*.json
 
 issue-content*.json
