@@ -1,0 +1,64 @@
+# Mamba Environment Specifications
+# Inverted Pendulum Project - Phase 1-6
+#
+# Two environments: simulation (Phases 1-5) and CAD tools (Phase 6)
+# Install with: mamba create -n <name> --file mamba-envs.yaml
+# Or manually (see below)
+
+environments:
+  # Environment 1: Simulation & Assembly (Phases 1-5)
+  # Use for: Servo positioning, assembly integration, Phase 1 FreeCAD conversion
+  pendulum-simulation:
+    python: "3.11"
+    conda_packages:
+      - python=3.11
+      - numpy>=1.24
+      - scipy>=1.10
+      - matplotlib>=3.7
+    pip_packages:
+      - freecad-robust-mcp>=0.1.0
+    description: "Phases 1-5: Simulation, servo positioning, assembly linking"
+    setup_command: |
+      mamba create -n pendulum-simulation python=3.11 \
+        numpy scipy matplotlib -y
+      mamba activate pendulum-simulation
+      pip install freecad-robust-mcp>=0.1.0
+
+  # Environment 2: CAD Generation & Mesh Tools (Phase 6)
+  # Use for: CadQuery parametric bracket generation, OCP STL→STEP, mesh repair
+  pendulum-phase6:
+    python: "3.11"
+    channels:
+      - conda-forge
+      - defaults
+    conda_packages:
+      - python=3.11
+      - cadquery>=2.0.0,<3
+      - ocp>=7.7.0,<8
+      - trimesh>=4.0.0,<5
+      - numpy>=1.24
+      - scipy>=1.10
+      - matplotlib>=3.7
+    pip_packages:
+      - freecad-robust-mcp>=0.1.0
+    description: "Phase 6: CadQuery parametric generation, OCP conversion, mesh processing"
+    setup_command: |
+      mamba create -n pendulum-phase6 python=3.11 \
+        -c conda-forge cadquery ocp trimesh numpy scipy matplotlib -y
+      mamba activate pendulum-phase6
+      pip install freecad-robust-mcp>=0.1.0
+
+# Quick Reference
+usage: |
+  # Activation
+  mamba activate pendulum-simulation    # For Phases 1-5
+  mamba activate pendulum-phase6        # For Phase 6
+
+  # Check active environment
+  conda info --envs
+
+  # List packages
+  mamba list
+
+  # Remove environment
+  mamba env remove -n pendulum-phase6 -y
