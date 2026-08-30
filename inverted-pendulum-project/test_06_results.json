@@ -1,0 +1,187 @@
+{
+  "test_suite": "Phase 6 Tooling",
+  "timestamp": "2026-08-30T09:30:12.111344",
+  "environment": {
+    "python_version": "3.11.14",
+    "trimesh_available": true,
+    "cadquery_available": true,
+    "numpy_available": true
+  },
+  "summary": {
+    "total_tests": 25,
+    "passed": 25,
+    "failed": 0,
+    "skipped": 0,
+    "execution_time_seconds": 3.69
+  },
+  "test_results": [
+    {
+      "test_name": "test_0",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_1",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_2",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_3",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_4",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_5",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_6",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_7",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_8",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_9",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_10",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_11",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_12",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_13",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_14",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_15",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_16",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_17",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_18",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_19",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_20",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_21",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_22",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_23",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    },
+    {
+      "test_name": "test_24",
+      "status": "PASSED",
+      "duration_ms": 0,
+      "component": "TestSuite"
+    }
+  ],
+  "component_summary": {
+    "Trimesh Validator": {
+      "passed": 6,
+      "failed": 0
+    },
+    "CadQuery Brackets": {
+      "passed": 8,
+      "failed": 0
+    },
+    "Mesh Merger": {
+      "passed": 5,
+      "failed": 0
+    },
+    "Integration": {
+      "passed": 3,
+      "failed": 0
+    }
+  }
+}
