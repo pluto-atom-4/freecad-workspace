@@ -1,0 +1,24 @@
+{
+  "merge_name": "servo_bracket_assembly",
+  "output_file": "servo_bracket_assembly_merged.stl",
+  "meshes": [
+    {
+      "file": "../Mechanical/feetech-STS3032.stl",
+      "name": "servo_motor",
+      "transform": {
+        "translate_mm": [0, 0, 0],
+        "rotate_euler_deg": [0, 0, 0],
+        "scale": 1.0
+      }
+    },
+    {
+      "file": "../Mechanical/small_bracket.stl",
+      "name": "mounting_bracket",
+      "transform": {
+        "translate_mm": [10, 5, 20],
+        "rotate_euler_deg": [90, 0, 0],
+        "scale": 1.0
+      }
+    }
+  ]
+}
