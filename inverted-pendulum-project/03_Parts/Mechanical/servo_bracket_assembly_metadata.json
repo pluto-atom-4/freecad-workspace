@@ -1,0 +1,73 @@
+{
+  "merge_name": "servo_bracket_assembly",
+  "status": "success",
+  "mesh_count": 2,
+  "meshes_included": [
+    {
+      "name": "servo_motor",
+      "file": "../Mechanical/feetech-STS3032.stl",
+      "vertices_original": 74,
+      "vertices_in_merge": 74,
+      "transform": {
+        "translate": [
+          0,
+          0,
+          0
+        ],
+        "rotate": [
+          0,
+          0,
+          0
+        ],
+        "scale": 1.0
+      }
+    },
+    {
+      "name": "mounting_bracket",
+      "file": "../Mechanical/small_bracket.stl",
+      "vertices_original": 37992,
+      "vertices_in_merge": 37992,
+      "transform": {
+        "translate": [
+          10,
+          5,
+          20
+        ],
+        "rotate": [
+          90,
+          0,
+          0
+        ],
+        "scale": 1.0
+      }
+    }
+  ],
+  "merged_geometry": {
+    "total_vertices": 38066,
+    "total_faces": 76144,
+    "volume_mm3": 36010.1964374927,
+    "surface_area_mm2": 11822.503650767881,
+    "bounds": {
+      "x": [
+        -20.0,
+        40.0
+      ],
+      "y": [
+        -6.0,
+        9.000000000000002
+      ],
+      "z": [
+        -16.0,
+        45.0
+      ]
+    }
+  },
+  "validation": {
+    "is_valid": true,
+    "is_watertight": false,
+    "vertex_count": 38066,
+    "face_count": 76144
+  },
+  "output_file": "03_Parts/Mechanical/servo_bracket_assembly_merged.stl",
+  "execution_time_seconds": 0.73
+}

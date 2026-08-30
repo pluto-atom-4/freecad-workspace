@@ -8,4 +8,6 @@ dependencies = [
     "scipy>=1.10",
     "matplotlib>=3.7",
     "freecad-robust-mcp>=0.1.0",
+    "cadquery>=2.0.0,<3",           # Phase 6: Parametric CAD generation
+    "trimesh>=4.0.0,<5",            # Phase 6: Mesh processing and repair
 ]

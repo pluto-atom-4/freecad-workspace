@@ -1,0 +1,40 @@
+{
+  "status": "repaired",
+  "input_file": "03_Parts/Mechanical/feetech-STS3032.stl",
+  "validation": {
+    "is_watertight": true,
+    "vertex_count_original": 74,
+    "vertex_count_repaired": 74,
+    "face_count_original": 140,
+    "face_count_repaired": 140,
+    "open_edges": 0
+  },
+  "geometry": {
+    "volume_mm3": 13458.54193361155,
+    "surface_area_mm2": 4210.5545317011865,
+    "bounds": {
+      "x": [
+        -16.0,
+        16.0
+      ],
+      "y": [
+        -6.0,
+        6.0
+      ],
+      "z": [
+        -16.0,
+        16.0
+      ]
+    },
+    "centroid": {
+      "x": -1.2656457666272409e-17,
+      "y": -1.5556895881459835e-18,
+      "z": 1.071580082411064e-16
+    },
+    "edge_length_mean": 8.928420911472625,
+    "edge_length_min": 0.9801712435991856,
+    "edge_length_max": 45.254833995939045
+  },
+  "repairs_applied": [],
+  "execution_time_seconds": 0.52
+}
