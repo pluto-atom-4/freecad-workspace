@@ -6,12 +6,35 @@ Simulation and numerical modeling of inverted pendulum dynamics with FreeCAD int
 
 - **Numerical Simulation:** Compute pendulum dynamics using numpy/scipy
 - **Visualization:** Plot results with matplotlib
-- **FreeCAD Integration:** Export models and visualizations to FreeCAD
+- **Parametric CAD:** Generate brackets/parts with CadQuery, validate/repair meshes with trimesh
+- **FreeCAD Integration:** Convert/export models via headless FreeCAD, invoked as a subprocess
 
 ## Setup
 
+### Python environment (uv)
+
 ```bash
 uv sync
+```
+
+### Mamba environment (single env: `pendulum-tools`)
+
+All numeric/CAD-authoring work (simulation, servo positioning, assembly linking,
+CadQuery bracket generation, trimesh mesh processing) uses one mamba environment.
+FreeCAD itself is never installed into or imported from this environment — it is
+always invoked externally as a separate subprocess (see below), because FreeCAD
+and CadQuery/OCP bundle different, incompatible OpenCASCADE builds.
+
+```bash
+# Create the environment (see mamba-envs.yaml for the full spec)
+mamba create -n pendulum-tools -c conda-forge python=3.11 \
+  cadquery trimesh numpy scipy matplotlib -y
+
+# Activate
+mamba activate pendulum-tools
+
+# Verify
+python -c "import cadquery, trimesh, numpy, scipy, matplotlib; print('OK')"
 ```
 
 ## Usage
@@ -22,83 +45,49 @@ uv sync
 uv run python3 simulate.py
 ```
 
-### FreeCAD Integration
+### FreeCAD Integration (headless subprocess)
 
-Two approaches for using FreeCAD APIs:
+FreeCAD is invoked headlessly via `freecadcmd`, in a separate process from any
+CadQuery/trimesh code — never imported into the same Python process.
 
-#### 1. MCP Mode (Recommended)
+**Binary selection:** set the `FREECAD_BIN` environment variable to point at a
+specific FreeCAD build. Defaults to `freecadcmd` (relies on PATH) if unset.
 
-Connect to FreeCAD via Model Context Protocol when MCP Bridge is running.
-
-**Start FreeCAD with MCP Bridge:**
 ```bash
-cd ../freecad-mcp-server
-./scripts/start-mcp-freecad.sh --mode xmlrpc
-```
+# Default: use freecadcmd from PATH
+python3 freecad_integration_example.py direct
 
-**Use from Python:**
-```python
-from freecad_integration_example import use_freecad_via_mcp
-use_freecad_via_mcp()
-```
-
-**Command line:**
-```bash
-uv run python3 freecad_integration_example.py mcp
-```
-
-**Benefits:**
-- Works from any Python environment
-- No tight coupling to FreeCAD
-- Secure network communication
-
-#### 2. Direct Bindings (Advanced)
-
-Access FreeCAD Python API directly when running in FreeCAD's Python environment.
-
-**In FreeCAD's Python console:**
-```python
-import sys
-sys.path.insert(0, '/path/to/inverted-pendulum-project')
-from freecad_integration_example import use_freecad_direct
-use_freecad_direct()
-```
-
-**Or via command line (FreeCAD must be installed):**
-```bash
-freecad -c "
+# Or pin to a specific FreeCAD build (e.g. the 1.1.3 AppImage extraction)
+export FREECAD_BIN=/home/pluto-atom-4/.local/opt/freecad-1.1.3/usr/bin/freecadcmd
+"$FREECAD_BIN" -c "
 exec(open('freecad_integration_example.py').read())
 use_freecad_direct()
 "
 ```
 
-**Benefits:**
-- Direct access to FreeCAD objects
-- No network communication overhead
-- Full FreeCAD Python API available
+**Benefits of the direct/subprocess pattern:**
+- No network layer, no bridge process to keep running
+- Full FreeCAD Python API available (Part, Mesh, App, …)
+- FreeCAD process boundary keeps its OpenCASCADE build isolated from OCP/CadQuery
 
-### Create Parts with MCP Tools
+### Phase 1: Convert servo STL to STEP
 
-Generate FreeCAD parts using 150+ available MCP tools.
-
-**Simple Example:**
 ```bash
-# Start MCP bridge first (in another terminal)
-cd ../freecad-mcp-server
-./scripts/start-mcp-freecad.sh --mode xmlrpc
-
-# Then run the bracket creator
-cd ../inverted-pendulum-project
-uv run python3 03_Parts/simple_bracket.py
+# Uses FREECAD_BIN if set, otherwise falls back to "freecadcmd" on PATH
+FREECAD_BIN=/home/pluto-atom-4/.local/opt/freecad-1.1.3/usr/bin/freecadcmd \
+  uv run python3 03_Parts/Generators/01_convert_servo_stl_to_step.py
 ```
 
-**Available MCP Tools:**
-- Primitives: `create_box`, `create_cylinder`, `create_sphere`, `create_cone`, `create_wedge`
-- Operations: `boolean_operation` (union/cut/intersect), `fillet_edges`, `create_sketch`, `pad_sketch`
-- Export: `export_step`, `export_stl`, `export_iges`, `export_3mf`
-- View: `get_screenshot`, `set_view_angle`, `set_object_color`
+### Phase 6: Parametric CAD generation & mesh tooling (CadQuery/trimesh)
 
-**Full reference:** `01_Documentation/MCP_TOOLS_REFERENCE.md`
+Runs directly in the `pendulum-tools` mamba env's own Python (never mixed with FreeCAD):
+
+```bash
+mamba run -n pendulum-tools python 03_Parts/Generators/06_cadquery_parametric_brackets.py --help
+mamba run -n pendulum-tools python 03_Parts/Generators/test_06_phase6_tooling.py
+```
+
+See `03_Parts/Generators/README.md` and `03_Parts/Generators/README_PHASE6.md` for details.
 
 ### Export Simulation Results to FreeCAD
 
@@ -118,36 +107,48 @@ import numpy as np
 - `numpy` — numerical computing
 - `scipy` — scientific algorithms
 - `matplotlib` — data visualization
-- `freecad-robust-mcp` — FreeCAD integration via MCP
+- `cadquery` — parametric CAD generation (Phase 6)
+- `trimesh` — mesh processing and repair (Phase 6)
+- FreeCAD (external, not a Python dependency) — invoked headlessly via subprocess (`FREECAD_BIN`)
 
 ## Project Structure
 
 ```
 inverted-pendulum-project/
 ├── pyproject.toml                      # Project config with dependencies
+├── mamba-envs.yaml                     # Single pendulum-tools mamba env spec
 ├── README.md                           # This file
-├── freecad_integration_example.py      # FreeCAD integration examples
+├── freecad_integration_example.py      # FreeCAD integration example (direct/subprocess)
 ├── simulate.py                         # Pendulum simulation
 ├── .venv/                              # Virtual environment
 ├── uv.lock                             # Dependency lock file
 ├── 01_Documentation/
-│   └── MCP_TOOLS_REFERENCE.md         # 150+ FreeCAD MCP tools guide
+│   └── MCP_TOOLS_REFERENCE.md         # Deprecated MCP tool catalog (see note in file)
 ├── 02_Design_Inputs/                  # Design specifications & parameters
 ├── 03_Parts/                          # FreeCAD part files (.FCStd, .step)
-│   └── simple_bracket.py              # Example: Create support bracket via MCP
+│   └── Generators/                    # Phase 1-6 generator scripts
 ├── 04_Assemblies/                     # Assembly definitions
 ├── 05_Drafts_Context/                 # Preliminary designs & concepts
 └── 06_Exports/                        # Generated exports (STL, STEP, etc.)
 ```
 
+## Architecture note: FreeCAD vs CadQuery/OCP process boundary
+
+FreeCAD and CadQuery/OCP must never be imported in the same Python process:
+FreeCAD bundles its own OpenCASCADE build, and OCP (used by CadQuery) bundles a
+different one — mixing them risks ABI/symbol conflicts. This project keeps them
+as separate subprocess invocations:
+
+- FreeCAD-only scripts run via `freecadcmd` as a subprocess (`FREECAD_BIN`).
+- CadQuery/trimesh scripts run directly in the `pendulum-tools` mamba env's own Python.
+
 ## References
 
 - [FreeCAD](https://www.freecadweb.org/)
-- [Robust MCP Server](https://spkane.github.io/freecad-addon-robust-mcp-server/)
-- [MCP Protocol](https://modelcontextprotocol.io/)
+- [CadQuery](https://cadquery.readthedocs.io/)
+- [Trimesh](https://trimesh.org/)
 - [NumPy/SciPy Documentation](https://scipy.org/)
 
 ## See Also
 
-- `../freecad-mcp-server/` — FreeCAD MCP Bridge setup
 - `../CLAUDE.md` — Complete development guide

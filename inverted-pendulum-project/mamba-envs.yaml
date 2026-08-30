@@ -1,58 +1,62 @@
-# Mamba Environment Specifications
-# Inverted Pendulum Project - Phase 1-6
+# Mamba Environment Specification
+# Inverted Pendulum Project - Phases 1-6
 #
-# Two environments: simulation (Phases 1-5) and CAD tools (Phase 6)
-# Install with: mamba create -n <name> --file mamba-envs.yaml
-# Or manually (see below)
+# Single environment: pendulum-tools
+#
+# Used for ALL numeric/CAD-authoring work: pendulum simulation (numpy/scipy),
+# visualization (matplotlib), parametric CAD generation (cadquery, which pulls
+# in OCP transitively), and mesh processing/repair (trimesh).
+#
+# FreeCAD itself is NOT installed into this environment and must NEVER be
+# imported here. FreeCAD bundles its own OpenCASCADE build; OCP (via cadquery)
+# bundles a different one. Mixing the two in-process risks ABI/symbol
+# conflicts. FreeCAD is invoked externally, as a separate subprocess, via the
+# `freecadcmd` binary (see FREECAD_BIN below) — never imported into Python
+# code that also imports cadquery/OCP/trimesh.
+#
+# Install with: mamba env create -f mamba-envs.yaml
+# Or manually (see setup_command below)
 
 environments:
-  # Environment 1: Simulation & Assembly (Phases 1-5)
-  # Use for: Servo positioning, assembly integration, Phase 1 FreeCAD conversion
-  pendulum-simulation:
-    python: "3.11"
-    conda_packages:
-      - python=3.11
-      - numpy>=1.24
-      - scipy>=1.10
-      - matplotlib>=3.7
-    pip_packages:
-      - freecad-robust-mcp>=0.1.0
-    description: "Phases 1-5: Simulation, servo positioning, assembly linking"
-    setup_command: |
-      mamba create -n pendulum-simulation python=3.11 \
-        numpy scipy matplotlib -y
-      mamba activate pendulum-simulation
-      pip install freecad-robust-mcp>=0.1.0
-
-  # Environment 2: CAD Generation & Mesh Tools (Phase 6)
-  # Use for: CadQuery parametric bracket generation, OCP STL→STEP, mesh repair
-  pendulum-phase6:
+  pendulum-tools:
     python: "3.11"
     channels:
       - conda-forge
-      - defaults
     conda_packages:
       - python=3.11
-      - cadquery>=2.0.0,<3
-      - ocp>=7.7.0,<8
-      - trimesh>=4.0.0,<5
+      - cadquery          # pulls in OCP transitively — do not pin/list OCP explicitly
+      - trimesh
       - numpy>=1.24
       - scipy>=1.10
       - matplotlib>=3.7
-    pip_packages:
-      - freecad-robust-mcp>=0.1.0
-    description: "Phase 6: CadQuery parametric generation, OCP conversion, mesh processing"
+    pip_packages: []
+    description: >
+      All phases (1-6): simulation, servo positioning, assembly linking,
+      parametric CadQuery bracket generation, trimesh mesh validation/repair.
+      FreeCAD is invoked externally via subprocess (freecadcmd), never
+      imported into this environment.
     setup_command: |
-      mamba create -n pendulum-phase6 python=3.11 \
-        -c conda-forge cadquery ocp trimesh numpy scipy matplotlib -y
-      mamba activate pendulum-phase6
-      pip install freecad-robust-mcp>=0.1.0
+      mamba create -n pendulum-tools -c conda-forge python=3.11 \
+        cadquery trimesh numpy scipy matplotlib -y
 
+# FreeCAD (external, invoked via subprocess only)
+#
+# FreeCAD is not part of this conda environment. Scripts that need it
+# (e.g. 03_Parts/Generators/01_convert_servo_stl_to_step.py) shell out to a
+# headless FreeCAD binary via subprocess, controlled by the FREECAD_BIN
+# environment variable:
+#
+#   FREECAD_BIN   Path to a headless FreeCAD binary. Defaults to "freecadcmd"
+#                 (relies on PATH, e.g. /usr/bin/freecadcmd) if unset.
+#
+#                 To use the newer FreeCAD 1.1.3 build extracted from the
+#                 AppImage:
+#                   export FREECAD_BIN=/home/pluto-atom-4/.local/opt/freecad-1.1.3/usr/bin/freecadcmd
+#
 # Quick Reference
 usage: |
   # Activation
-  mamba activate pendulum-simulation    # For Phases 1-5
-  mamba activate pendulum-phase6        # For Phase 6
+  mamba activate pendulum-tools
 
   # Check active environment
   conda info --envs
@@ -60,5 +64,14 @@ usage: |
   # List packages
   mamba list
 
+  # Verify imports
+  mamba run -n pendulum-tools python -c "import cadquery, trimesh, numpy, scipy, matplotlib; print('OK')"
+
   # Remove environment
-  mamba env remove -n pendulum-phase6 -y
+  mamba env remove -n pendulum-tools -y
+
+# Note: the older pendulum-simulation / pendulum-phase6 environments are no
+# longer referenced by this project. They are left in place for now (not
+# auto-removed) — clean up manually with:
+#   mamba env remove -n pendulum-simulation -y
+#   mamba env remove -n pendulum-phase6 -y

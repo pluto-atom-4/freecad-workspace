@@ -1,5 +1,13 @@
 # FreeCAD MCP Tools Reference
 
+> **Deprecated.** This project no longer uses the `freecad-robust-mcp` package
+> or an MCP bridge as its FreeCAD workflow. FreeCAD is now invoked headlessly
+> via subprocess (`freecadcmd`, configured with the `FREECAD_BIN` environment
+> variable) — see `../README.md` and `../03_Parts/Generators/README.md` for
+> the current pattern. This file is kept only as a historical catalog of the
+> MCP tool surface, for anyone still running the `freecad-mcp-server` bridge
+> directly; it does not describe this project's active tooling.
+
 Quick reference for 150+ FreeCAD tools available via Model Context Protocol.
 
 ## Setup
@@ -157,7 +165,7 @@ python3 -c "from freecad_integration_example import use_freecad_via_mcp; mcp = u
 | Issue | Solution |
 |-------|----------|
 | "Connection refused" | Start MCP bridge: `./freecad-mcp-server/scripts/start-mcp-freecad.sh` |
-| Tool not found | Update freecad-robust-mcp: `uv sync` |
+| Tool not found | This project no longer installs `freecad-robust-mcp`; install/update it separately if you are still using the MCP bridge standalone |
 | Permission denied on export | Check file path and directory permissions |
 | Slow operations | Close FreeCAD UI or use headless mode |
 
@@ -170,5 +178,5 @@ python3 -c "from freecad_integration_example import use_freecad_via_mcp; mcp = u
 
 ## See Also
 
-- `../03_Parts/simple_bracket.py` — Working example
+- `../03_Parts/Generators/simple_bracket.py` — Legacy MCP-based example (not part of the active `pendulum-tools` workflow)
 - `../../CLAUDE.md` — Full development guide

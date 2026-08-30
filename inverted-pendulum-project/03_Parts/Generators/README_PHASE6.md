@@ -38,7 +38,7 @@ Phase 6 enables three independent but complementary capabilities:
 
 ```bash
 # Activate mamba Phase 6 environment
-mamba activate pendulum-phase6
+mamba activate pendulum-tools
 
 # Verify imports
 python3 -c "import cadquery; import trimesh; print('OK')"
@@ -814,7 +814,7 @@ ModuleNotFoundError: No module named 'cadquery'
 **Solution:**
 ```bash
 # Ensure mamba environment activated
-mamba activate pendulum-phase6
+mamba activate pendulum-tools
 
 # Verify environment
 python3 -c "import cadquery; print(cadquery.__version__)"
@@ -1040,4 +1040,4 @@ python3 06_trimesh_mesh_validator.py --input servo_with_bracket.stl
 
 **Last Updated:** 2026-08-30
 **Phase 6 Status:** Complete (all 3 tools operational)
-**Environment:** pendulum-phase6 mamba environment
+**Environment:** pendulum-tools mamba environment (single env, shared with Phases 1-5's numeric tooling)
