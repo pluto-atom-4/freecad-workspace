@@ -56,5 +56,9 @@ test*_results.json
 .env
 .env.local
 inverted-pendulum-project/03_Parts/Mechanical/*.step
+inverted-pendulum-project/03_Parts/Generators/export_metadata.json
+inverted-pendulum-project/03_Parts/Generators/servo_link_config.json
+inverted-pendulum-project/03_Parts/Generators/servo_placement.json
+inverted-pendulum-project/03_Parts/Mechanical/feetech-STS3032_conversion_report.json
 
 issue-content*.json
