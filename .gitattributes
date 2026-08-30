@@ -1,0 +1,23 @@
+# Enforce LF line endings for text files regardless of platform/core.autocrlf.
+# Prevents CRLF injection on checkout breaking shell script execution on Linux/macOS.
+* text=auto eol=lf
+
+*.py text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+
+# Binary/CAD formats: never touch line endings
+*.stl binary
+*.step binary
+*.stp binary
+*.FCStd binary
+*.FCStd1 binary
+*.FCStd2 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
