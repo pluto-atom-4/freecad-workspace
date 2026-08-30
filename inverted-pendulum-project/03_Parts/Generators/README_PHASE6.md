@@ -89,7 +89,7 @@ python3 06_cadquery_parametric_brackets.py \
   --thickness 10 \
   --hole-diameter 8 \
   --fillet-radius 3 \
-  --output my_bracket
+  --name my_bracket
 
 # L-bracket (two perpendicular plates)
 python3 06_cadquery_parametric_brackets.py \
@@ -534,7 +534,7 @@ python3 06_trimesh_mesh_validator.py --input servo.stl
 python3 06_cadquery_parametric_brackets.py \
   --type simple \
   --length 100 --width 80 --thickness 10 \
-  --output support_bracket
+  --name support_bracket
 
 # 3. Create merge config pointing to both STLs
 # Edit merge_config_example.json with paths
@@ -583,7 +583,7 @@ python3 06_cadquery_parametric_brackets.py \
   --thickness 10 \
   --hole-diameter 8 \
   --fillet-radius 3 \
-  --output servo_mount
+  --name servo_mount
 
 # Step 2: Check output
 ls -lh 03_Parts/Mechanical/servo_mount.*
@@ -842,13 +842,9 @@ ls -ld 03_Parts/Mechanical  # Should be writable
 
 # Check disk space
 df -h | grep "/$"  # Need at least 100MB free
-
-# Try again with explicit path
-python3 06_cadquery_parametric_brackets.py \
-  --type simple \
-  --length 100 --width 80 --thickness 10 \
-  --output /absolute/path/bracket
 ```
+
+**Note:** Output directory is fixed to `03_Parts/Mechanical/` — `--name` sets the filename prefix only, not a path. There is no CLI flag to redirect output elsewhere.
 
 ### Issue: "Transform looks wrong" in merged mesh
 
