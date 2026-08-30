@@ -1,0 +1,36 @@
+{
+  "bracket_name": "test_l_bracket",
+  "bracket_type": "l_bracket",
+  "parameters": {
+    "length_mm": 120.0,
+    "width_mm": 100.0,
+    "thickness_mm": 15.0,
+    "hole_diameter_mm": 9.0,
+    "fillet_radius_mm": 2.5
+  },
+  "geometry": {
+    "volume_mm3": 0.0,
+    "surface_area_mm2": 0.0,
+    "bounds_mm": {
+      "x": [
+        -60.0,
+        60.0
+      ],
+      "y": [
+        -50.0,
+        50.0
+      ],
+      "z": [
+        -60.0,
+        60.0
+      ]
+    }
+  },
+  "exported_formats": [
+    "step",
+    "stl"
+  ],
+  "execution_time_seconds": 0.31,
+  "generated_at": "2026-08-30T07:45:58.261290",
+  "generator_version": "1.0.0"
+}

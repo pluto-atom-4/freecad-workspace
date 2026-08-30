@@ -122,6 +122,70 @@ if __name__ == '__main__':
     create_bracket()
 ```
 
+## Phase 6: Parametric CAD & Mesh Tooling (Standalone)
+
+Comprehensive tooling for **headless** bracket generation, mesh validation/repair, and multi-mesh assembly composition. No FreeCAD runtime required.
+
+**Setup:**
+```bash
+mamba activate pendulum-phase6
+
+# Verify imports
+python3 -c "import cadquery; import trimesh; print('Phase 6 ready')"
+```
+
+**3 Independent Tools:**
+
+### Tool 1: CadQuery Parametric Bracket Generator
+Generate support brackets (simple, L, corner types) with customizable dimensions:
+```bash
+cd inverted-pendulum-project
+
+# Generate single bracket
+python3 03_Parts/Generators/06_cadquery_parametric_brackets.py \
+  --type simple \
+  --length 100 --width 80 --thickness 10 \
+  --hole-diameter 8 --fillet-radius 3
+
+# Batch generation from config
+python3 03_Parts/Generators/06_cadquery_parametric_brackets.py \
+  --config 03_Parts/Generators/bracket_configs.json
+
+# Output: STEP + STL + JSON metadata
+```
+
+### Tool 2: Trimesh Mesh Validator
+Validate and repair STL meshes for 3D printing:
+```bash
+# Validation only
+python3 03_Parts/Generators/06_trimesh_mesh_validator.py \
+  --input servo.stl
+
+# Auto-repair
+python3 03_Parts/Generators/06_trimesh_mesh_validator.py \
+  --input servo.stl \
+  --auto-repair \
+  --output servo_repaired.stl
+```
+
+### Tool 3: Trimesh Mesh Merger
+Combine multiple meshes with spatial transforms into assembly:
+```bash
+python3 03_Parts/Generators/06_trimesh_merge_for_stl.py \
+  --config 03_Parts/Generators/merge_config_example.json
+
+# Output: Merged STL + composition metadata
+```
+
+**Full Documentation:** See `inverted-pendulum-project/03_Parts/Generators/README_PHASE6.md`
+
+**Key Features:**
+- Standalone execution (no FreeCAD, MCP, or Python embedded)
+- Parametric design with CLI arguments or JSON configs
+- Mesh validation, repair, and composition tracking
+- STEP/STL export with metadata JSON reports
+- Batch processing capability
+
 ## Configuration
 
 - `.mcp.json` — MCP server configuration (XML-RPC, localhost:9875)
