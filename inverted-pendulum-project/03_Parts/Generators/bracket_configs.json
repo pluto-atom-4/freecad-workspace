@@ -1,0 +1,37 @@
+{
+  "configurations": [
+    {
+      "name": "small_bracket",
+      "type": "simple",
+      "parameters": {
+        "length_mm": 60,
+        "width_mm": 50,
+        "thickness_mm": 8,
+        "hole_diameter_mm": 6,
+        "fillet_radius_mm": 2
+      }
+    },
+    {
+      "name": "medium_bracket",
+      "type": "l_bracket",
+      "parameters": {
+        "length_mm": 100,
+        "width_mm": 80,
+        "thickness_mm": 10,
+        "hole_diameter_mm": 8,
+        "fillet_radius_mm": 3
+      }
+    },
+    {
+      "name": "large_bracket",
+      "type": "corner",
+      "parameters": {
+        "length_mm": 150,
+        "width_mm": 120,
+        "thickness_mm": 12,
+        "hole_diameter_mm": 10,
+        "fillet_radius_mm": 4
+      }
+    }
+  ]
+}
