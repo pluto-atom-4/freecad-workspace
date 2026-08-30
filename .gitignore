@@ -48,6 +48,8 @@ wheels/
 .coverage
 htmlcov/
 .tox/
+test_*_results.json
+*_test_results.json
 
 # Project-specific
 *.log
