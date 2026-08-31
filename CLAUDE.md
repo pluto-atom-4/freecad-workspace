@@ -209,7 +209,9 @@ Create `.mcp.json` in project root or configure in `~/.claude/claude_desktop_con
 }
 ```
 
-**Using from source with uv:**
+**Using the upstream repo from source** (a separate clone of `freecad-addon-robust-mcp-server`
+itself, built with its own `uv`/`mise`/`just` tooling — unrelated to this workspace's
+`freecad-mcp-server/`, which is mamba-only):
 ```json
 {
   "mcpServers": {
@@ -231,7 +233,8 @@ Create `.mcp.json` in project root or configure in `~/.claude/claude_desktop_con
 ### FreeCAD MCP Integration
 
 1. **Start FreeCAD with bridge** → must run before MCP client connects
-2. **Configure MCP client** → point to freecad-mcp command or uv wrapper
+2. **Configure MCP client** → point to the `freecad-mcp` command (PyPI package) or, for
+   an upstream source checkout, its own `uv run` wrapper (see MCP Client Configuration above)
 3. **Use MCP tools** → 150+ tools available through Claude
 4. **Export models** → STEP, STL, 3MF, OBJ, IGES formats
 
