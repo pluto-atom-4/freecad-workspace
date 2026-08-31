@@ -7,7 +7,14 @@ Development environment for the [Robust MCP Server](https://github.com/spkane/fr
 ### 1. Install Dependencies
 
 ```bash
-uv sync
+mamba env create -f mamba-envs.yaml
+```
+
+**Reproducible install:** `mamba-envs.yaml` is a recipe (unpinned minimum versions). For an
+exact, pinned reproduction of a known-good environment, use the lock file instead:
+
+```bash
+mamba env create -n freecad-mcp -f mamba-envs.lock.yml
 ```
 
 ### 2. Start FreeCAD with MCP Bridge
@@ -59,13 +66,14 @@ Once bridge is running and MCP client configured, 150+ tools available:
 
 ```bash
 # Activate environment
-source .venv/bin/activate
+mamba activate freecad-mcp
 
-# Or run directly with uv
-uv run python3 <script.py>
+# Or run directly without activating
+mamba run -n freecad-mcp python3 <script.py>
 
-# Sync after pyproject.toml changes
-uv sync
+# Recreate after mamba-envs.yaml changes
+mamba env remove -n freecad-mcp -y
+mamba env create -f mamba-envs.yaml
 ```
 
 ## References
