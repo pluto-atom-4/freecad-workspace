@@ -232,32 +232,35 @@ meshlab plates_assembled_with_servo.stl
 ### Prerequisites
 ```bash
 cd inverted-pendulum-project
-uv sync
-source .venv/bin/activate
+mamba activate pendulum-tools   # for Phase 1's wrapper + Phase 5/6 tooling
+
+# Headless FreeCAD binary for Phases 2-4 (they import FreeCAD directly).
+# Defaults to "freecadcmd" on PATH if unset.
+export FREECAD_BIN=~/.local/bin/freecadcmd1.1
 ```
 
 ### Run Phases
 
-**Phase 1: Geometric Preparation**
+**Phase 1: Geometric Preparation** (plain python — wraps FreeCAD internally via subprocess)
 ```bash
 cd 03_Parts/Generators
 python3 01_convert_servo_stl_to_step.py
 ```
 
-**Phase 2: Alignment Calculation**
+**Phase 2: Alignment Calculation** (runs inside FreeCAD's own interpreter)
 ```bash
-freecad --python 02_position_servo.py
-python3 test_02_servo_position.py  # Unit tests
+"${FREECAD_BIN:-freecadcmd}" 02_position_servo.py
+python3 test_02_servo_position.py  # Unit tests (plain python, no FreeCAD needed)
 ```
 
-**Phase 3: Assembly Integration**
+**Phase 3: Assembly Integration** (runs inside FreeCAD's own interpreter)
 ```bash
-freecad --python 03_link_servo_to_assembly.py
+"${FREECAD_BIN:-freecadcmd}" 03_link_servo_to_assembly.py
 ```
 
-**Phase 4: Export Artifacts**
+**Phase 4: Export Artifacts** (runs inside FreeCAD's own interpreter)
 ```bash
-freecad --python 04_export_assembly_merged.py
+"${FREECAD_BIN:-freecadcmd}" 04_export_assembly_merged.py
 ```
 
 ### Manual Verification

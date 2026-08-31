@@ -22,8 +22,12 @@ Usage:
   Or via shell:
   ./01_convert_servo_stl_to_step.sh
 
-  Or manually with freecad:
-  freecad -c "exec(open('01_convert_servo_stl_to_step_via_freecad.py').read())"
+  Or manually with freecadcmd:
+  freecadcmd -c "exec(open('01_convert_servo_stl_to_step_via_freecad.py').read())"
+
+  Or with a specific FreeCAD build:
+  FREECAD_BIN=/home/pluto-atom-4/.local/opt/freecad-1.1.3/usr/bin/freecadcmd \
+    python3 01_convert_servo_stl_to_step.py
 
 Output:
   - inverted-pendulum-project/03_Parts/Mechanical/feetech-STS3032.step
@@ -31,8 +35,10 @@ Output:
   - Conversion report with validation results
 
 Dependencies:
-  - FreeCAD (system installation)
-  - freecad command must be available in PATH
+  - FreeCAD (headless), invoked via subprocess as a separate process
+  - Binary resolved from the FREECAD_BIN environment variable, defaulting to
+    "freecadcmd" (relies on PATH). To use a specific build:
+      export FREECAD_BIN=/home/pluto-atom-4/.local/opt/freecad-1.1.3/usr/bin/freecadcmd
 """
 
 import os
@@ -52,13 +58,23 @@ def main():
         print(f"✗ Conversion script not found: {conversion_script}", file=sys.stderr)
         sys.exit(1)
 
+    # Headless FreeCAD binary. Defaults to freecadcmd (console-only build,
+    # more appropriate than the GUI "freecad" binary for a headless
+    # conversion step). Override with FREECAD_BIN, e.g.:
+    #   export FREECAD_BIN=/home/pluto-atom-4/.local/opt/freecad-1.1.3/usr/bin/freecadcmd
+    # expanduser: FREECAD_BIN may arrive un-expanded (e.g. from a .env file
+    # or a non-shell caller) rather than shell-expanded, unlike a literal
+    # `export FREECAD_BIN=~/...` typed at a bash prompt.
+    freecad_bin = os.path.expanduser(os.environ.get("FREECAD_BIN", "freecadcmd"))
+
     # Run the conversion via FreeCAD
     print("Starting STL to STEP conversion...")
     print(f"Script: {conversion_script}")
+    print(f"FreeCAD binary: {freecad_bin} (set FREECAD_BIN to override)")
     print("")
 
     cmd = [
-        "freecad",
+        freecad_bin,
         "-c",
         f"exec(open('{conversion_script}').read())"
     ]
@@ -110,8 +126,9 @@ def main():
         print("✗ Conversion timed out after 10 minutes", file=sys.stderr)
         sys.exit(1)
     except FileNotFoundError:
-        print("✗ FreeCAD not found. Is it installed?", file=sys.stderr)
-        print("  Install with: sudo apt-get install freecad", file=sys.stderr)
+        print(f"✗ FreeCAD binary not found: {freecad_bin}", file=sys.stderr)
+        print("  Set FREECAD_BIN to a valid headless FreeCAD binary, e.g.:", file=sys.stderr)
+        print("    export FREECAD_BIN=/home/pluto-atom-4/.local/opt/freecad-1.1.3/usr/bin/freecadcmd", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"✗ Error running conversion: {e}", file=sys.stderr)

@@ -1,0 +1,67 @@
+# Mamba Environment Specification
+# FreeCAD MCP Server
+#
+# Single environment: freecad-mcp
+#
+# Used to run the `freecad-robust-mcp` bridge server (the MCP client-facing
+# process). FreeCAD itself is NOT installed into this environment — it runs
+# separately as the GUI AppImage (see FREECAD_APPIMAGE in
+# scripts/start-mcp-freecad.sh) and is talked to over XML-RPC (port 9875) or
+# a JSON-RPC socket (port 9876), never imported in-process.
+#
+# freecad-robust-mcp is pip-only (not published on conda-forge), so it is
+# installed via pip_packages. It must be pinned alongside "mcp<2": a bare
+# `pip install freecad-robust-mcp` pulls in mcp 2.1.1 by default, which
+# crashes at import time (mcp 2.x renamed FastMCP to MCPServer, and
+# freecad-robust-mcp 0.6.1 on PyPI still imports the old
+# `mcp.server.fastmcp` path). Pinning mcp<2 is the verified fix — do not
+# drop it.
+#
+# Install with: mamba env create -f mamba-envs.yaml
+# Or manually (see setup_command below)
+
+environments:
+  freecad-mcp:
+    python: "3.11"
+    channels:
+      - conda-forge
+    conda_packages:
+      - python=3.11
+    pip_packages:
+      - freecad-robust-mcp
+      - mcp<2
+    description: >
+      Runs the freecad-robust-mcp bridge server that MCP clients (Claude
+      Code, Claude Desktop, etc.) talk to. FreeCAD runs externally as the
+      GUI AppImage and is reached over XML-RPC/socket — never imported into
+      this environment.
+    setup_command: |
+      mamba create -n freecad-mcp -c conda-forge python=3.11 -y
+      mamba run -n freecad-mcp pip install freecad-robust-mcp "mcp<2"
+
+# FreeCAD (external, GUI AppImage, never imported here)
+#
+# FreeCAD is not part of this conda environment. This project talks to a
+# running FreeCAD GUI instance (with the Robust MCP Bridge workbench
+# started) over the network, controlled by:
+#
+#   FREECAD_APPIMAGE   Path to the FreeCAD AppImage. Defaults to
+#                       ~/.local/bin/FreeCAD_1.1.3-Linux-x86_64-py311.AppImage
+#                       (see scripts/start-mcp-freecad.sh).
+#
+# Quick Reference
+usage: |
+  # Activation
+  mamba activate freecad-mcp
+
+  # Check active environment
+  conda info --envs
+
+  # List packages
+  mamba list
+
+  # Verify the bridge server imports and starts cleanly (catches the mcp 2.x bug)
+  mamba run -n freecad-mcp freecad-mcp --version
+
+  # Remove environment
+  mamba env remove -n freecad-mcp -y

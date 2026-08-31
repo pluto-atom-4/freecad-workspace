@@ -5,8 +5,14 @@
 #
 # This script runs the Python conversion logic inside FreeCAD,
 # which provides access to the required Part, Mesh, and FreeCAD modules.
+#
+# Set FREECAD_BIN to choose a specific headless FreeCAD binary (defaults to
+# freecadcmd on PATH), e.g.:
+#   export FREECAD_BIN=/home/pluto-atom-4/.local/opt/freecad-1.1.3/usr/bin/freecadcmd
 
 set -e
+
+FREECAD_BIN="${FREECAD_BIN:-freecadcmd}"
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,7 +29,7 @@ echo "Starting STL to STEP conversion..."
 echo "Script: $CONVERSION_SCRIPT"
 echo ""
 
-freecad -c "exec(open('$CONVERSION_SCRIPT').read())" 2>&1 | grep -v "Wayland\|Qt\|EGL" | grep -v "^Recompute"
+"$FREECAD_BIN" -c "exec(open('$CONVERSION_SCRIPT').read())" 2>&1 | grep -v "Wayland\|Qt\|EGL" | grep -v "^Recompute"
 
 # Check if output was created
 OUTPUT_STEP="$SCRIPT_DIR/../Mechanical/feetech-STS3032.step"

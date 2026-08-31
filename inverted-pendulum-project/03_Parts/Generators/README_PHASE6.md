@@ -38,7 +38,7 @@ Phase 6 enables three independent but complementary capabilities:
 
 ```bash
 # Activate mamba Phase 6 environment
-mamba activate pendulum-phase6
+mamba activate pendulum-tools
 
 # Verify imports
 python3 -c "import cadquery; import trimesh; print('OK')"
@@ -89,7 +89,7 @@ python3 06_cadquery_parametric_brackets.py \
   --thickness 10 \
   --hole-diameter 8 \
   --fillet-radius 3 \
-  --output my_bracket
+  --name my_bracket
 
 # L-bracket (two perpendicular plates)
 python3 06_cadquery_parametric_brackets.py \
@@ -534,7 +534,7 @@ python3 06_trimesh_mesh_validator.py --input servo.stl
 python3 06_cadquery_parametric_brackets.py \
   --type simple \
   --length 100 --width 80 --thickness 10 \
-  --output support_bracket
+  --name support_bracket
 
 # 3. Create merge config pointing to both STLs
 # Edit merge_config_example.json with paths
@@ -583,7 +583,7 @@ python3 06_cadquery_parametric_brackets.py \
   --thickness 10 \
   --hole-diameter 8 \
   --fillet-radius 3 \
-  --output servo_mount
+  --name servo_mount
 
 # Step 2: Check output
 ls -lh 03_Parts/Mechanical/servo_mount.*
@@ -807,21 +807,21 @@ python3 06_trimesh_mesh_validator.py \
 
 **Symptom:**
 ```
-ERROR: CadQuery not available. Install with: uv sync
+ERROR: CadQuery not available. Activate the mamba env: mamba activate pendulum-tools
 ModuleNotFoundError: No module named 'cadquery'
 ```
 
 **Solution:**
 ```bash
 # Ensure mamba environment activated
-mamba activate pendulum-phase6
+mamba activate pendulum-tools
 
 # Verify environment
 python3 -c "import cadquery; print(cadquery.__version__)"
 
-# If still fails, sync dependencies
+# If still fails, recreate the env from the pinned lock file
 cd /path/to/inverted-pendulum-project
-uv sync
+mamba env create -n pendulum-tools -f mamba-envs.lock.yml
 ```
 
 ### Issue: "STEP export fails" or "File not found"
@@ -842,13 +842,9 @@ ls -ld 03_Parts/Mechanical  # Should be writable
 
 # Check disk space
 df -h | grep "/$"  # Need at least 100MB free
-
-# Try again with explicit path
-python3 06_cadquery_parametric_brackets.py \
-  --type simple \
-  --length 100 --width 80 --thickness 10 \
-  --output /absolute/path/bracket
 ```
+
+**Note:** Output directory is fixed to `03_Parts/Mechanical/` — `--name` sets the filename prefix only, not a path. There is no CLI flag to redirect output elsewhere.
 
 ### Issue: "Transform looks wrong" in merged mesh
 
@@ -1040,4 +1036,4 @@ python3 06_trimesh_mesh_validator.py --input servo_with_bracket.stl
 
 **Last Updated:** 2026-08-30
 **Phase 6 Status:** Complete (all 3 tools operational)
-**Environment:** pendulum-phase6 mamba environment
+**Environment:** pendulum-tools mamba environment (single env, shared with Phases 1-5's numeric tooling)

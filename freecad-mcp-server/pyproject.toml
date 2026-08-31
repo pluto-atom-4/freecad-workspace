@@ -1,8 +1,0 @@
-[project]
-name = "freecad-mcp-server-workspace"
-version = "0.1.0"
-description = "FreeCAD Robust MCP Server development workspace"
-requires-python = ">=3.11"
-dependencies = [
-    "freecad-robust-mcp>=0.1.0",
-]

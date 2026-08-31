@@ -15,14 +15,18 @@ Complete workflow for integrating Feetech STS3032 servo motor with three-plate a
 Converts servo motor STL mesh to STEP format for assembly integration.
 
 **Requirements:**
-- FreeCAD system installation
-- `freecad` command in PATH
+- Headless FreeCAD binary (`freecadcmd`), invoked as a subprocess
+- Resolved via the `FREECAD_BIN` environment variable, defaulting to
+  `freecadcmd` on PATH if unset
 
 **Usage:**
 ```bash
 python3 01_convert_servo_stl_to_step.py
-# or
-freecad -c "exec(open('01_convert_servo_stl_to_step_via_freecad.py').read())"
+# or, pinning a specific FreeCAD build:
+FREECAD_BIN=/home/pluto-atom-4/.local/opt/freecad-1.1.3/usr/bin/freecadcmd \
+  python3 01_convert_servo_stl_to_step.py
+# or manually:
+freecadcmd -c "exec(open('01_convert_servo_stl_to_step_via_freecad.py').read())"
 ```
 
 **Output:**
@@ -38,12 +42,12 @@ freecad -c "exec(open('01_convert_servo_stl_to_step_via_freecad.py').read())"
 Calculates precise servo placement based on plate geometry (Edge26, Edge34).
 
 **Requirements:**
-- FreeCAD with Python access
+- Headless FreeCAD binary (`freecadcmd`), resolved via `FREECAD_BIN` if you use that pattern
 - `plates_assembled.FCStd` in current directory
 
 **Usage:**
 ```bash
-freecad --python 02_position_servo.py
+freecadcmd --python 02_position_servo.py
 ```
 
 **Output:**
@@ -65,13 +69,13 @@ freecad --python 02_position_servo.py
 Creates external link to servo STEP file in assembly, applies placement.
 
 **Requirements:**
-- FreeCAD with Python access
+- Headless FreeCAD binary (`freecadcmd`)
 - Servo STEP file from Phase 1
 - `servo_placement.json` from Phase 2
 
 **Usage:**
 ```bash
-freecad --python 03_link_servo_to_assembly.py
+freecadcmd --python 03_link_servo_to_assembly.py
 ```
 
 **Output:**
@@ -93,13 +97,13 @@ freecad --python 03_link_servo_to_assembly.py
 Merges plates + servo into single geometry, exports to multiple formats.
 
 **Requirements:**
-- FreeCAD with Python access
+- Headless FreeCAD binary (`freecadcmd`)
 - `plates_assembled.FCStd` (with servo link)
 - Servo STEP file
 
 **Usage:**
 ```bash
-freecad --python 04_export_assembly_merged.py
+freecadcmd --python 04_export_assembly_merged.py
 ```
 
 **Output:**
@@ -156,7 +160,7 @@ End-to-end tests requiring FreeCAD Python environment.
 
 **Usage:**
 ```bash
-freecad --python test_05_integration_live.py
+freecadcmd --python test_05_integration_live.py
 ```
 
 **Tests:**
@@ -180,13 +184,13 @@ Run all phases sequentially:
 python3 01_convert_servo_stl_to_step.py
 
 # Phase 2: Calculate servo position
-freecad --python 02_position_servo.py
+freecadcmd --python 02_position_servo.py
 
 # Phase 3: Link servo to assembly
-freecad --python 03_link_servo_to_assembly.py
+freecadcmd --python 03_link_servo_to_assembly.py
 
 # Phase 4: Export merged assembly
-freecad --python 04_export_assembly_merged.py
+freecadcmd --python 04_export_assembly_merged.py
 
 # Run tests
 python3 test_05_integration.py
@@ -213,11 +217,15 @@ Direct FreeCAD part generation using AppImage Python interpreter.
 ```
 
 ### `simple_bracket.py`
-Support bracket generation via FreeCAD MCP Bridge.
+**Deprecated / legacy.** Support bracket generation via a FreeCAD MCP Bridge
+(XML-RPC), which requires the separate `freecad-mcp-server` project running
+its bridge — not part of the standard `pendulum-tools` workflow and no longer
+a project dependency. Prefer `06_cadquery_parametric_brackets.py` (Phase 6,
+CadQuery-based, no FreeCAD/bridge required) for new bracket generation.
 
-**Usage:**
+**Usage (requires a running FreeCAD MCP Bridge, see `freecad-mcp-server/`):**
 ```bash
-uv run python3 simple_bracket.py
+mamba run -n pendulum-tools python3 simple_bracket.py
 ```
 
 ---
@@ -253,8 +261,15 @@ Generators/
 - ✓ Structured logging
 - ✓ Constants in UPPER_CASE
 
+## Environment
+
+Phase 1-5 scripts that need FreeCAD invoke it headlessly via `freecadcmd` as a
+subprocess, controlled by the `FREECAD_BIN` environment variable (defaults to
+`freecadcmd` on PATH). See `../../mamba-envs.yaml` and `../../README.md` for
+the single `pendulum-tools` mamba environment used for everything else
+(numpy/scipy/matplotlib and, for Phase 6, cadquery/trimesh).
+
 ## References
 
 - [FreeCAD Part Module](https://wiki.freecadweb.org/Part_Module)
 - [FreeCAD Scripting Basics](https://wiki.freecadweb.org/Scripting_basics)
-- [FreeCAD MCP Server](https://github.com/spkane/freecad-addon-robust-mcp-server)

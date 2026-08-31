@@ -21,7 +21,9 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 FREECAD_APPIMAGE="${FREECAD_APPIMAGE:-$HOME/.local/bin/FreeCAD_1.1.3-Linux-x86_64-py311.AppImage}"
-VENV_PATH="$PROJECT_DIR/.venv"
+MAMBA_ENV="freecad-mcp"
+MAMBA_ACTIVATE="$HOME/miniforge3/bin/activate"
+MAMBA_ENV_PREFIX="$HOME/miniforge3/envs/$MAMBA_ENV"
 LOG_DIR="$PROJECT_DIR/logs"
 LOG_FILE="$LOG_DIR/mcp-server.log"
 
@@ -37,30 +39,33 @@ VALIDATE=true
 # State tracking
 MCP_PID=""
 FREECAD_PID=""
-VENV_ACTIVATED=false
+MAMBA_ENV_ACTIVATED=false
 
 ################################################################################
-# Virtual Environment Setup
+# Mamba Environment Setup
 ################################################################################
 
-activate_venv() {
-    if [ -f "$VENV_PATH/bin/activate" ]; then
-        source "$VENV_PATH/bin/activate"
-        VENV_ACTIVATED=true
-        export VIRTUAL_ENV="$VENV_PATH"
-        return 0
+activate_mamba_env() {
+    if [ -f "$MAMBA_ACTIVATE" ]; then
+        # shellcheck disable=SC1090
+        source "$MAMBA_ACTIVATE" "$MAMBA_ENV" 2>/dev/null
+        if [ "${CONDA_DEFAULT_ENV:-}" = "$MAMBA_ENV" ]; then
+            MAMBA_ENV_ACTIVATED=true
+            return 0
+        fi
+        return 1
     else
         return 1
     fi
 }
 
-run_in_venv() {
+run_in_mamba_env() {
     local cmd="$1"
-    if [ "$VENV_ACTIVATED" = true ]; then
+    if [ "$MAMBA_ENV_ACTIVATED" = true ]; then
         eval "$cmd"
     else
-        # Fallback: use venv python directly
-        "$VENV_PATH/bin/python" -c "import sys; exec('$cmd')"
+        # Fallback: run inside the mamba env without activating in this shell
+        mamba run -n "$MAMBA_ENV" bash -c "$cmd"
     fi
 }
 
@@ -135,12 +140,12 @@ check_dependencies() {
     fi
     success "FreeCAD AppImage: $(basename "$FREECAD_APPIMAGE")"
 
-    # Check venv
-    if [ ! -d "$VENV_PATH" ]; then
-        error "Virtual environment not found: $VENV_PATH"
+    # Check mamba env
+    if [ ! -d "$MAMBA_ENV_PREFIX" ]; then
+        error "Mamba environment not found: $MAMBA_ENV"
         return 1
     fi
-    success "Virtual environment: $VENV_PATH"
+    success "Mamba environment: $MAMBA_ENV"
 
     return 0
 }
@@ -148,18 +153,18 @@ check_dependencies() {
 check_freecad_mcp() {
     print_header "Checking FreeCAD MCP Installation"
 
-    # Activate venv
-    if ! activate_venv; then
-        error "Failed to activate virtual environment"
+    # Activate mamba env
+    if ! activate_mamba_env; then
+        error "Failed to activate mamba environment: $MAMBA_ENV"
         return 1
     fi
 
-    success "Virtual environment activated: $VENV_PATH"
+    success "Mamba environment activated: $MAMBA_ENV"
 
     # Check if freecad-robust-mcp is installed
-    if ! python3 -c "import freecad_robust_mcp" 2>/dev/null; then
-        error "freecad-robust-mcp not installed in venv"
-        info "Run: cd $PROJECT_DIR && uv sync"
+    if ! python3 -c "import freecad_mcp" 2>/dev/null; then
+        error "freecad-robust-mcp not installed in mamba env: $MAMBA_ENV"
+        info "Run: cd $PROJECT_DIR && mamba env create -n $MAMBA_ENV -f mamba-envs.yaml"
         return 1
     fi
 
@@ -288,15 +293,15 @@ start_mcp_server() {
     # Create log directory
     mkdir -p "$LOG_DIR"
 
-    # Verify venv is activated
-    if [ "$VENV_ACTIVATED" = false ]; then
-        error "Virtual environment not activated"
+    # Verify mamba env is activated
+    if [ "$MAMBA_ENV_ACTIVATED" = false ]; then
+        error "Mamba environment not activated"
         return 1
     fi
 
     info "Mode: $MODE"
     info "Host: $HOST"
-    info "Virtual Environment: $VIRTUAL_ENV"
+    info "Mamba Environment: $MAMBA_ENV ($CONDA_PREFIX)"
 
     # Export configuration to environment
     export FREECAD_MODE="$MODE"
@@ -310,10 +315,10 @@ start_mcp_server() {
     log "  FREECAD_SOCKET_HOST=$FREECAD_SOCKET_HOST"
     log "  FREECAD_XMLRPC_PORT=$FREECAD_XMLRPC_PORT"
     log "  FREECAD_SOCKET_PORT=$FREECAD_SOCKET_PORT"
-    log "  VIRTUAL_ENV=$VIRTUAL_ENV"
+    log "  CONDA_PREFIX=$CONDA_PREFIX"
 
-    # Start server in background with full venv path for reliability
-    "$VENV_PATH/bin/freecad-mcp" >> "$LOG_FILE" 2>&1 &
+    # Start server in background with full mamba env binary path for reliability
+    "$MAMBA_ENV_PREFIX/bin/freecad-mcp" >> "$LOG_FILE" 2>&1 &
     MCP_PID=$!
 
     # Verify process started
@@ -325,7 +330,7 @@ start_mcp_server() {
     fi
 
     success "MCP Server started (PID: $MCP_PID)"
-    log "Command: $VENV_PATH/bin/freecad-mcp"
+    log "Command: $MAMBA_ENV_PREFIX/bin/freecad-mcp"
     log "Logs: $LOG_FILE"
 
     # Wait for server to fully initialize
@@ -585,7 +590,7 @@ main() {
     # Print startup banner
     print_header "FreeCAD MCP Server Launcher"
     info "Project: $PROJECT_DIR"
-    info "Virtual Environment: $VENV_PATH"
+    info "Mamba Environment: $MAMBA_ENV"
     info "Configuration Dir: $(pwd)"
     echo
 
@@ -593,11 +598,11 @@ main() {
     check_dependencies || exit 1
     check_freecad_mcp || exit 1
 
-    # Verify venv is activated
-    if [ "$VENV_ACTIVATED" = false ]; then
-        warning "Virtual environment not activated. Attempting to activate..."
-        activate_venv || {
-            error "Failed to activate virtual environment"
+    # Verify mamba env is activated
+    if [ "$MAMBA_ENV_ACTIVATED" = false ]; then
+        warning "Mamba environment not activated. Attempting to activate..."
+        activate_mamba_env || {
+            error "Failed to activate mamba environment: $MAMBA_ENV"
             exit 1
         }
     fi

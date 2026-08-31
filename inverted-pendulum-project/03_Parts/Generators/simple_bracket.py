@@ -14,7 +14,7 @@ PREREQUISITES:
         ./scripts/start-mcp-freecad.sh --mode xmlrpc
 
 USAGE:
-    uv run python3 simple_bracket.py
+    mamba run -n pendulum-tools python3 simple_bracket.py
 
 OUTPUT:
     - 03_Parts/Mechanical/support_bracket.FCStd (FreeCAD native)

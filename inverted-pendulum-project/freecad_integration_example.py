@@ -2,86 +2,61 @@
 """
 Example: Using FreeCAD APIs from Inverted Pendulum Project
 
-This module demonstrates how to integrate FreeCAD functionality into
-the pendulum simulation project. There are two approaches:
+FreeCAD is integrated headlessly, as a separate subprocess, never imported
+into the same Python process as CadQuery/OCP/trimesh (the two bundle
+different, incompatible OpenCASCADE builds).
 
-1. MCP Client Mode (recommended)
-   - Requires FreeCAD with MCP Bridge running
-   - Communicates via XML-RPC (port 9875) or Socket (port 9876)
-   - Works from any Python environment
-
-2. Direct Bindings Mode
-   - Requires running in FreeCAD's Python environment
-   - Direct access to FreeCAD objects and APIs
-   - More powerful but tightly coupled to FreeCAD
+This module demonstrates "direct bindings" mode:
+    - Runs inside FreeCAD's own Python environment (via a headless FreeCAD
+      binary, e.g. `freecadcmd`), invoked as a subprocess from the shell or
+      from another script.
+    - Direct access to FreeCAD objects and the full Python API (Part, Mesh,
+      App, ...).
+    - The FreeCAD binary is resolved from the FREECAD_BIN environment
+      variable, defaulting to "freecadcmd" (relies on PATH) if unset.
 """
 
+import os
 import sys
 from typing import Optional
 
 
 # ============================================================================
-# Approach 1: MCP Client Mode (Recommended)
+# FreeCAD binary configuration
 # ============================================================================
 
-def use_freecad_via_mcp():
-    """
-    Control FreeCAD via MCP when FreeCAD + MCP Bridge is running.
-
-    Usage:
-        1. Start FreeCAD with MCP Bridge:
-           ./scripts/start-mcp-freecad.sh --mode xmlrpc
-
-        2. Run this function:
-           python3 -c "from freecad_integration_example import use_freecad_via_mcp; use_freecad_via_mcp()"
-    """
-    try:
-        from freecad_robust_mcp import FreecadMCP
-
-        # Connect to running FreeCAD MCP server
-        mcp = FreecadMCP(
-            mode="xmlrpc",
-            host="localhost",
-            port=9875
-        )
-
-        print("✓ Connected to FreeCAD via MCP")
-
-        # Example: Create a document and add geometry
-        mcp.create_document("PendulumStudy")
-        mcp.create_box(length=10, width=5, height=2)
-        mcp.export_step("pendulum_model.step")
-
-        print("✓ Created geometry and exported to STEP")
-
-    except ImportError:
-        print("✗ freecad-robust-mcp not installed. Run: uv sync")
-    except ConnectionError:
-        print("✗ Cannot connect to FreeCAD MCP Bridge.")
-        print("  Start FreeCAD with: ./scripts/start-mcp-freecad.sh --mode xmlrpc")
+# Resolve the headless FreeCAD binary to use for subprocess invocations.
+# Defaults to "freecadcmd" (relies on PATH). To pin a specific build:
+#   export FREECAD_BIN=/home/pluto-atom-4/.local/opt/freecad-1.1.3/usr/bin/freecadcmd
+FREECAD_BIN = os.environ.get("FREECAD_BIN", "freecadcmd")
 
 
 # ============================================================================
-# Approach 2: Direct Python Bindings (Advanced)
+# Direct Python Bindings (sanctioned pattern)
 # ============================================================================
 
 def use_freecad_direct() -> Optional[object]:
     """
-    Direct FreeCAD Python bindings (only in FreeCAD's Python environment).
+    Direct FreeCAD Python bindings — only available when this code runs
+    inside FreeCAD's own Python interpreter (i.e. invoked via a headless
+    FreeCAD binary as a subprocess, not the mamba/uv Python environment).
 
     Usage:
-        1. Start FreeCAD GUI with MCP Bridge workbench
-        2. In FreeCAD's Python console, run:
+        1. In FreeCAD's Python console, run:
            >>> exec(open('freecad_integration_example.py').read())
            >>> use_freecad_direct()
 
-    Or run in FreeCAD's Python:
-        freecad -c "
+    Or run via a headless FreeCAD binary as a subprocess:
+        $FREECAD_BIN -c "
         import sys
         sys.path.insert(0, '/path/to/inverted-pendulum-project')
         from freecad_integration_example import use_freecad_direct
         use_freecad_direct()
         "
+
+    Or from the command line of this script itself:
+        python3 freecad_integration_example.py direct
+        (this re-execs itself under $FREECAD_BIN as a subprocess)
     """
     try:
         import FreeCAD
@@ -110,8 +85,35 @@ def use_freecad_direct() -> Optional[object]:
 
     except ImportError:
         print("✗ FreeCAD Python bindings not available.")
-        print("  Run this script within FreeCAD's Python environment.")
+        print("  This function must run inside FreeCAD's Python environment.")
+        print(f"  Run it via: {FREECAD_BIN} -c \"exec(open('freecad_integration_example.py').read()); use_freecad_direct()\"")
         return None
+
+
+def run_direct_via_subprocess() -> int:
+    """
+    Convenience helper: re-invoke this script inside FreeCAD's own Python
+    environment via subprocess, using the FREECAD_BIN binary. This is what
+    `python3 freecad_integration_example.py direct` does when run from the
+    mamba/uv environment (which does not have the `FreeCAD` module).
+    """
+    import subprocess
+
+    script_path = os.path.abspath(__file__)
+    cmd = [
+        FREECAD_BIN,
+        "-c",
+        f"exec(open('{script_path}').read()); use_freecad_direct()",
+    ]
+    print(f"Invoking FreeCAD directly via subprocess: {' '.join(cmd)}")
+    try:
+        result = subprocess.run(cmd, timeout=120)
+        return result.returncode
+    except FileNotFoundError:
+        print(f"✗ FreeCAD binary not found: {FREECAD_BIN}")
+        print("  Set FREECAD_BIN to a valid headless FreeCAD binary, e.g.:")
+        print("    export FREECAD_BIN=/home/pluto-atom-4/.local/opt/freecad-1.1.3/usr/bin/freecadcmd")
+        return 1
 
 
 # ============================================================================
@@ -123,7 +125,9 @@ def export_simulation_to_freecad(
     filename: str = "pendulum_simulation.step"
 ):
     """
-    Export simulation results as 3D model to FreeCAD.
+    Export simulation results as a 3D model, using FreeCAD's direct Python
+    bindings. Must run inside FreeCAD's own Python environment (see
+    use_freecad_direct() for how to invoke it via subprocess).
 
     Args:
         positions: List of (x, y, z) tuples from pendulum trajectory
@@ -135,37 +139,26 @@ def export_simulation_to_freecad(
         >>> export_simulation_to_freecad(positions)
     """
     try:
-        from freecad_robust_mcp import FreecadMCP
+        import FreeCAD
+        import Part
 
-        mcp = FreecadMCP(mode="xmlrpc", host="localhost", port=9875)
-        mcp.create_document("SimulationVisualization")
+        doc = FreeCAD.newDocument("SimulationVisualization")
 
-        # Create a trail of spheres at each position
+        # Create a trail of spheres at each sampled position
         for i, pos in enumerate(positions[::10]):  # Sample every 10th point
             x, y, z = pos
-            mcp.create_sphere(
-                radius=0.5,
-                x=x, y=y, z=z
-            )
+            sphere = Part.makeSphere(0.5)
+            obj = doc.addObject("Part::Feature", f"TrailPoint{i}")
+            obj.Shape = sphere
+            obj.Placement.Base = FreeCAD.Vector(x, y, z)
 
-        mcp.export_step(filename)
+        doc.recompute()
+        Part.export(doc.Objects, filename)
         print(f"✓ Exported simulation visualization: {filename}")
 
-    except ConnectionError:
-        print("✗ FreeCAD MCP server not running.")
-
-
-# ============================================================================
-# Configuration
-# ============================================================================
-
-# MCP connection settings (can override via environment)
-MCP_CONFIG = {
-    "mode": "xmlrpc",           # or "socket"
-    "host": "localhost",
-    "xmlrpc_port": 9875,        # XML-RPC port
-    "socket_port": 9876,        # Socket port
-}
+    except ImportError:
+        print("✗ FreeCAD Python bindings not available.")
+        print(f"  Run this inside FreeCAD's Python environment (see {FREECAD_BIN}).")
 
 
 # ============================================================================
@@ -173,14 +166,15 @@ MCP_CONFIG = {
 # ============================================================================
 
 if __name__ == "__main__":
-    import sys
-
-    if len(sys.argv) > 1 and sys.argv[1] == "mcp":
-        use_freecad_via_mcp()
-    elif len(sys.argv) > 1 and sys.argv[1] == "direct":
-        use_freecad_direct()
+    if len(sys.argv) > 1 and sys.argv[1] == "direct":
+        # Try running directly first (works if we're already inside FreeCAD's
+        # Python environment); otherwise re-exec via subprocess under FREECAD_BIN.
+        try:
+            import FreeCAD  # noqa: F401
+            use_freecad_direct()
+        except ImportError:
+            sys.exit(run_direct_via_subprocess())
     else:
         print(__doc__)
         print("\nUsage:")
-        print("  python3 freecad_integration_example.py mcp    # Use MCP mode (recommended)")
-        print("  python3 freecad_integration_example.py direct # Use direct bindings (in FreeCAD)")
+        print("  python3 freecad_integration_example.py direct  # Direct FreeCAD bindings (via subprocess, FREECAD_BIN)")

@@ -4,20 +4,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Workspace Structure
 
-FreeCAD workspace with two independent projects using Python 3.11 and `uv` package manager:
+FreeCAD workspace with two independent projects, Python 3.11:
 
 ```
 freecad-workspace/
-├── freecad-mcp-server/       # FreeCAD MCP Server development
-│   ├── .venv/                # Isolated Python environment
-│   └── pyproject.toml        # uv project config
-├── inverted-pendulum-project/ # Pendulum simulation & modeling
-│   ├── .venv/                # Isolated Python environment
-│   └── pyproject.toml        # uv project config
+├── freecad-mcp-server/        # FreeCAD MCP Server development (mamba/conda only)
+│   ├── mamba-envs.yaml        # freecad-mcp env spec (recipe)
+│   └── mamba-envs.lock.yml    # freecad-mcp env, pinned/reproducible
+├── inverted-pendulum-project/ # Pendulum simulation & modeling (mamba/conda only)
+│   ├── mamba-envs.yaml        # pendulum-tools env spec (recipe)
+│   └── mamba-envs.lock.yml    # pendulum-tools env, pinned/reproducible
 ├── .gitignore
 ├── README.md
 └── CLAUDE.md
 ```
+
+**Note:** both projects are mamba-only — there is no `uv`, `pyproject.toml`, `uv.lock`, or
+`.venv` anywhere in this workspace. Each project is managed by its own single mamba/conda
+environment (`freecad-mcp` for `freecad-mcp-server`, `pendulum-tools` for
+`inverted-pendulum-project`), each with its own `mamba-envs.yaml` (recipe) and
+`mamba-envs.lock.yml` (pinned/reproducible export). FreeCAD itself is never installed into
+either environment — `freecad-mcp-server` talks to it externally over XML-RPC/socket (GUI
+AppImage), `inverted-pendulum-project` invokes it externally as a subprocess. Do not assume
+`uv sync`/`uv run` work anywhere in this workspace — they don't.
 
 ## Projects Overview
 
@@ -78,15 +87,20 @@ freecad-workspace/
 
 ### Environment Management
 
+**freecad-mcp-server** (mamba/conda):
 ```bash
-# Activate project environment
-cd <project>/ && source .venv/bin/activate
+mamba activate freecad-mcp
+cd freecad-mcp-server/ && python3 <script.py>
+# Or run directly without activating
+cd freecad-mcp-server/ && mamba run -n freecad-mcp python3 <script.py>
+# Recreate dependencies (after mamba-envs.yaml changes)
+mamba env remove -n freecad-mcp -y && mamba env create -n freecad-mcp -f freecad-mcp-server/mamba-envs.yaml
+```
 
-# Or use uv directly (no activation needed)
-cd <project>/ && uv run python3 <script.py>
-
-# Sync dependencies (after pyproject.toml changes)
-cd <project>/ && uv sync
+**inverted-pendulum-project** (mamba/conda):
+```bash
+mamba activate pendulum-tools
+cd inverted-pendulum-project/ && python3 <script.py>
 ```
 
 ### FreeCAD MCP Server
@@ -120,34 +134,41 @@ just quality::check          # All pre-commit hooks
 
 ```bash
 cd freecad-mcp-server
-# Freecad-robust-mcp is already installed via uv sync
+# freecad-robust-mcp is already installed via mamba env create -f mamba-envs.yaml
 # Configure in MCP client settings to use the package
 
-# Test connection
-uv run python3 -c "import freecad_robust_mcp; print(freecad_robust_mcp.__version__)"
+# Test connection (module import name is freecad_mcp, not freecad_robust_mcp)
+mamba run -n freecad-mcp python3 -c "import freecad_mcp; print(freecad_mcp.__version__)"
+
+# Or check the CLI directly (also confirms the required "mcp<2" pin is intact —
+# a bare pip install pulls mcp 2.x by default, which crashes with
+# ModuleNotFoundError: No module named 'mcp.server.fastmcp')
+mamba run -n freecad-mcp freecad-mcp --version
 ```
 
 ### Inverted Pendulum Project
 
+No `uv`/`pyproject.toml` — uses the `pendulum-tools` mamba environment instead. See
+`inverted-pendulum-project/README.md` for the full setup.
+
 ```bash
 cd inverted-pendulum-project
 
+# Activate the environment (create it first if needed — see mamba-envs.yaml)
+mamba activate pendulum-tools
+
 # Run simulation
-uv run python3 simulate.py
+python3 simulate.py
 
-# Use FreeCAD integration (MCP mode)
-# 1. Start FreeCAD with MCP Bridge (in another terminal)
-# 2. Run:
-uv run python3 freecad_integration_example.py mcp
-
-# Direct FreeCAD Python bindings (advanced)
-freecad -c "exec(open('freecad_integration_example.py').read()); use_freecad_direct()"
+# FreeCAD integration: headless subprocess only (no MCP for this project)
+export FREECAD_BIN=~/.local/bin/freecadcmd1.1   # or rely on "freecadcmd" from PATH
+python3 freecad_integration_example.py direct
 
 # Run tests
-uv run python3 -m pytest
+python3 -m pytest
 
 # Open Python REPL
-uv run python3
+python3
 ```
 
 ## Available MCP Tools (FreeCAD)
@@ -188,7 +209,9 @@ Create `.mcp.json` in project root or configure in `~/.claude/claude_desktop_con
 }
 ```
 
-**Using from source with uv:**
+**Using the upstream repo from source** (a separate clone of `freecad-addon-robust-mcp-server`
+itself, built with its own `uv`/`mise`/`just` tooling — unrelated to this workspace's
+`freecad-mcp-server/`, which is mamba-only):
 ```json
 {
   "mcpServers": {
@@ -210,7 +233,8 @@ Create `.mcp.json` in project root or configure in `~/.claude/claude_desktop_con
 ### FreeCAD MCP Integration
 
 1. **Start FreeCAD with bridge** → must run before MCP client connects
-2. **Configure MCP client** → point to freecad-mcp command or uv wrapper
+2. **Configure MCP client** → point to the `freecad-mcp` command (PyPI package) or, for
+   an upstream source checkout, its own `uv run` wrapper (see MCP Client Configuration above)
 3. **Use MCP tools** → 150+ tools available through Claude
 4. **Export models** → STEP, STL, 3MF, OBJ, IGES formats
 
@@ -236,8 +260,10 @@ Create `.mcp.json` in project root or configure in `~/.claude/claude_desktop_con
 
 | File | Purpose |
 |------|---------|
-| `pyproject.toml` (each project) | Project metadata, dependencies, Python version |
-| `.venv/` | Python virtual environment (do not commit) |
+| `freecad-mcp-server/mamba-envs.yaml` | freecad-mcp env recipe (unpinned) |
+| `freecad-mcp-server/mamba-envs.lock.yml` | freecad-mcp env, pinned/reproducible |
+| `inverted-pendulum-project/mamba-envs.yaml` | pendulum-tools env recipe (unpinned) |
+| `inverted-pendulum-project/mamba-envs.lock.yml` | pendulum-tools env, pinned/reproducible |
 | `.gitignore` | Excludes venv, __pycache__, .FCStd files |
 | `.mcp.json` | MCP server configuration (project-level) |
 
@@ -251,13 +277,15 @@ Create `.mcp.json` in project root or configure in `~/.claude/claude_desktop_con
 **FreeCAD crashes in embedded mode:**
 - Don't use `FREECAD_MODE=embedded` on macOS/Windows — use `xmlrpc` or `socket` instead
 
-**Dependencies won't sync:**
-- Verify Python 3.11 is available: `python3 --version`
-- Clear cache: `rm -rf .venv` then `uv sync`
+**freecad-mcp env broken (freecad-mcp-server):**
+- Recreate from the pinned lock: `mamba env remove -n freecad-mcp -y && mamba env create -n freecad-mcp -f freecad-mcp-server/mamba-envs.lock.yml`
+- If recreating from the unpinned recipe instead, remember the `mcp<2` pin in `pip_packages` is required — a bare `pip install freecad-robust-mcp` pulls mcp 2.x, which crashes on import.
+
+**pendulum-tools env broken (inverted-pendulum-project):**
+- Recreate from the pinned lock: `mamba env remove -n pendulum-tools -y && mamba env create -n pendulum-tools -f inverted-pendulum-project/mamba-envs.lock.yml`
 
 ## References
 
 - [FreeCAD](https://www.freecadweb.org/)
 - [Robust MCP Server Docs](https://spkane.github.io/freecad-addon-robust-mcp-server/)
 - [MCP Protocol](https://modelcontextprotocol.io/)
-- [uv Package Manager](https://docs.astral.sh/uv/)
