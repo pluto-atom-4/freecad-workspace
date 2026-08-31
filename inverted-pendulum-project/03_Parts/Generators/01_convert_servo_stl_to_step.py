@@ -62,7 +62,10 @@ def main():
     # more appropriate than the GUI "freecad" binary for a headless
     # conversion step). Override with FREECAD_BIN, e.g.:
     #   export FREECAD_BIN=/home/pluto-atom-4/.local/opt/freecad-1.1.3/usr/bin/freecadcmd
-    freecad_bin = os.environ.get("FREECAD_BIN", "freecadcmd")
+    # expanduser: FREECAD_BIN may arrive un-expanded (e.g. from a .env file
+    # or a non-shell caller) rather than shell-expanded, unlike a literal
+    # `export FREECAD_BIN=~/...` typed at a bash prompt.
+    freecad_bin = os.path.expanduser(os.environ.get("FREECAD_BIN", "freecadcmd"))
 
     # Run the conversion via FreeCAD
     print("Starting STL to STEP conversion...")

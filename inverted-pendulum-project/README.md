@@ -48,9 +48,9 @@ mamba env export --no-builds -n pendulum-tools > mamba-envs.lock.yml
 
 ### Run Simulation
 
-```bash
-mamba run -n pendulum-tools python3 simulate.py
-```
+**Not yet implemented.** `simulate.py` (numpy/scipy pendulum dynamics) is planned but
+does not exist in this repo yet — see the CAD/mesh tooling below for what's currently
+implemented (Phases 1-6).
 
 ### FreeCAD Integration (headless subprocess)
 
@@ -127,7 +127,7 @@ inverted-pendulum-project/
 ├── mamba-envs.lock.yml                 # Pinned, reproducible env export
 ├── README.md                           # This file
 ├── freecad_integration_example.py      # FreeCAD integration example (direct/subprocess)
-├── simulate.py                         # Pendulum simulation
+├── simulate.py                         # (planned, not yet implemented) Pendulum simulation
 ├── 01_Documentation/
 │   └── MCP_TOOLS_REFERENCE.md         # Deprecated MCP tool catalog (see note in file)
 ├── 02_Design_Inputs/                  # Design specifications & parameters

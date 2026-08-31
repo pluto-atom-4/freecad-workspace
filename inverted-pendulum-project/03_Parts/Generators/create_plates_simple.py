@@ -13,8 +13,9 @@ Usage:
   freecad --gui
   Then: File > Open Console > paste this file
 
-  Or:
-  mamba run -n pendulum-tools python3 create_plates_simple.py
+  Or (headless — this script imports FreeCAD directly, it does NOT run in
+  the pendulum-tools mamba env):
+  "${FREECAD_BIN:-freecadcmd}" create_plates_simple.py
 """
 
 import sys
