@@ -807,7 +807,7 @@ python3 06_trimesh_mesh_validator.py \
 
 **Symptom:**
 ```
-ERROR: CadQuery not available. Install with: uv sync
+ERROR: CadQuery not available. Activate the mamba env: mamba activate pendulum-tools
 ModuleNotFoundError: No module named 'cadquery'
 ```
 
@@ -819,9 +819,9 @@ mamba activate pendulum-tools
 # Verify environment
 python3 -c "import cadquery; print(cadquery.__version__)"
 
-# If still fails, sync dependencies
+# If still fails, recreate the env from the pinned lock file
 cd /path/to/inverted-pendulum-project
-uv sync
+mamba env create -n pendulum-tools -f mamba-envs.lock.yml
 ```
 
 ### Issue: "STEP export fails" or "File not found"

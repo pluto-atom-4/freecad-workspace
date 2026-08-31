@@ -232,8 +232,7 @@ meshlab plates_assembled_with_servo.stl
 ### Prerequisites
 ```bash
 cd inverted-pendulum-project
-uv sync
-source .venv/bin/activate
+mamba activate pendulum-tools
 ```
 
 ### Run Phases

@@ -14,7 +14,7 @@ Usage:
   Then: File > Open Console > paste this file
 
   Or:
-  uv run python3 create_plates_simple.py
+  mamba run -n pendulum-tools python3 create_plates_simple.py
 """
 
 import sys

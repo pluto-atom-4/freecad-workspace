@@ -225,7 +225,7 @@ CadQuery-based, no FreeCAD/bridge required) for new bracket generation.
 
 **Usage (requires a running FreeCAD MCP Bridge, see `freecad-mcp-server/`):**
 ```bash
-uv run python3 simple_bracket.py
+mamba run -n pendulum-tools python3 simple_bracket.py
 ```
 
 ---

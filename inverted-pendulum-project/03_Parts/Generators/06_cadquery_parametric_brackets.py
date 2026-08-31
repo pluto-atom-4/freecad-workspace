@@ -56,7 +56,7 @@ def validate_imports():
         import cadquery
         return cadquery
     except ImportError:
-        print("ERROR: CadQuery not available. Install with: uv sync")
+        print("ERROR: CadQuery not available. Activate the mamba env: mamba activate pendulum-tools")
         sys.exit(1)
 
 
