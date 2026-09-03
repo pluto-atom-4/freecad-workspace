@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "freecad": {
-      "command": "freecad-mcp",
+      "command": "/home/pluto-atom-4/miniforge3/envs/freecad-mcp/bin/freecad-mcp",
       "env": {
         "FREECAD_MODE": "xmlrpc",
         "FREECAD_SOCKET_HOST": "localhost",
