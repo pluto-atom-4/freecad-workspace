@@ -8,7 +8,7 @@ Integration of Feetech STS3032 servo motor into FreeCAD plates assembly (GitHub 
 - Servo geometry: 1.8 MB STL → 36.13 MB STEP
 - Assembly file: 13 KB (base) → <20 KB (with servo link)
 - Mechanical constraint: <1mm alignment with Middle_Plate edges
-- Production artifacts: STEP (2.0-2.5 MB) + STL (1.8-2.0 MB)
+- Production artifacts: STEP (2.0-2.5 MB) + STL (1.0-1.5 MB, reduced-servo geometry as of the Phase 4 pipeline fix)
 
 ---
 
@@ -141,7 +141,7 @@ Integration of Feetech STS3032 servo motor into FreeCAD plates assembly (GitHub 
 | Format | File | Size | Use Case |
 |--------|------|------|----------|
 | STEP | `plates_assembled_with_servo.step` | 2.0-2.5 MB | CAD tool import |
-| STL | `plates_assembled_with_servo.stl` | 1.8-2.0 MB | 3D printing |
+| STL | `plates_assembled_with_servo.stl` | 1.0-1.5 MB | 3D printing |
 | 3MF | `plates_assembled_with_servo.3mf` | ~0.8 MB | Advanced printing |
 
 **Metadata Output:**
@@ -155,7 +155,7 @@ Integration of Feetech STS3032 servo motor into FreeCAD plates assembly (GitHub 
   "no_overlaps": true,
   "exports": {
     "step": {"file": "plates_assembled_with_servo.step", "size_mb": 2.3},
-    "stl": {"file": "plates_assembled_with_servo.stl", "size_mb": 1.9}
+    "stl": {"file": "plates_assembled_with_servo.stl", "size_mb": 1.26}
   }
 }
 ```

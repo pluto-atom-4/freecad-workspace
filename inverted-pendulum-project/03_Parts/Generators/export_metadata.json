@@ -1,44 +1,58 @@
 {
   "phase": 4,
   "title": "Export/Merge Assembly Metadata",
-  "timestamp": "2026-08-28T17:58:27.709304",
-  "source_assembly": "plates_assembled.FCStd",
-  "servo_step_file": null,
-  "servo_geometry_included": false,
+  "timestamp": "2026-09-03T08:54:22.621431",
+  "source_assembly": "plates_servo_assembled.FCStd",
+  "servo_step_file": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/03_Parts/Mechanical/feetech-STS3032-reduced.step",
+  "servo_geometry_included": true,
   "exports": {
     "step": {
       "path": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/03_Parts/Generators/plates_assembled_with_servo.step",
-      "size_bytes": 71732,
-      "size_mb": 0.07,
-      "export_time_s": 0.03
+      "size_bytes": 3040979,
+      "size_mb": 2.9,
+      "export_time_s": 1.91
+    },
+    "stl": {
+      "path": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/03_Parts/Generators/plates_assembled_with_servo.stl",
+      "size_bytes": 1318384,
+      "size_mb": 1.26,
+      "triangles": 26366,
+      "export_time_s": 0.04
     }
   },
   "geometry_stats": {
-    "vertices": 74,
-    "edges": 132,
-    "faces": 52,
+    "vertices": 1738,
+    "edges": 2617,
+    "faces": 897,
     "triangles": 0,
-    "volume_mm3": 3863.44,
-    "surface_area_mm2": 4324.86,
+    "volume_mm3": 22708.46,
+    "surface_area_mm2": 17852.71,
     "bounding_box": {
-      "x_min": -21.98,
-      "x_max": 37.99,
+      "x_min": -21.99,
+      "x_max": 193.29,
       "y_min": -21.74,
-      "y_max": 58.29,
-      "z_min": 1.75,
-      "z_max": 7.25,
-      "x_length": 59.97,
-      "y_length": 80.03,
-      "z_length": 5.5
+      "y_max": 173.78,
+      "z_min": -25.85,
+      "z_max": 9.15,
+      "x_length": 215.28,
+      "y_length": 195.52,
+      "z_length": 35.0
     }
   },
   "validations": [
     {
       "check": "STEP file size",
-      "passed": false,
-      "details": "File size: 0.07 MB (expected: ~2.25 MB)",
-      "value": 0.068,
+      "passed": true,
+      "details": "File size: 2.90 MB (expected: ~2.25 MB)",
+      "value": 2.9,
       "tolerance": 2.25
+    },
+    {
+      "check": "STL file size",
+      "passed": true,
+      "details": "File size: 1.26 MB (expected: ~1.26 MB)",
+      "value": 1.257,
+      "tolerance": 1.26
     },
     {
       "check": "Geometry is closed (solid)",
@@ -48,13 +62,20 @@
     {
       "check": "Has valid faces",
       "passed": true,
-      "details": "Face count: 52"
+      "details": "Face count: 897"
     },
     {
       "check": "Has non-zero volume",
       "passed": true,
-      "details": "Volume: 3863.44 mm\u00b3",
-      "value": 3863.437
+      "details": "Volume: 22708.46 mm\u00b3",
+      "value": 22708.458
+    },
+    {
+      "check": "Servo Z position",
+      "passed": false,
+      "details": "Position error: 6.800 mm (tolerance: 0.5 mm)",
+      "value": 6.8,
+      "tolerance": 0.5
     }
   ],
   "all_validations_passed": false,
@@ -63,7 +84,7 @@
     "stl_format": "Binary mesh format",
     "3mf_format": "Modern 3D model format (optional)",
     "step_expected_size_mb": 2.25,
-    "stl_expected_size_mb": 1.9,
+    "stl_expected_size_mb": 1.26,
     "servo_tolerance_mm": 0.5
   },
   "usage_examples": {

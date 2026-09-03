@@ -941,7 +941,7 @@ class TestSuite:
         if stl_path.exists():
             stl_size_mb = stl_path.stat().st_size / (1024 * 1024)
             results_data["stl"] = stl_size_mb
-            stl_ok = 1.5 < stl_size_mb < 2.5
+            stl_ok = 1.0 < stl_size_mb < 1.5
         else:
             stl_ok = False
 
