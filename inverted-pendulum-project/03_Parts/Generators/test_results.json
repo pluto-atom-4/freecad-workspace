@@ -1,9 +1,9 @@
 {
-  "timestamp": "2026-09-03T11:50:11.130089",
+  "timestamp": "2026-09-03T13:22:26.207597",
   "test_suite": "Phase 5: Integration Tests",
   "total_tests": 23,
-  "passed": 23,
-  "failed": 0,
+  "passed": 22,
+  "failed": 1,
   "test_results": [
     {
       "test": "STEP file exists",
@@ -135,20 +135,23 @@
       "test": "Link config servo reference",
       "category": "Linking",
       "passed": true,
-      "message": "Servo body: Servo_Motor",
+      "message": "Servo part: STS3032_Mount",
       "details": {
-        "body_name": "Servo_Motor",
-        "step_file": "../Mechanical/feetech-STS3032.step"
+        "servo_part_name": "STS3032_Mount",
+        "mesh_object_names": [
+          "feetech_STS3032_visual_1_0mm",
+          "feetech_STS3032_collision_proxy"
+        ]
       }
     },
     {
       "test": "Link config validations",
       "category": "Linking",
-      "passed": true,
-      "message": "Validations: 8 checks, all passed: True",
+      "passed": false,
+      "message": "Validations: 8 checks, all passed: False",
       "details": {
         "count": 8,
-        "all_passed": true
+        "all_passed": false
       }
     },
     {

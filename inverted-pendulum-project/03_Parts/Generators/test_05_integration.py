@@ -592,7 +592,7 @@ class TestSuite:
                 data = json.load(f)
 
             # Check required fields
-            required = ["phase", "placement", "servo_body_name", "linked_plates", "validations"]
+            required = ["phase", "placement", "servo_part_name", "linked_plates", "validations"]
             has_fields = all(field in data for field in required)
 
             passed = has_fields and data.get("phase") == 3
@@ -677,25 +677,28 @@ class TestSuite:
             with open(config_path, 'r') as f:
                 data = json.load(f)
 
-            servo_body = data.get("servo_body_name")
-            servo_step = data.get("servo_step_file")
+            servo_part = data.get("servo_part_name")
+            mesh_names = data.get("mesh_object_names", [])
 
-            # Servo body should be named "Servo_Motor"
-            body_ok = servo_body == "Servo_Motor"
-            # STEP file path should reference the servo
-            step_ok = servo_step and "feetech" in servo_step.lower()
+            # Servo container should be named "STS3032_Mount"
+            body_ok = servo_part == "STS3032_Mount"
+            # Both the visual and collision-proxy meshes should be linked
+            meshes_ok = (
+                "feetech_STS3032_visual_1_0mm" in mesh_names
+                and "feetech_STS3032_collision_proxy" in mesh_names
+            )
 
-            passed = body_ok and step_ok
+            passed = body_ok and meshes_ok
 
             self.results.append(TestResult(
                 test_name="Link config servo reference",
                 category="Linking",
                 passed=passed,
-                message=f"Servo body: {servo_body}",
-                details={"body_name": servo_body, "step_file": servo_step}
+                message=f"Servo part: {servo_part}",
+                details={"servo_part_name": servo_part, "mesh_object_names": mesh_names}
             ))
             status = "✓" if passed else "✗"
-            print(f"  {status} Servo reference configured: {servo_body}")
+            print(f"  {status} Servo reference configured: {servo_part}")
         except Exception as e:
             self.results.append(TestResult(
                 test_name="Link config servo reference",

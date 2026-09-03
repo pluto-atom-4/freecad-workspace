@@ -1,18 +1,30 @@
 {
   "phase": 3,
   "title": "Servo Motor Assembly Link Configuration",
-  "servo_step_file": "../Mechanical/feetech-STS3032.step",
-  "servo_step_exists": true,
+  "servo_meshes": [
+    {
+      "name": "feetech_STS3032_visual_1_0mm",
+      "file": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/03_Parts/Mechanical/feetech-STS3032-visual-1.0mm.stl"
+    },
+    {
+      "name": "feetech_STS3032_collision_proxy",
+      "file": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/03_Parts/Mechanical/feetech-STS3032-collision-proxy.stl"
+    }
+  ],
   "placement": {
-    "x": 10.08,
-    "y": 15.36,
-    "z": -11.25,
+    "x": -150.1217,
+    "y": -141.9987,
+    "z": -3.1,
     "roll": 0.0,
-    "pitch": 90.0,
+    "pitch": 0.0,
     "yaw": 0.0,
-    "z_offset": 10.0
+    "z_offset": 0.0
   },
-  "servo_body_name": "Servo_Motor",
+  "servo_part_name": "STS3032_Mount",
+  "mesh_object_names": [
+    "feetech_STS3032_visual_1_0mm",
+    "feetech_STS3032_collision_proxy"
+  ],
   "linked_plates": [
     "Top_Plate",
     "Middle_Plate",
@@ -20,56 +32,56 @@
   ],
   "validations": [
     {
-      "check": "Servo body exists",
+      "check": "STS3032_Mount has servo meshes",
       "passed": true,
-      "details": "Servo body created successfully"
+      "details": "STS3032_Mount contains 2 mesh object(s)"
     },
     {
-      "check": "Servo has linked geometry",
+      "check": "Both servo meshes present",
       "passed": true,
-      "details": "Servo body contains 1 object(s)"
+      "details": "2/2 expected meshes imported"
     },
     {
-      "check": "STEP file resolution",
+      "check": "Placement accuracy (feetech_STS3032_visual_1_0mm)",
       "passed": true,
-      "details": "STEP file found at ../Mechanical/feetech-STS3032.step"
-    },
-    {
-      "check": "Placement accuracy",
-      "passed": true,
-      "details": "Position error: 0.0mm",
+      "details": "Position error: 0.000 mm",
       "value": 0.0,
       "tolerance": 1.0
     },
     {
-      "check": "Pitch rotation",
+      "check": "Placement accuracy (feetech_STS3032_collision_proxy)",
       "passed": true,
-      "details": "Pitch error: 0.0°",
+      "details": "Position error: 0.000 mm",
       "value": 0.0,
       "tolerance": 1.0
+    },
+    {
+      "check": "Visual/collision-proxy placements synced",
+      "passed": true,
+      "details": "All servo meshes share an identical placement"
     },
     {
       "check": "Clearance to Top_Plate",
       "passed": true,
-      "details": "Clearance: 8.5mm (minimum: 5.0mm)",
-      "value": 8.5,
+      "details": "Clearance: 7.85 mm (minimum: 5.0 mm)",
+      "value": 7.85,
       "tolerance": 5.0
     },
     {
       "check": "Clearance to Bottom_Plate",
-      "passed": true,
-      "details": "Clearance: 5.5mm (minimum: 5.0mm)",
-      "value": 5.5,
+      "passed": false,
+      "details": "Clearance: 4.85 mm (minimum: 5.0 mm)",
+      "value": 4.85,
       "tolerance": 5.0
     },
     {
       "check": "Servo below Middle_Plate",
       "passed": true,
-      "details": "Offset: 1.25mm",
-      "value": 1.25
+      "details": "Offset: 5.85 mm",
+      "value": 5.85
     }
   ],
-  "all_validations_passed": true,
+  "all_validations_passed": false,
   "specifications": {
     "servo": {
       "model": "Feetech STS3032",
@@ -82,7 +94,7 @@
     },
     "middle_plate": {
       "thickness": 2.5,
-      "z_position": 0.0
+      "z_position": 4.0
     },
     "tolerances": {
       "placement_tolerance_mm": 1.0,
