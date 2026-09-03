@@ -63,15 +63,15 @@
     {
       "check": "Clearance to Top_Plate",
       "passed": true,
-      "details": "Clearance: 7.85 mm (minimum: 5.0 mm)",
-      "value": 7.85,
+      "details": "Clearance: 6.43 mm (minimum: 5.0 mm)",
+      "value": 6.4298399158214155,
       "tolerance": 5.0
     },
     {
       "check": "Clearance to Bottom_Plate",
-      "passed": false,
-      "details": "Clearance: 4.85 mm (minimum: 5.0 mm)",
-      "value": 4.85,
+      "passed": true,
+      "details": "Clearance: 17.10 mm (minimum: 5.0 mm)",
+      "value": 17.09809216557725,
       "tolerance": 5.0
     },
     {
@@ -81,7 +81,7 @@
       "value": 5.85
     }
   ],
-  "all_validations_passed": false,
+  "all_validations_passed": true,
   "specifications": {
     "servo": {
       "model": "Feetech STS3032",

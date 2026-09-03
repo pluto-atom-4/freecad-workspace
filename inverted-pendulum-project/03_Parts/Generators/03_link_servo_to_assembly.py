@@ -420,21 +420,40 @@ class ServoLinkManager:
     def validate_clearances(self) -> bool:
         """Validate clearances between servo and plates.
 
-        NOTE: Top_Plate, Middle_Plate and Bottom_Plate each sit at their own
-        independently Z-rotated placement — this is not a uniform parallel
-        stack, so these are coarse Z-height sanity checks only.
+        NOTE (issue #22): Top_Plate and Bottom_Plate clearances are measured
+        with a real 3D shape-distance check (Part.Shape.distToShape) against a
+        conservative axis-aligned bounding box built from the servo mesh's
+        world-space BoundBox — a safe/conservative proxy for the servo
+        envelope, since it is at least as large as the actual mesh in every
+        direction. This replaces a previous Z-axis-only formula that assumed
+        a uniform parallel plate stack; it did not account for Bottom_Plate's
+        independent -36.9° rotation and reported a fictitious ~4.85mm
+        (failing the 5.0mm minimum) where the real clearance is ~17.1mm.
+        Middle_Plate is a mounting-contact fit, not a clearance gap, and
+        stays a Z-only check (legitimately ~0mm) — see "Servo below
+        Middle_Plate" below.
         """
         try:
-            print(f"✓ Clearance Validation (coarse Z-height sanity check):")
+            print(f"✓ Clearance Validation (real shape-distance for Top/Bottom_Plate):")
 
             if not self.placement_data:
                 return False
 
-            # Check clearance to Top_Plate
-            top_plate_z = self.TOP_PLATE_Z
-            top_plate_thickness = self.MIDDLE_PLATE_SPECS["thickness"]
-            top_plate_bottom = top_plate_z - top_plate_thickness / 2.0
-            top_clearance = top_plate_bottom - self.placement_data.z
+            if not self.mesh_objects:
+                print("ERROR: No servo mesh available to build clearance bounding box")
+                return False
+
+            # Conservative servo bounding solid from the mesh's world-space
+            # BoundBox. Visual and collision-proxy meshes share placement, so
+            # either mesh's BoundBox describes the same servo envelope.
+            bbm = self.mesh_objects[0].Mesh.BoundBox
+            servo_box = Part.makeBox(
+                bbm.XLength, bbm.YLength, bbm.ZLength,
+                Vector(bbm.XMin, bbm.YMin, bbm.ZMin)
+            )
+
+            # Check clearance to Top_Plate (real 3D shape distance)
+            top_clearance = self.plates["Top_Plate"].Shape.distToShape(servo_box)[0]
 
             top_passed = top_clearance > self.CLEARANCE_MIN
             self.validations.append(ValidationResult(
@@ -447,11 +466,8 @@ class ServoLinkManager:
             status = "✓" if top_passed else "✗"
             print(f"  {status} Clearance to Top_Plate: {top_clearance:.2f} mm")
 
-            # Check clearance to Bottom_Plate
-            bottom_plate_z = self.BOTTOM_PLATE_Z
-            bottom_plate_thickness = self.MIDDLE_PLATE_SPECS["thickness"]
-            bottom_plate_bottom = bottom_plate_z - bottom_plate_thickness / 2.0
-            bottom_clearance = bottom_plate_bottom - self.placement_data.z
+            # Check clearance to Bottom_Plate (real 3D shape distance)
+            bottom_clearance = self.plates["Bottom_Plate"].Shape.distToShape(servo_box)[0]
 
             bottom_passed = bottom_clearance > self.CLEARANCE_MIN
             self.validations.append(ValidationResult(

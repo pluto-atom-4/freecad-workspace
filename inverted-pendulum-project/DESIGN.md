@@ -83,9 +83,17 @@ Integration of Feetech STS3032 servo motor into FreeCAD plates assembly (GitHub 
 **Validation Checks:**
 - Alignment tolerance: <1mm from edge geometry ✓
 - Clearance to Middle_Plate: >5mm ✓
-- Clearance to Top_Plate: >5mm ✓
-- Clearance to Bottom_Plate: >5mm ✓
+- Clearance to Top_Plate: >5mm ✓ (this Phase 2 script's own Z-only formula; see note below)
+- Clearance to Bottom_Plate: >5mm ✓ (this Phase 2 script's own Z-only formula; see note below)
 - Pitch angle: 90° (perpendicular) ✓
+
+> **Note (issue #22):** `servo_placement.json`'s Z-only clearance formula does not
+> account for each plate's independent rotation, and originally misreported
+> Bottom_Plate's clearance as ~4.85mm (failing the 5.0mm minimum). Phase 3
+> (`03_link_servo_to_assembly.py`) was corrected to measure real 3D shape
+> distance (`Part.Shape.distToShape` against a servo bounding-box proxy)
+> instead — the real measured clearance is ~17.1mm to Bottom_Plate and
+> ~6.43mm to Top_Plate.
 
 **Output:**
 - `servo_placement.json` — placement matrix (x, y, z, roll, pitch, yaw)
