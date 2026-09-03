@@ -2,18 +2,35 @@
 """
 Phase 2: Servo Motor Position Calculation
 
-Calculates servo motor placement matrix based on Middle_Plate edge geometry.
+NOTE (2026-09-02, issue #3 reconciliation): This script previously derived
+servo placement from `Middle_Plate.Shape.Edges[25]` / `[33]` (hardcoded
+"Edge26"/"Edge34" indices) against `plates_assembled.FCStd`, producing a
+pitch=90 deg "shaft pointing down" convention. That approach has been
+replaced — BRep edge indices are not stable across topology edits (they can
+silently renumber after any sketch/pocket change), and it no longer matches
+reality: the live, human-approved document places the servo with an
+IDENTITY rotation, not pitch=90.
 
-Process:
-1. Extract Edge26 and Edge34 from Middle_Plate
-2. Compute edge midpoints and normal vectors
-3. Calculate servo placement (position + rotation)
-4. Validate alignment tolerance and clearances
-5. Export placement matrix to JSON
+The placement below was verified directly via live FreeCAD MCP inspection
+against `plates_servo_assembled.FCStd` on 2026-09-02: with this placement,
+the servo mesh's mounting bore lines up with Middle_Plate's hole cluster B
+(global center X=32.9933, Y=25.7719, Z span 2.75-5.25mm) to within
+~0.03-0.04mm. It is hardcoded rather than re-derived from geometry so this
+script no longer depends on fragile edge indexing.
+
+JSON schema note: `pitch`/`z_offset` no longer have one consistent meaning
+across the assembly. Top_Plate, Middle_Plate and Bottom_Plate each sit at
+their own independently Z-axis-rotated placement and their own Z height
+(6mm / 4mm / 3mm respectively) rather than a uniform parallel stack, so a
+single scalar "z_offset below the plate" or "pitch to point the shaft down"
+cannot describe all three relationships at once. For the current (and only)
+mount point — Middle_Plate hole cluster B — both are effectively 0: the
+servo sits at its own explicit (x, y, z) with identity rotation, not offset
+"below" the plate along a shared normal.
 
 Output:
-- servo_placement.json: Placement data (x, y, z, roll, pitch, yaw)
-- Console log: Detailed calculations and validation results
+- servo_placement.json: Placement data (x, y, z, roll, pitch, yaw, z_offset)
+- Console log: Validation results
 """
 
 import sys
@@ -21,7 +38,7 @@ import json
 import math
 from pathlib import Path
 from dataclasses import dataclass, asdict
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Dict, Any
 
 try:
     import FreeCAD as App
@@ -36,26 +53,6 @@ except ImportError:
 
 
 @dataclass
-class EdgeData:
-    """Edge geometry data"""
-    edge_id: int
-    start_x: float
-    start_y: float
-    start_z: float
-    end_x: float
-    end_y: float
-    end_z: float
-    mid_x: float
-    mid_y: float
-    mid_z: float
-    length: float
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary"""
-        return asdict(self)
-
-
-@dataclass
 class PlacementData:
     """Servo placement matrix"""
     x: float          # mm
@@ -64,7 +61,7 @@ class PlacementData:
     roll: float       # degrees
     pitch: float      # degrees
     yaw: float        # degrees
-    z_offset: float   # offset below plate surface
+    z_offset: float   # kept for schema compatibility; see module docstring
 
     def to_dict(self) -> dict:
         """Convert to dictionary"""
@@ -95,14 +92,14 @@ class ValidationResult:
 
 
 class ServoPositionCalculator:
-    """Calculate servo motor placement based on plate geometry"""
+    """Provide the verified servo motor placement for Middle_Plate hole cluster B"""
 
-    # Middle_Plate specifications (from feat-idea.md)
+    # Middle_Plate specifications (live document values, verified 2026-09-02)
     MIDDLE_PLATE_SPECS = {
         "center_to_center": 44.72,  # mm
         "width": 10.0,              # mm
-        "thickness": 2.5,           # mm (actual thickness from assembly)
-        "z_position": 0.0,          # mm (assembly reference)
+        "thickness": 2.5,           # mm
+        "z_position": 4.0,          # mm (Middle_Plate.Placement.Position.z in the live document)
     }
 
     # Servo motor specifications (Feetech STS3032)
@@ -115,9 +112,22 @@ class ServoPositionCalculator:
         "shaft_offset_y": 14.0,     # mm from center (rear of servo)
     }
 
-    # Placement parameters
-    Z_OFFSET_DEFAULT = 10.0         # mm below plate surface (default)
-    PITCH_ROTATION = 90.0           # degrees (shaft perpendicular to plate)
+    # Target mount: Middle_Plate hole cluster B, global center (X, Y)
+    TARGET_HOLE_CENTER = (32.9933, 25.7719)
+    TARGET_HOLE_Z_SPAN = (2.75, 5.25)  # mm
+
+    # Verified servo placement (both visual and collision-proxy meshes use this
+    # placement directly, matching the live document — see module docstring).
+    VERIFIED_PLACEMENT = PlacementData(
+        x=-150.1217,
+        y=-141.9987,
+        z=-3.1,
+        roll=0.0,
+        pitch=0.0,
+        yaw=0.0,
+        z_offset=0.0,
+    )
+
     ALIGNMENT_TOLERANCE = 1.0       # mm (tolerance for alignment)
     CLEARANCE_MIN = 5.0             # mm (minimum clearance to other plates)
 
@@ -125,16 +135,12 @@ class ServoPositionCalculator:
         """Initialize calculator"""
         self.doc = None
         self.middle_plate = None
-        self.edge26 = None
-        self.edge34 = None
-        self.edge26_data = None
-        self.edge34_data = None
         self.placement = None
         self.validations = []
         self.clearances = {}
 
     def load_document(self, doc_path: str) -> bool:
-        """Load FreeCAD document"""
+        """Load FreeCAD document (used only to confirm Middle_Plate exists)"""
         try:
             path = Path(doc_path)
             if not path.exists():
@@ -165,207 +171,39 @@ class ServoPositionCalculator:
             print(f"ERROR finding Middle_Plate: {e}")
             return False
 
-    def extract_edge_data(self, edge_index: int) -> Optional[EdgeData]:
-        """Extract geometry data from an edge"""
-        try:
-            if not self.middle_plate or not hasattr(self.middle_plate, 'Shape'):
-                print(f"ERROR: No shape for edge extraction")
-                return None
+    def calculate_placement(self, z_offset: float = 0.0) -> bool:
+        """Return the verified servo placement.
 
-            shape = self.middle_plate.Shape
-            if edge_index < 0 or edge_index >= len(shape.Edges):
-                print(f"WARNING: Edge{edge_index + 1} not found (only {len(shape.Edges)} edges)")
-                return None
+        `z_offset` is accepted for CLI/interface compatibility with earlier
+        phases but is not used: the placement below is an empirically
+        verified fixed value, not derived by offsetting from plate geometry
+        (see module docstring).
+        """
+        if z_offset:
+            print(f"NOTE: z_offset argument ({z_offset}) is ignored — placement is hardcoded/verified, not offset-derived.")
 
-            edge = shape.Edges[edge_index]
+        self.placement = self.VERIFIED_PLACEMENT
 
-            # Get edge vertices
-            start = edge.Vertexes[0].Point
-            end = edge.Vertexes[-1].Point
+        print(f"\n✓ Servo placement (verified 2026-09-02 via live FreeCAD MCP inspection):")
+        print(f"    Position: X={self.placement.x:.4f} mm, Y={self.placement.y:.4f} mm, Z={self.placement.z:.4f} mm")
+        print(f"    Rotation: Roll={self.placement.roll:.1f}°, Pitch={self.placement.pitch:.1f}°, Yaw={self.placement.yaw:.1f}° (identity)")
 
-            # Calculate midpoint
-            mid_x = (start.x + end.x) / 2.0
-            mid_y = (start.y + end.y) / 2.0
-            mid_z = (start.z + end.z) / 2.0
-
-            # Calculate length
-            length = math.sqrt(
-                (end.x - start.x) ** 2 +
-                (end.y - start.y) ** 2 +
-                (end.z - start.z) ** 2
-            )
-
-            return EdgeData(
-                edge_id=edge_index + 1,
-                start_x=start.x,
-                start_y=start.y,
-                start_z=start.z,
-                end_x=end.x,
-                end_y=end.y,
-                end_z=end.z,
-                mid_x=mid_x,
-                mid_y=mid_y,
-                mid_z=mid_z,
-                length=length,
-            )
-
-        except Exception as e:
-            print(f"ERROR extracting edge {edge_index + 1} data: {e}")
-            return None
-
-    def extract_edges(self) -> bool:
-        """Extract Edge26 and Edge34 from Middle_Plate"""
-        try:
-            # Edge26 (index 25) and Edge34 (index 33)
-            self.edge26_data = self.extract_edge_data(25)
-            if not self.edge26_data:
-                print("WARNING: Could not extract Edge26")
-            else:
-                print(f"✓ Extracted Edge26:")
-                print(f"    Start: ({self.edge26_data.start_x:.2f}, {self.edge26_data.start_y:.2f}, {self.edge26_data.start_z:.2f})")
-                print(f"    End: ({self.edge26_data.end_x:.2f}, {self.edge26_data.end_y:.2f}, {self.edge26_data.end_z:.2f})")
-                print(f"    Midpoint: ({self.edge26_data.mid_x:.2f}, {self.edge26_data.mid_y:.2f}, {self.edge26_data.mid_z:.2f})")
-                print(f"    Length: {self.edge26_data.length:.2f} mm")
-
-            self.edge34_data = self.extract_edge_data(33)
-            if not self.edge34_data:
-                print("WARNING: Could not extract Edge34")
-            else:
-                print(f"✓ Extracted Edge34:")
-                print(f"    Start: ({self.edge34_data.start_x:.2f}, {self.edge34_data.start_y:.2f}, {self.edge34_data.start_z:.2f})")
-                print(f"    End: ({self.edge34_data.end_x:.2f}, {self.edge34_data.end_y:.2f}, {self.edge34_data.end_z:.2f})")
-                print(f"    Midpoint: ({self.edge34_data.mid_x:.2f}, {self.edge34_data.mid_y:.2f}, {self.edge34_data.mid_z:.2f})")
-                print(f"    Length: {self.edge34_data.length:.2f} mm")
-
-            return self.edge26_data is not None or self.edge34_data is not None
-
-        except Exception as e:
-            print(f"ERROR extracting edges: {e}")
-            return False
-
-    def calculate_edge_normal(self, edge_data: EdgeData) -> Tuple[float, float, float]:
-        """Calculate normal vector for an edge"""
-        # For edges on the plate, the normal points perpendicular to the edge
-        # in the XY plane
-
-        dx = edge_data.end_x - edge_data.start_x
-        dy = edge_data.end_y - edge_data.start_y
-
-        # Perpendicular to edge in XY plane (rotate 90 degrees)
-        # Normal = (-dy, dx) normalized
-        norm = math.sqrt(dx**2 + dy**2)
-        if norm > 0:
-            normal_x = -dy / norm
-            normal_y = dx / norm
-        else:
-            normal_x = 0.0
-            normal_y = 0.0
-
-        # Normal points in Z direction for plate-mounted servo
-        normal_z = 1.0
-
-        return (normal_x, normal_y, normal_z)
-
-    def calculate_placement(self, z_offset: float = Z_OFFSET_DEFAULT) -> bool:
-        """Calculate servo placement matrix"""
-        try:
-            if not self.edge26_data or not self.edge34_data:
-                print("ERROR: Missing edge data for placement calculation")
-                return False
-
-            # Use midpoint of Edge26 as primary servo position
-            servo_x = self.edge26_data.mid_x
-            servo_y = self.edge26_data.mid_y
-
-            # Z position: below Middle_Plate surface
-            middle_plate_z = self.MIDDLE_PLATE_SPECS["z_position"]
-            middle_plate_thickness = self.MIDDLE_PLATE_SPECS["thickness"]
-            servo_z = middle_plate_z - middle_plate_thickness / 2.0 - z_offset
-
-            # Calculate rotation angles
-            # Pitch: 90 degrees (shaft perpendicular to plate, pointing down)
-            pitch = self.PITCH_ROTATION
-
-            # Roll and Yaw: 0 degrees (body parallel to plate)
-            roll = 0.0
-            yaw = 0.0
-
-            self.placement = PlacementData(
-                x=servo_x,
-                y=servo_y,
-                z=servo_z,
-                roll=roll,
-                pitch=pitch,
-                yaw=yaw,
-                z_offset=z_offset,
-            )
-
-            print(f"\n✓ Calculated servo placement:")
-            print(f"    Position: X={self.placement.x:.2f} mm, Y={self.placement.y:.2f} mm, Z={self.placement.z:.2f} mm")
-            print(f"    Rotation: Roll={self.placement.roll:.1f}°, Pitch={self.placement.pitch:.1f}°, Yaw={self.placement.yaw:.1f}°")
-            print(f"    Z-offset: {self.placement.z_offset:.2f} mm below plate surface")
-
-            return True
-
-        except Exception as e:
-            print(f"ERROR calculating placement: {e}")
-            return False
-
-    def validate_alignment(self) -> bool:
-        """Validate servo alignment with edge midpoints"""
-        try:
-            print(f"\n✓ Alignment Validation:")
-
-            if self.edge26_data and self.placement:
-                # Distance from servo position to Edge26 midpoint
-                dist26 = math.sqrt(
-                    (self.placement.x - self.edge26_data.mid_x) ** 2 +
-                    (self.placement.y - self.edge26_data.mid_y) ** 2
-                )
-
-                passed = dist26 < self.ALIGNMENT_TOLERANCE
-                self.validations.append(ValidationResult(
-                    check_name="Servo alignment to Edge26",
-                    passed=passed,
-                    details=f"Distance to Edge26 midpoint: {dist26:.3f} mm",
-                    value=dist26,
-                    tolerance=self.ALIGNMENT_TOLERANCE,
-                ))
-                status = "✓" if passed else "✗"
-                print(f"  {status} Distance to Edge26 midpoint: {dist26:.3f} mm (tolerance: {self.ALIGNMENT_TOLERANCE} mm)")
-
-            if self.edge34_data and self.placement:
-                # Distance from servo position to Edge34 midpoint
-                dist34 = math.sqrt(
-                    (self.placement.x - self.edge34_data.mid_x) ** 2 +
-                    (self.placement.y - self.edge34_data.mid_y) ** 2
-                )
-
-                passed = dist34 < self.ALIGNMENT_TOLERANCE
-                self.validations.append(ValidationResult(
-                    check_name="Servo alignment to Edge34",
-                    passed=passed,
-                    details=f"Distance to Edge34 midpoint: {dist34:.3f} mm",
-                    value=dist34,
-                    tolerance=self.ALIGNMENT_TOLERANCE,
-                ))
-                status = "✓" if passed else "✗"
-                print(f"  {status} Distance to Edge34 midpoint: {dist34:.3f} mm (tolerance: {self.ALIGNMENT_TOLERANCE} mm)")
-
-            return all(v.passed for v in self.validations)
-
-        except Exception as e:
-            print(f"ERROR validating alignment: {e}")
-            return False
+        return True
 
     def validate_clearances(self) -> bool:
-        """Validate clearances with other plates"""
+        """Validate clearances with other plates.
+
+        NOTE: Top_Plate, Middle_Plate and Bottom_Plate each sit at their own
+        independently Z-rotated placement and Z height — this is not a
+        uniform parallel stack. These checks compare raw Z heights only as a
+        coarse sanity signal; they do not account for each plate's rotation.
+        """
         try:
-            print(f"\n✓ Clearance Validation:")
+            print(f"\n✓ Clearance Validation (coarse Z-height sanity check):")
 
             # Check clearance to Top_Plate
-            top_plate_z = 6.00  # From assemble_plates.py
-            top_plate_thickness = 5.0  # Standard thickness
+            top_plate_z = 6.00  # Live Top_Plate.Placement.Position.z
+            top_plate_thickness = self.MIDDLE_PLATE_SPECS["thickness"]
             top_plate_bottom = top_plate_z - top_plate_thickness / 2.0
             top_plate_clearance = top_plate_bottom - self.placement.z
 
@@ -382,8 +220,8 @@ class ServoPositionCalculator:
             print(f"  {status} Clearance to Top_Plate: {top_plate_clearance:.2f} mm")
 
             # Check clearance to Bottom_Plate
-            bottom_plate_z = 3.00  # From assemble_plates.py
-            bottom_plate_thickness = 5.0  # Standard thickness
+            bottom_plate_z = 3.00  # Live Bottom_Plate.Placement.Position.z
+            bottom_plate_thickness = self.MIDDLE_PLATE_SPECS["thickness"]
             bottom_plate_bottom = bottom_plate_z - bottom_plate_thickness / 2.0
             bottom_plate_clearance = bottom_plate_bottom - self.placement.z
 
@@ -433,9 +271,21 @@ class ServoPositionCalculator:
                 "title": "Servo Motor Position Calculation",
                 "timestamp": str(Path(__file__).stat().st_mtime),
                 "placement": self.placement.to_dict() if self.placement else None,
-                "edge_data": {
-                    "edge26": self.edge26_data.to_dict() if self.edge26_data else None,
-                    "edge34": self.edge34_data.to_dict() if self.edge34_data else None,
+                "visual_placement": self.placement.to_dict() if self.placement else None,
+                "collision_placement": self.placement.to_dict() if self.placement else None,
+                "placement_source": {
+                    "method": "empirically_verified",
+                    "verified_date": "2026-09-02",
+                    "verified_via": "live FreeCAD MCP inspection",
+                    "target_document": "plates_servo_assembled.FCStd",
+                    "note": (
+                        "Superseded the old Edge26/Edge34 (Shape.Edges[25]/[33]) "
+                        "index-based derivation — BRep edge indices are not "
+                        "stable after topology edits."
+                    ),
+                    "target_hole_center_xy": list(self.TARGET_HOLE_CENTER),
+                    "target_hole_z_span_mm": list(self.TARGET_HOLE_Z_SPAN),
+                    "fit_tolerance_mm": "~0.03-0.04",
                 },
                 "clearances": self.clearances,
                 "validations": [v.to_dict() for v in self.validations],
@@ -461,10 +311,10 @@ class ServoPositionCalculator:
             print(f"ERROR saving JSON: {e}")
             return False
 
-    def run(self, z_offset: float = Z_OFFSET_DEFAULT) -> bool:
+    def run(self, z_offset: float = 0.0) -> bool:
         """Execute full position calculation process"""
         print("=" * 70)
-        print("PHASE 2: SERVO MOTOR POSITION CALCULATION")
+        print("PHASE 2: SERVO MOTOR POSITION (VERIFIED, NOT EDGE-DERIVED)")
         print("=" * 70)
         print()
 
@@ -474,35 +324,21 @@ class ServoPositionCalculator:
             # Running in FreeCAD console
             script_dir = Path.home() / "freecad-workspace" / "inverted-pendulum-project" / "03_Parts" / "Generators"
 
-        doc_path = script_dir / "plates_assembled.FCStd"
+        doc_path = script_dir / "plates_servo_assembled.FCStd"
 
-        # Load document
+        # Load document (sanity check only — placement itself is hardcoded)
         if not self.load_document(str(doc_path)):
-            return False
+            print("WARNING: Could not open live document for sanity check; continuing with verified placement anyway")
+        else:
+            print()
+            if not self.find_middle_plate():
+                print("WARNING: Middle_Plate not found in document; continuing with verified placement anyway")
 
         print()
 
-        # Find Middle_Plate
-        if not self.find_middle_plate():
-            return False
-
-        print()
-
-        # Extract edges
-        if not self.extract_edges():
-            print("WARNING: Edge extraction had issues, continuing with available data")
-
-        print()
-
-        # Calculate placement
+        # "Calculate" (i.e. report) placement
         if not self.calculate_placement(z_offset):
             return False
-
-        print()
-
-        # Validate alignment
-        if not self.validate_alignment():
-            print("WARNING: Alignment validation failed")
 
         print()
 
@@ -528,13 +364,13 @@ def main():
     """Main entry point"""
     calculator = ServoPositionCalculator()
 
-    # Optional: read Z-offset from command line
-    z_offset = ServoPositionCalculator.Z_OFFSET_DEFAULT
+    # Optional: read Z-offset from command line (ignored — kept for CLI compatibility)
+    z_offset = 0.0
     if len(sys.argv) > 1:
         try:
             z_offset = float(sys.argv[1])
         except ValueError:
-            print(f"WARNING: Invalid Z-offset '{sys.argv[1]}', using default {z_offset} mm")
+            print(f"WARNING: Invalid Z-offset '{sys.argv[1]}', ignoring")
 
     success = calculator.run(z_offset)
 

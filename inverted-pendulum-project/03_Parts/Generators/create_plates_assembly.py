@@ -37,7 +37,7 @@ class PlateConfig:
         self.overall_length = overall_length
         self.center_to_center = center_to_center
         self.width = 10.0  # mm
-        self.thickness = 5.0  # mm
+        self.thickness = 2.5  # mm (live document value, verified via FreeCAD MCP 2026-09-02)
         self.hole_diameter = 5.0  # mm (M5)
         self.end_radius = 5.0  # mm
 
@@ -60,7 +60,10 @@ class PlateGenerator:
             # Running in FreeCAD console - __file__ not defined
             script_dir = Path.home() / "freecad-workspace" / "inverted-pendulum-project" / "03_Parts" / "Generators"
 
-        self.servo_path = script_dir.parent.parent.parent / "Downloads" / "feetech-STS3032_20190118_ASM.stl"
+        # Servo mesh sources live in-repo under 03_Parts/Mechanical (not ~/Downloads).
+        mechanical_dir = script_dir.parent / "Mechanical"
+        self.servo_visual_path = mechanical_dir / "feetech-STS3032-visual-1.0mm.stl"
+        self.servo_collision_path = mechanical_dir / "feetech-STS3032-collision-proxy.stl"
 
     def create_plate_sketch(self, doc, name: str, config: PlateConfig):
         """Create 2D sketch for plate profile"""
@@ -161,24 +164,65 @@ class PlateGenerator:
         return body
 
     def import_servo(self, doc):
-        """Import servo STL file"""
-        if not self.servo_path.exists():
-            print(f"WARNING: Servo STL not found at {self.servo_path}")
-            return None
+        """Import servo STL meshes (visual + collision proxy), grouped under an
+        App::Part "STS3032_Mount", matching the live assembled document.
 
-        mesh_obj = doc.addObject("Mesh::Feature", "Servo_STS3032")
-        mesh = Mesh.Mesh(str(self.servo_path))
-        mesh_obj.Mesh = mesh
+        Placement (identity rotation, position below) was verified via live
+        FreeCAD MCP inspection on 2026-09-02: it fits Middle_Plate's hole
+        cluster B (global center 32.9933, 25.7719) to within ~0.03-0.04mm.
+        """
+        servo_part = doc.addObject("App::Part", "STS3032_Mount")
 
-        # Position servo with middle plate
-        # Servo shaft couples to middle plate center
-        mesh_obj.Placement = Placement(Vector(0, 0, -10), Rotation(Vector(0, 0, 1), 0))
+        servo_placement = Placement(Vector(-150.1217, -141.9987, -3.1), Rotation(Vector(0, 0, 1), 0))
+
+        mesh_specs = [
+            ("feetech_STS3032_visual_1_0mm", self.servo_visual_path),
+            ("feetech_STS3032_collision_proxy", self.servo_collision_path),
+        ]
+
+        mesh_objects = []
+        for obj_name, stl_path in mesh_specs:
+            if not stl_path.exists():
+                print(f"WARNING: Servo STL not found at {stl_path}")
+                continue
+
+            mesh_obj = doc.addObject("Mesh::Feature", obj_name)
+            mesh_obj.Mesh = Mesh.Mesh(str(stl_path))
+            # Both visual and collision-proxy meshes carry the same placement
+            # directly (they were synced to match this session) rather than
+            # relying on the parent Part's placement.
+            mesh_obj.Placement = servo_placement
+            servo_part.addObject(mesh_obj)
+            mesh_objects.append(mesh_obj)
 
         doc.recompute()
-        return mesh_obj
+        return servo_part
+
+    def group_plates(self, doc):
+        """Group the three plate bodies under an App::Part "PlateStack",
+        matching the live assembled document's structure."""
+        plate_stack = doc.addObject("App::Part", "PlateStack")
+
+        for config in self.plates_config:
+            body = doc.getObject(f"{config.name}_Body")
+            if body:
+                plate_stack.addObject(body)
+            else:
+                print(f"WARNING: {config.name}_Body not found, cannot add to PlateStack")
+
+        doc.recompute()
+        return plate_stack
 
     def assembly_plates(self, doc):
-        """Position plates in assembly configuration"""
+        """Position plates in an initial/default layout.
+
+        NOTE: these placements are a rough starting layout only, not the
+        final assembly geometry. `assemble_plates.py` is the downstream step
+        that applies the real, hole-aligned placements (Top/Middle/Bottom at
+        their individually-derived positions and Z-axis rotations) — see
+        that script's PlateAssembly.PLATE_ROTATIONS / assemble_with_alignment().
+        Do not treat this function's output as final placement.
+        """
         # Vertical spacing between plates
         spacing = 20.0  # mm
 
@@ -209,6 +253,9 @@ class PlateGenerator:
             except Exception as e:
                 print(f"    ERROR: {e}")
                 continue
+
+        print("Grouping plates into PlateStack...")
+        self.group_plates(self.doc)
 
         print("Assembling plates...")
         self.assembly_plates(self.doc)

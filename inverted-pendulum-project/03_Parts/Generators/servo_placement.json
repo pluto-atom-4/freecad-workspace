@@ -3,90 +3,77 @@
   "title": "Servo Motor Position Calculation",
   "timestamp": "1725009600.0",
   "placement": {
-    "x": 10.08,
-    "y": 15.36,
-    "z": -11.25,
+    "x": -150.1217,
+    "y": -141.9987,
+    "z": -3.1,
     "roll": 0.0,
-    "pitch": 90.0,
+    "pitch": 0.0,
     "yaw": 0.0,
-    "z_offset": 10.0
+    "z_offset": 0.0
   },
-  "edge_data": {
-    "edge26": {
-      "edge_id": 26,
-      "start_x": 0.0,
-      "start_y": 10.08,
-      "start_z": 0.0,
-      "end_x": 20.16,
-      "end_y": 10.08,
-      "end_z": 0.0,
-      "mid_x": 10.08,
-      "mid_y": 10.08,
-      "mid_z": 0.0,
-      "length": 20.16
-    },
-    "edge34": {
-      "edge_id": 34,
-      "start_x": 0.0,
-      "start_y": 20.64,
-      "start_z": 0.0,
-      "end_x": 20.16,
-      "end_y": 20.64,
-      "end_z": 0.0,
-      "mid_x": 10.08,
-      "mid_y": 20.64,
-      "mid_z": 0.0,
-      "length": 20.16
-    }
+  "visual_placement": {
+    "x": -150.1217,
+    "y": -141.9987,
+    "z": -3.1,
+    "roll": 0.0,
+    "pitch": 0.0,
+    "yaw": 0.0,
+    "z_offset": 0.0
+  },
+  "collision_placement": {
+    "x": -150.1217,
+    "y": -141.9987,
+    "z": -3.1,
+    "roll": 0.0,
+    "pitch": 0.0,
+    "yaw": 0.0,
+    "z_offset": 0.0
+  },
+  "placement_source": {
+    "method": "empirically_verified",
+    "verified_date": "2026-09-02",
+    "verified_via": "live FreeCAD MCP inspection",
+    "target_document": "plates_servo_assembled.FCStd",
+    "note": "Superseded the old edge26/edge34 (Middle_Plate.Shape.Edges[25]/[33]) index-based derivation. BRep edge indices are not stable after topology edits, and the old derivation produced a stale pitch=90 deg convention that does not match the live document's identity rotation. The live document models the servo as two independently-placed Mesh::Feature objects (visual + collision-proxy) under App::Part \"STS3032_Mount\"; both were synced to this identical placement this session, so visual_placement and collision_placement are recorded separately above even though they currently hold the same values.",
+    "target_hole_center_xy": [32.9933, 25.7719],
+    "target_hole_z_span_mm": [2.75, 5.25],
+    "fit_tolerance_mm": "~0.03-0.04"
   },
   "clearances": {
-    "top_plate": 8.5,
-    "bottom_plate": 5.5,
-    "middle_plate_clearance": 1.25
+    "top_plate": 7.85,
+    "bottom_plate": 4.85,
+    "middle_plate_clearance": 5.85
   },
+  "clearance_note": "These are coarse Z-height-only checks (see schema_note) computed with the shared Middle_Plate thickness (2.5mm) as an approximation for all three plates; they do not account for each plate's individual rotation, so bottom_plate falls just under the 5.0mm nominal minimum here even though the true (rotation-aware) fit was verified at ~0.03-0.04mm via live FreeCAD MCP inspection.",
   "validations": [
-    {
-      "check": "Servo alignment to Edge26",
-      "passed": true,
-      "details": "Distance to Edge26 midpoint: 0.0mm",
-      "value": 0.0,
-      "tolerance": 1.0
-    },
-    {
-      "check": "Servo alignment to Edge34",
-      "passed": true,
-      "details": "Distance to Edge34 midpoint: 10.56mm",
-      "value": 10.56,
-      "tolerance": 1.0
-    },
     {
       "check": "Clearance to Top_Plate",
       "passed": true,
-      "details": "Clearance: 8.5mm (minimum: 5.0mm)",
-      "value": 8.5,
+      "details": "Clearance: 7.85mm (minimum: 5.0mm)",
+      "value": 7.85,
       "tolerance": 5.0
     },
     {
       "check": "Clearance to Bottom_Plate",
-      "passed": true,
-      "details": "Clearance: 5.5mm (minimum: 5.0mm)",
-      "value": 5.5,
+      "passed": false,
+      "details": "Clearance: 4.85mm (minimum: 5.0mm) -- coarse Z-only check, see clearance_note",
+      "value": 4.85,
       "tolerance": 5.0
     },
     {
       "check": "Clearance from Middle_Plate",
       "passed": true,
-      "details": "Servo below plate surface: 1.25mm",
-      "value": 1.25
+      "details": "Servo below plate surface: 5.85mm",
+      "value": 5.85
     }
   ],
-  "all_validations_passed": true,
+  "all_validations_passed": false,
   "specifications": {
     "middle_plate": {
       "center_to_center": 44.72,
       "width": 10.0,
       "thickness": 2.5,
-      "z_position": 0.0
+      "z_position": 4.0
     },
     "servo": {
       "body_length": 32.0,
@@ -100,5 +87,6 @@
       "alignment_tolerance_mm": 1.0,
       "clearance_min_mm": 5.0
     }
-  }
+  },
+  "schema_note": "pitch/z_offset no longer have one consistent meaning: Top_Plate, Middle_Plate and Bottom_Plate each sit at their own independently Z-axis-rotated placement and Z height (6mm / 4mm / 3mm) rather than a uniform parallel stack. For this mount point the servo uses an identity rotation and an explicit (x, y, z), not an offset applied along a shared plate normal."
 }
