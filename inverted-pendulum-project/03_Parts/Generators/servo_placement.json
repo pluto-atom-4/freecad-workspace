@@ -44,7 +44,7 @@
     "bottom_plate": 4.85,
     "middle_plate_clearance": 5.85
   },
-  "clearance_note": "These are coarse Z-height-only checks (see schema_note) computed with the shared Middle_Plate thickness (2.5mm) as an approximation for all three plates; they do not account for each plate's individual rotation, so bottom_plate falls just under the 5.0mm nominal minimum here even though the true (rotation-aware) fit was verified at ~0.03-0.04mm via live FreeCAD MCP inspection.",
+  "clearance_note": "The top_plate/bottom_plate figures above (and the matching entries in validations[]) are from this Phase 2 script's coarse Z-height-only formula (see schema_note); it does not account for each plate's individual rotation, so bottom_plate was misreported as failing the 5.0mm nominal minimum here. Phase 3 (03_link_servo_to_assembly.py) was corrected in issue #22 to measure real 3D shape distance (Part.Shape.distToShape against a servo bounding-box proxy) instead: the real measured clearance is ~17.1mm to Bottom_Plate and ~6.43mm to Top_Plate, both comfortably passing the 5.0mm minimum. This Phase 2 JSON is left as originally generated for traceability; see servo_link_config.json for the corrected Phase 3 values.",
   "validations": [
     {
       "check": "Clearance to Top_Plate",
