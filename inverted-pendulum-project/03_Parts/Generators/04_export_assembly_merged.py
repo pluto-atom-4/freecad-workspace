@@ -23,7 +23,12 @@ Output:
 Validation:
 - Merged geometry is solid (no gaps/intersections)
 - File sizes match expectations
-- Servo position matches Phase 3 placement (±0.5mm tolerance)
+- Servo placement pipeline integrity: the Placement actually applied to the
+  exported servo geometry matches the frozen EXPECTED_SERVO_POSITION
+  reference (±0.01mm tolerance). This is NOT an independent physical-fit
+  check -- it confirms the export pipeline didn't silently drop or corrupt
+  the placement sourced from servo_placement.json; the underlying physical
+  fit against Middle_Plate hole B was verified separately (see #16).
 - Mesh quality (vertex/face/triangle counts)
 """
 
@@ -126,7 +131,7 @@ class AssemblyExporter:
     STL_ANGULAR_DEFLECTION = 0.5  # radians
 
     # Servo placement tolerance (from Phase 3)
-    SERVO_POSITION_TOLERANCE = 0.5  # mm
+    SERVO_POSITION_TOLERANCE = 0.01  # mm
 
     # Expected servo placement, as a fallback if servo_placement.json can't
     # be read. Verified live-document placement (2026-09-02, via live
@@ -626,7 +631,20 @@ class AssemblyExporter:
             return False
 
     def validate_servo_position(self) -> bool:
-        """Validate servo position matches Phase 3 placement"""
+        """Validate the export pipeline applied Phase 2/3's canonical servo
+        placement to the exported servo geometry.
+
+        Scope note: this is a pipeline-integrity check, not an independent
+        physical-fit measurement. It confirms the Placement actually assigned
+        to self.servo_shape (sourced from servo_placement.json, see
+        load_servo_placement()) still matches the reference value frozen in
+        the AssemblyExporter.EXPECTED_SERVO_POSITION class constant -- the
+        ~0.03-0.04mm live-FreeCAD-MCP-verified fit against Middle_Plate hole B
+        recorded there and in servo_placement.json's own "placement_source"
+        field. That physical verification is not redone here: this STEP
+        file's local BoundBox origin is an arbitrary leftover of the source
+        assembly it was extracted from, not a documented feature (see #16).
+        """
         try:
             print(f"✓ Servo Position Validation:")
 
@@ -634,24 +652,35 @@ class AssemblyExporter:
                 print(f"  ℹ Servo shape not available, skipping position check")
                 return True
 
-            # For servo position validation, we use the expected placement from Phase 3
-            # Check if servo geometry is present and positioned correctly
-            servo_bbox = self.servo_shape.BoundBox
+            # Compare against the class-level constant, NOT self.EXPECTED_
+            # SERVO_POSITION -- load_servo_placement() has already overwritten
+            # the instance attribute with this same run's servo_placement.json
+            # values, so comparing against it would always trivially match.
+            reference = type(self).EXPECTED_SERVO_POSITION
+            applied = self.servo_shape.Placement.Base
 
-            servo_center_z = servo_bbox.ZMin + (servo_bbox.ZLength / 2)
-            expected_z = self.EXPECTED_SERVO_POSITION["z"]
-            z_error = abs(servo_center_z - expected_z)
+            errors = {axis: abs(getattr(applied, axis) - reference[axis])
+                      for axis in ("x", "y", "z")}
+            max_error = max(errors.values())
+            position_ok = max_error <= self.SERVO_POSITION_TOLERANCE
 
-            z_ok = z_error <= self.SERVO_POSITION_TOLERANCE
             self.validations.append(ValidationResult(
-                check_name="Servo Z position",
-                passed=z_ok,
-                details=f"Position error: {z_error:.3f} mm (tolerance: {self.SERVO_POSITION_TOLERANCE} mm)",
-                value=z_error,
+                check_name="Servo placement matches verified reference",
+                passed=position_ok,
+                details=(
+                    f"Applied (X={applied.x:.3f}, Y={applied.y:.3f}, "
+                    f"Z={applied.z:.3f}) mm vs frozen reference "
+                    f"(X={reference['x']:.3f}, Y={reference['y']:.3f}, "
+                    f"Z={reference['z']:.3f}) mm; max axis error: "
+                    f"{max_error:.3f} mm (tolerance: "
+                    f"{self.SERVO_POSITION_TOLERANCE} mm)"
+                ),
+                value=max_error,
                 tolerance=self.SERVO_POSITION_TOLERANCE
             ))
-            status = "✓" if z_ok else "⚠"
-            print(f"  {status} Servo Z position error: {z_error:.3f} mm (tolerance: {self.SERVO_POSITION_TOLERANCE} mm)")
+            status = "✓" if position_ok else "⚠"
+            print(f"  {status} Servo placement max-axis error: {max_error:.3f} mm "
+                  f"(tolerance: {self.SERVO_POSITION_TOLERANCE} mm)")
 
             return True
 
