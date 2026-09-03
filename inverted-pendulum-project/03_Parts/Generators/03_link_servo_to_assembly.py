@@ -141,7 +141,10 @@ class ServoLinkManager:
     def resolve_mechanical_dir(self) -> bool:
         """Resolve the 03_Parts/Mechanical directory holding the servo STL meshes"""
         try:
-            script_dir = Path(__file__).parent
+            try:
+                script_dir = Path(__file__).parent
+            except NameError:
+                script_dir = Path.home() / "freecad-workspace" / "inverted-pendulum-project" / "03_Parts" / "Generators"
             self.mechanical_dir = script_dir.parent / "Mechanical"
 
             if not self.mechanical_dir.exists():
@@ -245,17 +248,33 @@ class ServoLinkManager:
             return False
 
     def create_servo_body(self) -> bool:
-        """Create App::Part "STS3032_Mount" and import the visual + collision-proxy
-        STL meshes as its children, matching the live document structure."""
+        """Create (or reuse) App::Part "STS3032_Mount" and import the visual +
+        collision-proxy STL meshes as its children, matching the live document
+        structure. Idempotent: if STS3032_Mount (and its mesh children) already
+        exist — as they do in the live, human-approved document — reuse them
+        instead of creating duplicates / auto-renamed objects on re-run."""
         try:
             if not self.mechanical_dir:
                 print("ERROR: Mechanical directory not resolved")
                 return False
 
-            self.servo_part = self.doc.addObject("App::Part", "STS3032_Mount")
-            print(f"✓ Created App::Part: STS3032_Mount")
+            existing_part = self.doc.getObject("STS3032_Mount")
+            if existing_part is not None:
+                self.servo_part = existing_part
+                print(f"✓ Reusing existing App::Part: STS3032_Mount")
+            else:
+                self.servo_part = self.doc.addObject("App::Part", "STS3032_Mount")
+                print(f"✓ Created App::Part: STS3032_Mount")
 
             for obj_name, filename in self.SERVO_MESHES:
+                existing_mesh = self.doc.getObject(obj_name)
+                if existing_mesh is not None:
+                    if existing_mesh not in self.servo_part.Group:
+                        self.servo_part.addObject(existing_mesh)
+                    self.mesh_objects.append(existing_mesh)
+                    print(f"  ✓ Reusing existing mesh: {existing_mesh.Name}")
+                    continue
+
                 stl_path = self.mechanical_dir / filename
                 if not stl_path.exists():
                     print(f"  ⚠ WARNING: Servo STL not found: {stl_path}")
