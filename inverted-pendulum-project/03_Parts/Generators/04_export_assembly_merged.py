@@ -39,6 +39,7 @@ try:
     import FreeCAD as App
     import Part
     import Mesh
+    import MeshPart
     from FreeCAD import Vector, Placement, Rotation
 except ImportError:
     print("ERROR: FreeCAD Python modules not available.")
@@ -46,6 +47,18 @@ except ImportError:
     print("  freecad --python script.py")
     print("Or in FreeCAD Python console: exec(open('script.py').read())")
     sys.exit(1)
+
+
+# __file__ is not defined when this script is run the way this project's
+# tooling actually invokes it against freecadcmd -- e.g.
+# `freecadcmd -c "exec(open('04_export_assembly_merged.py').read())"`
+# (see run_export.sh / README.md) -- so resolve the script directory once
+# here, with the same NameError fallback `run()` already used, and reuse it
+# everywhere instead of each method separately calling Path(__file__).parent.
+try:
+    SCRIPT_DIR = Path(__file__).parent
+except NameError:
+    SCRIPT_DIR = Path.home() / "freecad-workspace" / "inverted-pendulum-project" / "03_Parts" / "Generators"
 
 
 @dataclass
@@ -106,19 +119,32 @@ class AssemblyExporter:
     EXPECTED_STEP_SIZE = 2.25  # 1.8-2.5 MB
     EXPECTED_STL_SIZE = 1.90   # 1.8-2.0 MB
 
+    # STL tessellation deflection -- project's established 1.0mm
+    # visual-mesh convention, explicit rather than Mesh.Mesh()'s
+    # undocumented default.
+    STL_LINEAR_DEFLECTION = 1.0   # mm
+    STL_ANGULAR_DEFLECTION = 0.5  # radians
+
     # Servo placement tolerance (from Phase 3)
     SERVO_POSITION_TOLERANCE = 0.5  # mm
 
-    # Expected servo placement (from Phase 3)
+    # Expected servo placement, as a fallback if servo_placement.json can't
+    # be read. Verified live-document placement (2026-09-02, via live
+    # FreeCAD MCP inspection, ~0.03-0.04mm fit to Middle_Plate hole B).
+    # load_servo_placement() overrides this instance attribute from
+    # servo_placement.json's "placement" block when available -- see
+    # 03_link_servo_to_assembly.py's load_placement_json() for the same
+    # convention.
     EXPECTED_SERVO_POSITION = {
-        "x": 10.0,
-        "y": 15.0,
-        "z": -11.25,
+        "x": -150.1217,
+        "y": -141.9987,
+        "z": -3.1,
     }
 
     def __init__(self):
         """Initialize exporter"""
         self.doc = None
+        self.doc_path = None
         self.assembly_shape = None
         self.servo_shape = None
         self.merged_shape = None
@@ -126,27 +152,41 @@ class AssemblyExporter:
         self.geometry_stats = GeometryStats()
         self.export_stats = {}
         self.servo_step_path = None
+        # Overridden per-instance by load_servo_placement() when
+        # servo_placement.json is available; otherwise stays the class
+        # fallback above.
+        self.EXPECTED_SERVO_POSITION = dict(self.EXPECTED_SERVO_POSITION)
 
     def resolve_servo_step_path(self) -> bool:
-        """Resolve servo STEP file path"""
+        """Resolve servo STEP file path.
+
+        Prefers the reduced-size servo STEP (~2.92 MB) so the merged export
+        stays within the STEP size budget (1.5-3.0 MB, see
+        test_export_file_sizes). The full-size servo STEP (~36 MB) is only
+        used as a loudly-warned fallback if the reduced file is missing --
+        picking it silently would blow the size budget.
+        """
         try:
-            script_dir = Path(__file__).parent
+            mechanical_dir = SCRIPT_DIR.parent / "Mechanical"
 
-            # Try multiple possible locations
-            step_path1 = script_dir.parent / "Mechanical" / "feetech-STS3032.step"
-            step_path2 = Path(__file__).parent.parent / "Mechanical" / "feetech-STS3032.step"
+            reduced_path = mechanical_dir / "feetech-STS3032-reduced.step"
+            full_path = mechanical_dir / "feetech-STS3032.step"
 
-            if step_path1.exists():
-                self.servo_step_path = step_path1
-                print(f"✓ Found servo STEP file: {step_path1}")
+            if reduced_path.exists():
+                self.servo_step_path = reduced_path
+                print(f"✓ Found reduced servo STEP file: {reduced_path}")
                 return True
-            elif step_path2.exists():
-                self.servo_step_path = step_path2
-                print(f"✓ Found servo STEP file: {step_path2}")
+            elif full_path.exists():
+                self.servo_step_path = full_path
+                print(f"⚠ WARNING: Reduced servo STEP file not found at:")
+                print(f"    {reduced_path}")
+                print(f"  Falling back to FULL-SIZE servo STEP file: {full_path}")
+                print(f"  This is ~36 MB and will likely blow the STEP export size budget!")
                 return True
             else:
-                print(f"⚠ WARNING: Servo STEP file not found at:")
-                print(f"    {step_path1}")
+                print(f"⚠ WARNING: No servo STEP file found at:")
+                print(f"    {reduced_path}")
+                print(f"    {full_path}")
                 print(f"  Export will include assembly without separate servo geometry")
                 return False
 
@@ -163,6 +203,7 @@ class AssemblyExporter:
                 return False
 
             self.doc = App.openDocument(str(path))
+            self.doc_path = path
             print(f"✓ Loaded: {path.name}")
             return True
 
@@ -217,6 +258,46 @@ class AssemblyExporter:
             print(f"ERROR extracting assembly shape: {e}")
             return False
 
+    def load_servo_placement(self) -> Placement:
+        """Load the servo placement from Phase 2's servo_placement.json
+        ("placement" block: x/y/z in mm, roll/pitch/yaw in degrees).
+
+        The live document uses an identity rotation for the servo (roll,
+        pitch and yaw are all 0.0 in servo_placement.json), matching the
+        convention in 03_link_servo_to_assembly.py's apply_placement().
+        Falls back to the verified live-document values (2026-09-02, via
+        live FreeCAD MCP inspection, ~0.03-0.04mm fit to Middle_Plate hole B,
+        also mirrored in EXPECTED_SERVO_POSITION above) if the JSON is
+        missing or malformed.
+
+        Also updates self.EXPECTED_SERVO_POSITION so servo position
+        validation checks against the same source used for the transform.
+        """
+        fallback = dict(self.EXPECTED_SERVO_POSITION)
+        json_path = SCRIPT_DIR / "servo_placement.json"
+
+        x, y, z = fallback["x"], fallback["y"], fallback["z"]
+        try:
+            if json_path.exists():
+                with open(json_path, 'r') as f:
+                    data = json.load(f)
+                placement = data.get("placement", {})
+                x = placement.get("x", x)
+                y = placement.get("y", y)
+                z = placement.get("z", z)
+                print(f"✓ Loaded servo placement from {json_path.name}: "
+                      f"X={x:.4f}, Y={y:.4f}, Z={z:.4f} mm")
+            else:
+                print(f"⚠ WARNING: {json_path.name} not found, using verified "
+                      f"fallback placement: X={x:.4f}, Y={y:.4f}, Z={z:.4f} mm")
+        except Exception as e:
+            print(f"⚠ WARNING: Could not read {json_path.name} ({e}), using "
+                  f"verified fallback placement: X={x:.4f}, Y={y:.4f}, Z={z:.4f} mm")
+
+        self.EXPECTED_SERVO_POSITION = {"x": x, "y": y, "z": z}
+
+        return Placement(Vector(x, y, z), Rotation(Vector(0, 0, 1), 0))
+
     def load_servo_geometry(self) -> bool:
         """Load servo geometry from external STEP file"""
         try:
@@ -232,10 +313,21 @@ class AssemblyExporter:
             self.servo_shape = Part.Shape()
             self.servo_shape.read(str(self.servo_step_path))
 
+            # The servo STEP file is in its own native coordinate frame,
+            # wildly different from the plate assembly's frame (~150-200mm
+            # offset if left untransformed). Apply the verified mount
+            # placement so the servo lands in the plate assembly's frame.
+            servo_placement = self.load_servo_placement()
+            self.servo_shape.Placement = servo_placement
+
             print(f"✓ Loaded servo geometry:")
             print(f"  Vertices: {len(self.servo_shape.Vertexes)}")
             print(f"  Edges: {len(self.servo_shape.Edges)}")
             print(f"  Faces: {len(self.servo_shape.Faces)}")
+            print(f"✓ Applied servo placement: "
+                  f"X={servo_placement.Base.x:.4f}, "
+                  f"Y={servo_placement.Base.y:.4f}, "
+                  f"Z={servo_placement.Base.z:.4f} mm")
 
             return True
 
@@ -263,6 +355,13 @@ class AssemblyExporter:
             # Create merged compound
             self.merged_shape = Part.makeCompound(shapes)
 
+            # Recalculate geometry stats from the final merged shape (plates
+            # + servo), not just the plates-only assembly_shape computed in
+            # extract_assembly_shape() -- export_metadata.json's
+            # geometry_stats.bounding_box needs to reflect what's actually
+            # exported so a missing/wrong servo placement is visible there.
+            self._calculate_geometry_stats(self.merged_shape)
+
             print(f"✓ Merged shape created:")
             print(f"  Total faces: {len(self.merged_shape.Faces)}")
             print(f"  Total edges: {len(self.merged_shape.Edges)}")
@@ -282,7 +381,7 @@ class AssemblyExporter:
                 return False
 
             if output_path is None:
-                output_dir = Path(__file__).parent
+                output_dir = SCRIPT_DIR
                 output_path = output_dir / "plates_assembled_with_servo.step"
 
             output_path = Path(output_path)
@@ -336,39 +435,46 @@ class AssemblyExporter:
                 return False
 
             if output_path is None:
-                output_dir = Path(__file__).parent
+                output_dir = SCRIPT_DIR
                 output_path = output_dir / "plates_assembled_with_servo.stl"
 
             output_path = Path(output_path)
 
-            # Create mesh from compound by meshing individual solids
+            # Create mesh from compound by meshing individual solids, with
+            # explicit tessellation deflection (project's established 1.0mm
+            # visual-mesh convention) instead of Mesh.Mesh()'s undocumented
+            # default deflection.
             start_time = time.time()
-            try:
-                # Try direct mesh first (works for Solid/Shell/Face)
-                mesh = Mesh.Mesh(self.merged_shape)
-            except TypeError as e:
-                if "Part.Compound" in str(e):
-                    # Compound detected - mesh individual components
-                    print(f"  Compound detected, meshing individual components...")
-                    mesh = Mesh.Mesh()  # Empty mesh to accumulate
+            solids = list(self.merged_shape.Solids)
 
-                    solids = list(self.merged_shape.Solids)
-                    print(f"    Found {len(solids)} solid(s)")
+            if solids:
+                print(f"  Meshing {len(solids)} solid(s) "
+                      f"(LinearDeflection={self.STL_LINEAR_DEFLECTION}mm, "
+                      f"AngularDeflection={self.STL_ANGULAR_DEFLECTION}rad)...")
+                mesh = Mesh.Mesh()  # Empty mesh to accumulate
 
-                    for i, solid in enumerate(solids):
-                        try:
-                            component_mesh = Mesh.Mesh(solid)
-                            mesh.addMesh(component_mesh)
-                            print(f"    ✓ Meshed component {i+1}/{len(solids)} ({len(component_mesh.Facets)} triangles)")
-                        except Exception as component_e:
-                            print(f"    ⚠ Could not mesh component {i+1}: {component_e}")
-                            continue
+                for i, solid in enumerate(solids):
+                    try:
+                        component_mesh = MeshPart.meshFromShape(
+                            Shape=solid,
+                            LinearDeflection=self.STL_LINEAR_DEFLECTION,
+                            AngularDeflection=self.STL_ANGULAR_DEFLECTION,
+                        )
+                        mesh.addMesh(component_mesh)
+                        print(f"    ✓ Meshed component {i+1}/{len(solids)} ({len(component_mesh.Facets)} triangles)")
+                    except Exception as component_e:
+                        print(f"    ⚠ Could not mesh component {i+1}: {component_e}")
+                        continue
 
-                    if mesh.CountFacets == 0:
-                        raise RuntimeError("No components could be meshed")
-                else:
-                    # Different error - re-raise
-                    raise
+                if mesh.CountFacets == 0:
+                    raise RuntimeError("No components could be meshed")
+            else:
+                # No solids (e.g. shell/face-only shape) - mesh directly
+                mesh = MeshPart.meshFromShape(
+                    Shape=self.merged_shape,
+                    LinearDeflection=self.STL_LINEAR_DEFLECTION,
+                    AngularDeflection=self.STL_ANGULAR_DEFLECTION,
+                )
             mesh_creation_time = time.time() - start_time
 
             # Export mesh to STL (binary format)
@@ -422,7 +528,7 @@ class AssemblyExporter:
                 return False
 
             if output_path is None:
-                output_dir = Path(__file__).parent
+                output_dir = SCRIPT_DIR
                 output_path = output_dir / "plates_assembled_with_servo.3mf"
 
             output_path = Path(output_path)
@@ -592,7 +698,7 @@ class AssemblyExporter:
         """Save export metadata to JSON"""
         try:
             if output_path is None:
-                output_dir = Path(__file__).parent
+                output_dir = SCRIPT_DIR
                 output_path = output_dir / "export_metadata.json"
 
             output_path = Path(output_path)
@@ -602,7 +708,7 @@ class AssemblyExporter:
                 "phase": 4,
                 "title": "Export/Merge Assembly Metadata",
                 "timestamp": datetime.now().isoformat(),
-                "source_assembly": "plates_assembled.FCStd",
+                "source_assembly": self.doc_path.name if self.doc_path else None,
                 "servo_step_file": str(self.servo_step_path) if self.servo_step_path else None,
                 "servo_geometry_included": self.servo_shape is not None,
                 "exports": self.export_stats,
@@ -646,12 +752,9 @@ class AssemblyExporter:
         print("=" * 70)
         print()
 
-        try:
-            script_dir = Path(__file__).parent
-        except NameError:
-            script_dir = Path.home() / "freecad-workspace" / "inverted-pendulum-project" / "03_Parts" / "Generators"
+        script_dir = SCRIPT_DIR
 
-        doc_path = script_dir / "plates_assembled.FCStd"
+        doc_path = script_dir / "plates_servo_assembled.FCStd"
 
         # Resolve servo STEP path
         print("Step 1: Resolve servo STEP file path")
@@ -691,14 +794,16 @@ class AssemblyExporter:
         print("Step 6: Export to STEP format")
         print("-" * 70)
         if not self.export_step(script_dir / "plates_assembled_with_servo.step"):
-            print("WARNING: STEP export failed")
+            print("ERROR: STEP export failed")
+            return False
         print()
 
         # Export to STL
         print("Step 7: Export to STL format")
         print("-" * 70)
         if not self.export_stl(script_dir / "plates_assembled_with_servo.stl"):
-            print("WARNING: STL export failed")
+            print("ERROR: STL export failed")
+            return False
         print()
 
         # Export to 3MF (optional)

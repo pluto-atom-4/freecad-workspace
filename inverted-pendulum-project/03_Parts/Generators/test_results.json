@@ -1,9 +1,9 @@
 {
-  "timestamp": "2026-09-02T20:47:06.393366",
+  "timestamp": "2026-09-03T08:33:22.027923",
   "test_suite": "Phase 5: Integration Tests",
   "total_tests": 23,
-  "passed": 19,
-  "failed": 4,
+  "passed": 22,
+  "failed": 1,
   "test_results": [
     {
       "test": "STEP file exists",
@@ -168,15 +168,15 @@
     {
       "test": "Export STL file exists",
       "category": "Export",
-      "passed": false,
-      "message": "File: not found",
+      "passed": true,
+      "message": "File: found",
       "details": {}
     },
     {
       "test": "Export STL valid",
       "category": "Export",
-      "passed": false,
-      "message": "STL file does not exist",
+      "passed": true,
+      "message": "Format: valid",
       "details": {}
     },
     {
@@ -189,18 +189,18 @@
     {
       "test": "Export metadata valid",
       "category": "Export",
-      "passed": false,
-      "message": "JSON: invalid",
+      "passed": true,
+      "message": "JSON: valid",
       "details": {}
     },
     {
       "test": "Export file sizes",
       "category": "Export",
       "passed": false,
-      "message": "STEP: 0.07 MB, STL: N/A",
+      "message": "STEP: 2.90 MB, STL: 1.26 MB",
       "details": {
-        "step": 0.0699462890625,
-        "stl": null
+        "step": 2.9001035690307617,
+        "stl": 1.2573089599609375
       }
     }
   ]
