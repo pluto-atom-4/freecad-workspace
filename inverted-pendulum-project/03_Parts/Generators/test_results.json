@@ -1,9 +1,9 @@
 {
-  "timestamp": "2026-08-28T16:37:24.129097",
+  "timestamp": "2026-09-02T20:47:06.393366",
   "test_suite": "Phase 5: Integration Tests",
   "total_tests": 23,
-  "passed": 5,
-  "failed": 18,
+  "passed": 19,
+  "failed": 4,
   "test_results": [
     {
       "test": "STEP file exists",
@@ -54,92 +54,115 @@
     {
       "test": "Placement JSON exists",
       "category": "Positioning",
-      "passed": false,
-      "message": "File: not found",
+      "passed": true,
+      "message": "File: found",
       "details": {}
     },
     {
       "test": "Placement JSON valid",
       "category": "Positioning",
-      "passed": false,
-      "message": "JSON file does not exist",
+      "passed": true,
+      "message": "JSON: valid",
       "details": {}
     },
     {
       "test": "Placement position values",
       "category": "Positioning",
-      "passed": false,
-      "message": "JSON file does not exist",
-      "details": {}
+      "passed": true,
+      "message": "Position: X=-150.1, Y=-142.0, Z=-3.1 mm",
+      "details": {
+        "x": -150.1217,
+        "y": -141.9987,
+        "z": -3.1,
+        "within_bounds": true
+      }
     },
     {
       "test": "Placement rotation values",
       "category": "Positioning",
-      "passed": false,
-      "message": "JSON file does not exist",
-      "details": {}
+      "passed": true,
+      "message": "Rotation: Roll=0.0\u00b0, Pitch=0.0\u00b0, Yaw=0.0\u00b0",
+      "details": {
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0,
+        "rotation_is_identity": true
+      }
     },
     {
       "test": "Placement tolerance",
       "category": "Positioning",
-      "passed": false,
-      "message": "JSON file does not exist",
-      "details": {}
+      "passed": true,
+      "message": "Alignment checks: passed",
+      "details": {
+        "alignment_checks": 0
+      }
     },
     {
       "test": "Placement clearances",
       "category": "Positioning",
-      "passed": false,
-      "message": "JSON file does not exist",
-      "details": {}
+      "passed": true,
+      "message": "Clearance checks: passed",
+      "details": {
+        "clearance_checks": 3
+      }
     },
     {
       "test": "Link config exists",
       "category": "Linking",
-      "passed": false,
-      "message": "File: not found",
+      "passed": true,
+      "message": "File: found",
       "details": {}
     },
     {
       "test": "Link config valid",
       "category": "Linking",
-      "passed": false,
-      "message": "JSON file does not exist",
+      "passed": true,
+      "message": "JSON: valid",
       "details": {}
     },
     {
       "test": "Link config plates",
       "category": "Linking",
-      "passed": false,
-      "message": "JSON file does not exist",
-      "details": {}
+      "passed": true,
+      "message": "Plates: ['Top_Plate', 'Middle_Plate', 'Bottom_Plate']",
+      "details": {
+        "count": 3,
+        "has_required": true
+      }
     },
     {
       "test": "Link config servo reference",
       "category": "Linking",
-      "passed": false,
-      "message": "JSON file does not exist",
-      "details": {}
+      "passed": true,
+      "message": "Servo body: Servo_Motor",
+      "details": {
+        "body_name": "Servo_Motor",
+        "step_file": "../Mechanical/feetech-STS3032.step"
+      }
     },
     {
       "test": "Link config validations",
       "category": "Linking",
-      "passed": false,
-      "message": "JSON file does not exist",
-      "details": {}
+      "passed": true,
+      "message": "Validations: 8 checks, all passed: True",
+      "details": {
+        "count": 8,
+        "all_passed": true
+      }
     },
     {
       "test": "Export STEP file exists",
       "category": "Export",
-      "passed": false,
-      "message": "File: not found",
+      "passed": true,
+      "message": "File: found",
       "details": {}
     },
     {
       "test": "Export STEP valid",
       "category": "Export",
-      "passed": false,
-      "message": "STEP file does not exist",
+      "passed": true,
+      "message": "Format: valid",
       "details": {}
     },
     {
@@ -159,24 +182,24 @@
     {
       "test": "Export metadata exists",
       "category": "Export",
-      "passed": false,
-      "message": "File: not found",
+      "passed": true,
+      "message": "File: found",
       "details": {}
     },
     {
       "test": "Export metadata valid",
       "category": "Export",
       "passed": false,
-      "message": "JSON file does not exist",
+      "message": "JSON: invalid",
       "details": {}
     },
     {
       "test": "Export file sizes",
       "category": "Export",
       "passed": false,
-      "message": "STEP: N/A, STL: N/A",
+      "message": "STEP: 0.07 MB, STL: N/A",
       "details": {
-        "step": null,
+        "step": 0.0699462890625,
         "stl": null
       }
     }
