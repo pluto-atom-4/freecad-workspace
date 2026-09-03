@@ -74,7 +74,7 @@
     "servo": {
       "model": "Feetech STS3032",
       "body_length": 32.0,
-      "body_width": 30.0,
+      "body_width": 12.0,
       "body_height": 28.0,
       "shaft_length": 10.0,
       "shaft_offset_x": 0.0,

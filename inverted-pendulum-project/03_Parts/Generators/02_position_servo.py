@@ -105,7 +105,7 @@ class ServoPositionCalculator:
     # Servo motor specifications (Feetech STS3032)
     SERVO_SPECS = {
         "body_length": 32.0,        # mm
-        "body_width": 30.0,         # mm
+        "body_width": 12.0,         # mm
         "body_height": 28.0,        # mm
         "shaft_length": 10.0,       # mm
         "shaft_offset_x": 0.0,      # mm from center
