@@ -117,7 +117,7 @@ class AssemblyExporter:
 
     # Target file sizes (approximate, in MB)
     EXPECTED_STEP_SIZE = 2.25  # 1.8-2.5 MB
-    EXPECTED_STL_SIZE = 1.90   # 1.8-2.0 MB
+    EXPECTED_STL_SIZE = 1.26   # 1.0-1.5 MB (reduced-servo pipeline)
 
     # STL tessellation deflection -- project's established 1.0mm
     # visual-mesh convention, explicit rather than Mesh.Mesh()'s
@@ -505,7 +505,7 @@ class AssemblyExporter:
             }
 
             # Validate file size
-            size_ok = 1.5 < size_mb < 2.5  # Reasonable range
+            size_ok = 1.0 < size_mb < 1.5  # Reasonable range (reduced-servo pipeline)
             self.validations.append(ValidationResult(
                 check_name="STL file size",
                 passed=size_ok,
