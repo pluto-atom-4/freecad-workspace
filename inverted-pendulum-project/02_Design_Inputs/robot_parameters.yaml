@@ -1,0 +1,90 @@
+# Robot Design Parameters — Stage 0 (Issue #9)
+#
+# ============================================================================
+# PROVISIONAL / PLACEHOLDER — pending real hardware sourcing
+# ============================================================================
+# No physical hardware (ESP32-S3 dev board, drive motors, wheel/chassis stock)
+# has been sourced yet for the two-wheel self-balancing robot described in
+# Issue #8/#9. Every dimension, density, and target mass below is a plausible
+# placeholder, not a measured value.
+#
+# Per Issue #9's consolidated plan, Decision #3 ("Wheel/chassis dimensions"):
+#   "Placeholder values now. 02_Design_Inputs/ is empty and no real hardware
+#    has been sourced yet. Use plausible placeholders (~65-80mm wheel dia,
+#    ~120x80mm chassis) captured in robot_parameters.yaml as a one-line
+#    change once real parts are picked."
+#
+# Updating this file in place (no code changes needed) is the intended path
+# once real hardware is selected: `robot_parameters.py` (the pure-Python
+# loader next to this file) and every downstream Stage 1+ script are meant to
+# read these numbers through that loader, not hardcode their own copies.
+#
+# Units: all lengths in millimetres (mm), densities in kg/m^3, masses in kg.
+# FreeCAD itself works internally in mm/kg — the mm-to-SI (m/kg/kg*m^2)
+# conversion for URDF happens later, in Stage 3 (09_compute_mass_properties.py),
+# not here.
+# ============================================================================
+
+schema_version: 1
+
+# PLACEHOLDER | MEASURED — flips to MEASURED once every section below is
+# backed by real, sourced hardware rather than a plausible guess.
+status: PLACEHOLDER
+
+meta:
+  issue: 9
+  decision_ref: "Issue #9 consolidated plan, Decision #3 (wheel/chassis dimensions)"
+  last_updated: "2026-09-04"
+  note: >
+    All values are placeholders per Decision #3. Do not treat any dimension,
+    density, or target mass here as final until this file's `status` field
+    reads MEASURED.
+
+# ----------------------------------------------------------------------------
+# Base_Link (chassis / body) — houses ESP32-S3, battery, motor drivers.
+# ----------------------------------------------------------------------------
+chassis:
+  length_mm: 120.0
+  width_mm: 80.0
+  height_mm: 40.0
+  material: PLA
+  density_kg_m3: 1250.0
+  target_mass_kg: 0.25
+
+# ----------------------------------------------------------------------------
+# Wheel_Left / Wheel_Right — identical geometry, mirrored placement.
+# track_mm is the centre-to-centre distance between the two wheels.
+# ----------------------------------------------------------------------------
+wheel:
+  diameter_mm: 70.0
+  width_mm: 15.0
+  track_mm: 110.0
+  material: PLA
+  density_kg_m3: 1250.0
+  target_mass_kg: 0.03  # per wheel
+
+# ----------------------------------------------------------------------------
+# Pendulum_Link — the existing 3-plate + servo linkage from #3
+# (`plates_servo_assembled.FCStd`), reused as a subassembly by Stage 1.
+# arm_length_mm / pivot_height_mm describe its overall envelope relative to
+# the chassis mount, not the individual plate dimensions (those already live
+# in `03_Parts/Generators/validate_geometry.py` and are unchanged by Stage 0).
+# ----------------------------------------------------------------------------
+pendulum:
+  arm_length_mm: 160.0
+  pivot_height_mm: 60.0
+  material: Aluminum_6061
+  density_kg_m3: 2700.0
+  target_mass_kg: 0.12
+
+# ----------------------------------------------------------------------------
+# Maps the link names Stage 1+ will create in FreeCAD / emit into the URDF
+# (see Issue #9 Stage 1 and Stage 4) to the component sections above, so a
+# single lookup gives geometry/material/density/mass for any link without
+# hardcoding the mapping again downstream.
+# ----------------------------------------------------------------------------
+links:
+  Base_Link: chassis
+  Wheel_Left: wheel
+  Wheel_Right: wheel
+  Pendulum_Link: pendulum
