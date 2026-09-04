@@ -62,3 +62,14 @@ test*_results.json
 /inverted-pendulum-project/03_Parts/Mechanical/feetech-STS3032_conversion_report.json
 
 issue-content*.json
+
+# poc/freecad-webots-pipeline (issue #24) — fetched & generated artifacts.
+# Assets are fetch-on-demand (00_fetch_turtlebot3_assets.sh), not committed;
+# see poc/freecad-webots-pipeline/README.md for the reproduction steps and
+# NOTICE for the Apache-2.0 attribution record of what gets fetched.
+/poc/freecad-webots-pipeline/reference/
+/poc/freecad-webots-pipeline/freecad/output/
+/poc/freecad-webots-pipeline/urdf/meshes/
+/poc/freecad-webots-pipeline/webots/protos/
+/poc/freecad-webots-pipeline/webots/run_batch.log*
+/poc/freecad-webots-pipeline/webots/worlds/.*.wbproj
