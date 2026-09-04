@@ -1,0 +1,23 @@
+TurtleBot3 asset attribution (Apache License 2.0)
+====================================================
+
+This directory (poc/freecad-webots-pipeline/) fetches, on demand, a small
+set of files from the ROBOTIS-GIT/turtlebot3 repository for use as a
+public, pre-rigged robot model in a FreeCAD-to-Webots pipeline spike.
+These files are NOT committed to this repository; they are re-downloaded
+by 00_fetch_turtlebot3_assets.sh into the gitignored reference/ directory.
+
+Source repository : https://github.com/ROBOTIS-GIT/turtlebot3
+Pinned commit SHA  : fc817ce3073af1d6032397c64504134882af5e9a
+Retrieval date     : 2026-09-04T00:14:13Z
+License            : Apache License 2.0 (confirmed at pinned SHA)
+
+Files retrieved:
+  - turtlebot3_description/urdf/turtlebot3_burger.urdf
+  - turtlebot3_description/meshes/bases/burger_base.stl
+  - turtlebot3_description/meshes/wheels/left_tire.stl
+  - turtlebot3_description/meshes/wheels/right_tire.stl
+
+Per Apache License 2.0 Section 4, this NOTICE file records the origin of
+the above third-party files. See https://github.com/ROBOTIS-GIT/turtlebot3 for the full LICENSE text at
+the pinned commit: https://raw.githubusercontent.com/ROBOTIS-GIT/turtlebot3/fc817ce3073af1d6032397c64504134882af5e9a/LICENSE
