@@ -7,7 +7,9 @@
 #
 # Not meant to be executed directly — source it:
 #   source "$SCRIPT_DIR/_provision_assets.sh"
-#   provision_assets
+#   require_webots_bin
+#   require_world_file "$WORLD"
+#   provision_assets "$WORLD"
 #
 # Expects the caller to already have `set -uo pipefail` (or stricter) in
 # effect; this file relies on unset-variable and pipefail semantics but
@@ -31,15 +33,81 @@ REFERENCE_DIR="$POC_DIR/reference"
 FREECAD_OUTPUT_DIR="$POC_DIR/freecad/output"
 URDF_MESHES_DIR="$POC_DIR/urdf/meshes"
 
-# provision_assets — idempotent. Skips any stage whose expected output
-# already exists AND is non-empty (a truncated/corrupt artifact from an
-# interrupted prior run must not be mistaken for a finished one — review
-# finding #3). Exits the calling shell with a FATAL message on any failure,
-# matching this POC's existing FATAL-and-exit-1 convention.
+# all_nonempty FILE... — true iff every given file exists and is
+# non-empty. Single helper for the "already present, non-empty" skip-check
+# pattern used by each provisioning stage below, so adding a future
+# stage/asset means adding one call, not hand-duplicating another
+# multi-line `[ -s ... ] && [ -s ... ] && ...` chain (review finding #6).
+all_nonempty() {
+    local f
+    for f in "$@"; do
+        [ -s "$f" ] || return 1
+    done
+    return 0
+}
+
+# require_webots_bin — fail fast if WEBOTS_BIN isn't runnable, before
+# either caller spends a multi-minute provisioning pipeline on a Webots
+# invocation that was always going to fail at the very last step (review
+# finding #3).
+require_webots_bin() {
+    if ! command -v "$WEBOTS_BIN" >/dev/null 2>&1 && [ ! -x "$WEBOTS_BIN" ]; then
+        echo "FATAL: WEBOTS_BIN ($WEBOTS_BIN) not found or not executable." >&2
+        echo "Set WEBOTS_BIN to a valid Webots binary, e.g.:" >&2
+        echo "  export WEBOTS_BIN=/usr/local/bin/webots" >&2
+        exit 1
+    fi
+}
+
+# require_world_file WORLD — fail fast on a missing/typo'd world path
+# before provisioning runs. Shared so run_gui.sh and run_batch.sh give the
+# same message instead of two hand-maintained copies that drift (review
+# finding #7; the two copies had already diverged in wording).
+require_world_file() {
+    local world="$1"
+    if [ ! -f "$world" ]; then
+        echo "World file not found: $world" >&2
+        echo "See ../README.md \"Reproducing end to end\" / \"Watching it live\"." >&2
+        exit 1
+    fi
+}
+
+# provision_assets [WORLD] — idempotent. Skips any stage whose expected
+# output already exists AND is non-empty (a truncated/corrupt artifact
+# from an interrupted prior run must not be mistaken for a finished one —
+# review finding #3, round 1). Exits the calling shell with a FATAL
+# message on any failure, matching this POC's existing FATAL-and-exit-1
+# convention.
+#
+# If WORLD is given and does not reference the generated TurtlebotPoc
+# PROTO (via its EXTERNPROTO declaration), provisioning is skipped
+# entirely — the fixed webots/protos/TurtlebotPoc.proto target has
+# nothing to do with an unrelated world, so there's no reason to run the
+# multi-minute Stage 0/1/1b/3 pipeline just because that PROTO happens to
+# be missing (review finding #5). With no WORLD argument, this relevance
+# check is skipped and provisioning proceeds unconditionally (preserves
+# behavior for any future caller that doesn't have a world path handy).
 provision_assets() {
+    local world="${1:-}"
+    if [ -n "$world" ] && ! grep -q "TurtlebotPoc" "$world" 2>/dev/null; then
+        echo "$world does not reference the generated TurtlebotPoc PROTO — skipping auto-provisioning."
+        return 0
+    fi
+
     if [ -s "$PROTO_FILE" ]; then
         echo "Found $PROTO_FILE — assets already provisioned, skipping Stage 0/1/1b/3."
         return 0
+    fi
+
+    # Checked up front, before Stage 0 runs: a missing `mamba` is only
+    # needed by Stage 3 at the very end of this chain, but failing to
+    # provision at all is knowable immediately — no reason to burn minutes
+    # on Stage 0/1/1b first only to fail right before the finish line
+    # (review finding #4).
+    if ! command -v mamba >/dev/null 2>&1; then
+        echo "FATAL: mamba not found on PATH — cannot run urdf2webots (Stage 3) in the pendulum-tools env." >&2
+        echo "See ../README.md Stage 3 for the manual command." >&2
+        exit 1
     fi
 
     echo ""
@@ -52,11 +120,12 @@ provision_assets() {
     # individual mesh STL that 00_fetch_turtlebot3_assets.sh fetches (see its
     # FILES array) rather than just the containing meshes/ directory's
     # existence — a directory can exist but be incomplete/empty after an
-    # interrupted prior run (review finding #1).
-    if [ -s "$REFERENCE_DIR/turtlebot3_burger.urdf" ] \
-        && [ -s "$REFERENCE_DIR/meshes/burger_base.stl" ] \
-        && [ -s "$REFERENCE_DIR/meshes/left_tire.stl" ] \
-        && [ -s "$REFERENCE_DIR/meshes/right_tire.stl" ]; then
+    # interrupted prior run (review finding #1, round 2).
+    if all_nonempty \
+        "$REFERENCE_DIR/turtlebot3_burger.urdf" \
+        "$REFERENCE_DIR/meshes/burger_base.stl" \
+        "$REFERENCE_DIR/meshes/left_tire.stl" \
+        "$REFERENCE_DIR/meshes/right_tire.stl"; then
         echo ""
         echo "-- Stage 0: reference assets already present, skipping fetch. --"
     else
@@ -69,9 +138,10 @@ provision_assets() {
     fi
 
     # Stage 1 — FreeCAD Mesh -> Part.Shape -> STEP export.
-    if [ -s "$FREECAD_OUTPUT_DIR/burger_base.step" ] \
-        && [ -s "$FREECAD_OUTPUT_DIR/left_tire.step" ] \
-        && [ -s "$FREECAD_OUTPUT_DIR/right_tire.step" ]; then
+    if all_nonempty \
+        "$FREECAD_OUTPUT_DIR/burger_base.step" \
+        "$FREECAD_OUTPUT_DIR/left_tire.step" \
+        "$FREECAD_OUTPUT_DIR/right_tire.step"; then
         echo ""
         echo "-- Stage 1: STEP files already present, skipping FreeCAD conversion. --"
     else
@@ -84,13 +154,29 @@ provision_assets() {
             echo "  export FREECAD_BIN=~/.local/opt/freecad-1.1.3/usr/bin/freecadcmd" >&2
             exit 1
         fi
+        # 01_import_and_export_step.sh's own success check only confirms its
+        # JSON report was written, not that every expected .step file it
+        # reports on actually landed — a partial FreeCAD failure with a
+        # stale/incomplete report could still exit 0. Re-verify the actual
+        # outputs this stage promises before trusting them, the same way
+        # Stage 1b's mesh copies are verified below (review finding #2).
+        if ! all_nonempty \
+            "$FREECAD_OUTPUT_DIR/burger_base.step" \
+            "$FREECAD_OUTPUT_DIR/left_tire.step" \
+            "$FREECAD_OUTPUT_DIR/right_tire.step"; then
+            echo "FATAL: Stage 1 reported success but one or more expected .step files" >&2
+            echo "are missing (or empty) in $FREECAD_OUTPUT_DIR." >&2
+            echo "See freecad/output/stage1_conversion_report.json for details." >&2
+            exit 1
+        fi
     fi
 
     # Stage 1b — STEP round-trip check, producing the mesh re-exports that
     # urdf/turtlebot3_poc.urdf actually references.
-    if [ -s "$URDF_MESHES_DIR/burger_base_roundtrip.stl" ] \
-        && [ -s "$URDF_MESHES_DIR/left_tire_roundtrip.stl" ] \
-        && [ -s "$URDF_MESHES_DIR/right_tire_roundtrip.stl" ]; then
+    if all_nonempty \
+        "$URDF_MESHES_DIR/burger_base_roundtrip.stl" \
+        "$URDF_MESHES_DIR/left_tire_roundtrip.stl" \
+        "$URDF_MESHES_DIR/right_tire_roundtrip.stl"; then
         echo ""
         echo "-- Stage 1b: round-tripped meshes already present in urdf/meshes/, skipping. --"
     else
@@ -102,7 +188,7 @@ provision_assets() {
         # `set -o pipefail`, `grep -v` exits 1 whenever every line matched
         # the filter (i.e. it selected zero lines), which would otherwise
         # make this check fail even when freecadcmd itself exited 0 (review
-        # finding #2).
+        # finding #2, round 1).
         "$FREECAD_BIN" -c "__file__=r'$POC_DIR/freecad/02_roundtrip_check.py'; exec(open(__file__).read())" 2>&1 \
             | grep -v "Wayland\|Qt\|EGL"
         freecad_exit_code="${PIPESTATUS[0]}"
@@ -123,7 +209,7 @@ provision_assets() {
             # Verify the source actually exists (and is non-empty) before
             # copying, and verify the copy itself succeeded, rather than
             # silently falling through to launching Webots with an
-            # incomplete mesh set (review finding #1).
+            # incomplete mesh set (review finding #1, round 1).
             if [ ! -s "$src" ]; then
                 echo "FATAL: expected round-tripped mesh not found (or empty): $src" >&2
                 echo "Stage 1b reported success but its per-link mesh re-export for" >&2
@@ -139,13 +225,9 @@ provision_assets() {
     fi
 
     # Stage 3 — urdf2webots PROTO generation (pendulum-tools mamba env).
+    # (mamba's own presence was already checked up front, above.)
     echo ""
     echo "-- Stage 3: generating webots/protos/TurtlebotPoc.proto via urdf2webots (pendulum-tools env). --"
-    if ! command -v mamba >/dev/null 2>&1; then
-        echo "FATAL: mamba not found on PATH — cannot run urdf2webots in the pendulum-tools env." >&2
-        echo "See ../README.md Stage 3 for the manual command." >&2
-        exit 1
-    fi
     mkdir -p "$POC_DIR/webots/protos"
     if ! mamba run -n pendulum-tools python3 -m urdf2webots.importer \
         --input="$POC_DIR/urdf/turtlebot3_poc.urdf" \

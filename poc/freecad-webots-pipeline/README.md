@@ -227,6 +227,15 @@ on a fresh checkout now auto-provisions too, instead of the old fail-fast
 (`--batch --mode=fast --no-rendering --minimize --stdout`, with the
 `xvfb-run` fallback) is unchanged.
 
+Both scripts fail fast, before touching the pipeline, if `$WORLD` doesn't
+exist or `WEBOTS_BIN` isn't a runnable binary — no point burning a
+multi-minute provisioning run on either. `provision_assets` itself also
+checks `mamba` is on `PATH` up front (Stage 3's dependency, but knowable
+before Stage 0/1/1b run) and, if the given `$WORLD` doesn't reference the
+generated `TurtlebotPoc` PROTO at all (checked via its `EXTERNPROTO`
+declaration), skips provisioning entirely rather than regenerating a PROTO
+an unrelated world doesn't need.
+
 `run_gui.sh` requires a real `DISPLAY` and, unlike `run_batch.sh`, does
 **not** fall back to `xvfb-run` on a display error — Xvfb has no visible
 framebuffer, so that fallback would silently defeat the entire point of

@@ -105,6 +105,17 @@ def main() -> int:
     step_count = 1
     prev_print_left = initial_left
     prev_print_right = initial_right
+    # Baseline is taken after the pre-loop warm-up step (step_count == 1,
+    # the earliest point a position-sensor reading is valid — see above),
+    # not before any step. Since the loop below only prints every
+    # PRINT_EVERY_STEPS steps, this means the FIRST printed observed_vel
+    # covers PRINT_EVERY_STEPS - 1 steps, not a full PRINT_EVERY_STEPS —
+    # every later print covers a full PRINT_EVERY_STEPS-step interval
+    # (delta against the *previous print*, not against this baseline).
+    # dt_s below is always computed from the actual elapsed time, so the
+    # printed observed_vel is correct either way — this is a cosmetic
+    # off-by-one in the first interval's width only, not a bug (review
+    # finding #8, round 3).
     prev_print_elapsed_s = step_count * TIME_STEP_MS / 1000.0
 
     while robot.step(TIME_STEP_MS) != -1 and step_count < SIM_STEPS:

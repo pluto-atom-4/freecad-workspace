@@ -29,14 +29,15 @@ WEBOTS_BIN="${WEBOTS_BIN:-/usr/local/bin/webots}"
 # shellcheck source=./_provision_assets.sh
 # Sets POC_DIR (among other prerequisite-chain vars) from its own location —
 # no need to compute POC_DIR here too; nothing in this file used the local
-# value before this source line (review finding #3).
+# value before this source line (review finding #3, round 2).
 source "$SCRIPT_DIR/_provision_assets.sh"
 
-if [ ! -f "$WORLD" ]; then
-    echo "World file not found: $WORLD"
-    echo "See ../README.md."
-    exit 1
-fi
+# Shared with run_batch.sh (review finding #7, round 3) — same message,
+# and validates WEBOTS_BIN before the multi-minute auto-provisioning
+# pipeline below rather than only at the final launch line (review
+# finding #3, round 3).
+require_world_file "$WORLD"
+require_webots_bin
 
 # --- DISPLAY check --------------------------------------------------------
 # This script's entire purpose is a visible window; unlike run_batch.sh, a
@@ -53,8 +54,10 @@ echo "Using DISPLAY=$DISPLAY"
 
 # --- Stage 0/1/1b/3 auto-provisioning -------------------------------------
 # See _provision_assets.sh (shared with run_batch.sh) for the prerequisite
-# chain and skip-check details.
-provision_assets
+# chain and skip-check details. Passing $WORLD lets provision_assets skip
+# entirely if this world doesn't even reference the generated PROTO
+# (review finding #5, round 3).
+provision_assets "$WORLD"
 
 echo ""
 echo "Launching Webots (realtime, GUI) on: $WORLD"

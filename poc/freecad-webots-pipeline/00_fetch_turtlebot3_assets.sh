@@ -79,6 +79,12 @@ for rel_path in "${FILES[@]}"; do
   echo "  GET $url"
   if ! curl -fsSL "$url" -o "$dest"; then
     echo "FATAL: failed to fetch $url" >&2
+    # Remove whatever curl may have partially written — a truncated-but-
+    # non-empty file here would otherwise pass downstream `[ -s ... ]`
+    # non-empty skip-checks (_provision_assets.sh) on the next run and be
+    # mistaken for a successfully fetched asset (review finding #1, round
+    # 3).
+    rm -f "$dest"
     exit 1
   fi
   size=$(du -h "$dest" | cut -f1)

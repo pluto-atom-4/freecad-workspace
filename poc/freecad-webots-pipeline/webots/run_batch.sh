@@ -25,21 +25,22 @@ LOG_FILE="$SCRIPT_DIR/run_batch.log"
 # shellcheck source=./_provision_assets.sh
 source "$SCRIPT_DIR/_provision_assets.sh"
 
-# Fail fast on a bad/typo'd $WORLD before burning the (multi-minute) Stage
-# 0/1/1b/3 auto-provisioning pipeline below — provisioning always targets
-# the fixed webots/protos/TurtlebotPoc.proto regardless of $WORLD, so it
-# can't fix a missing world file anyway. Matches run_gui.sh's ordering
-# (review finding #2).
-if [ ! -f "$WORLD" ]; then
-    echo "World file not found: $WORLD"
-    echo "Run urdf2webots first (see ../README.md Stage 3)."
-    exit 1
-fi
+# Fail fast on a bad/typo'd $WORLD, and on a missing/bad WEBOTS_BIN, before
+# burning the (multi-minute) Stage 0/1/1b/3 auto-provisioning pipeline
+# below — provisioning always targets the fixed
+# webots/protos/TurtlebotPoc.proto regardless of $WORLD, so neither check
+# can be fixed by provisioning anyway. Shared with run_gui.sh so both give
+# the same message instead of two copies that drift (review finding #2,
+# round 2; finding #3 and #7, round 3).
+require_world_file "$WORLD"
+require_webots_bin
 
 # --- Stage 0/1/1b/3 auto-provisioning -------------------------------------
 # See _provision_assets.sh (shared with run_gui.sh) for the prerequisite
-# chain and skip-check details.
-provision_assets
+# chain and skip-check details. Passing $WORLD lets provision_assets skip
+# entirely if this world doesn't even reference the generated PROTO
+# (review finding #5, round 3).
+provision_assets "$WORLD"
 
 run_webots() {
     "$WEBOTS_BIN" --batch --mode=fast --no-rendering --minimize --stdout "$WORLD"
