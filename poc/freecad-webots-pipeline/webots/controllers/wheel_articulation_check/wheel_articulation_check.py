@@ -96,18 +96,30 @@ def main() -> int:
     initial_left = left_sensor.getValue() if left_sensor else None
     initial_right = right_sensor.getValue() if right_sensor else None
 
+    # Observed angular velocity is computed from the position-sensor delta
+    # since the previous print, not read via Motor.getVelocity() — that API
+    # returns the last *commanded target* velocity (set once above via
+    # setVelocity() and never changed), not a measured/live value, so it
+    # would always print the same constant 2.0000 rad/s and misleadingly
+    # imply live confirmation when only the position field is actually live.
     step_count = 1
+    prev_print_left = initial_left
+    prev_print_right = initial_right
+    prev_print_elapsed_s = step_count * TIME_STEP_MS / 1000.0
+
     while robot.step(TIME_STEP_MS) != -1 and step_count < SIM_STEPS:
         step_count += 1
         if step_count % PRINT_EVERY_STEPS == 0:
             elapsed_s = step_count * TIME_STEP_MS / 1000.0
             left_pos = left_sensor.getValue() if left_sensor else float("nan")
             right_pos = right_sensor.getValue() if right_sensor else float("nan")
-            left_vel = left_motor.getVelocity()
-            right_vel = right_motor.getVelocity()
+            dt_s = elapsed_s - prev_print_elapsed_s
+            left_obs_vel = (left_pos - prev_print_left) / dt_s if left_sensor and dt_s > 0 else float("nan")
+            right_obs_vel = (right_pos - prev_print_right) / dt_s if right_sensor and dt_s > 0 else float("nan")
             print(f"  t={elapsed_s:5.2f}s step={step_count:3d}  "
-                  f"left pos={left_pos:.4f} rad vel={left_vel:.4f} rad/s  |  "
-                  f"right pos={right_pos:.4f} rad vel={right_vel:.4f} rad/s")
+                  f"left pos={left_pos:.4f} rad observed_vel={left_obs_vel:.4f} rad/s  |  "
+                  f"right pos={right_pos:.4f} rad observed_vel={right_obs_vel:.4f} rad/s")
+            prev_print_left, prev_print_right, prev_print_elapsed_s = left_pos, right_pos, elapsed_s
 
     final_left = left_sensor.getValue() if left_sensor else None
     final_right = right_sensor.getValue() if right_sensor else None

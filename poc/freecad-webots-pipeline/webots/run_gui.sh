@@ -15,8 +15,10 @@
 # needs (reference/, freecad/output/, urdf/meshes/, webots/protos/) — see
 # ../README.md "Reproducing end to end". Rather than failing fast on a
 # missing webots/protos/TurtlebotPoc.proto, this script auto-provisions
-# them by running the existing Stage 0/1/1b/3 scripts in order. It only
-# invokes those scripts — it does not duplicate their logic.
+# them by running the existing Stage 0/1/1b/3 scripts in order, via the
+# shared provisioning logic in _provision_assets.sh (also used by
+# run_batch.sh — see issue #26 review finding #6). It only invokes those
+# scripts — it does not duplicate their logic.
 
 set -uo pipefail
 
@@ -24,6 +26,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POC_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORLD="${1:-$SCRIPT_DIR/worlds/turtlebot3_poc.wbt}"
 WEBOTS_BIN="${WEBOTS_BIN:-/usr/local/bin/webots}"
+
+# shellcheck source=./_provision_assets.sh
+source "$SCRIPT_DIR/_provision_assets.sh"
 
 if [ ! -f "$WORLD" ]; then
     echo "World file not found: $WORLD"
@@ -45,106 +50,9 @@ fi
 echo "Using DISPLAY=$DISPLAY"
 
 # --- Stage 0/1/1b/3 auto-provisioning -------------------------------------
-# Prerequisite chain, checked from the end backwards: the PROTO the world
-# EXTERNPROTOs needs urdf/meshes/, which needs freecad/output/ (Stage 1/1b),
-# which needs reference/ (Stage 0).
-PROTO_FILE="$POC_DIR/webots/protos/TurtlebotPoc.proto"
-REFERENCE_DIR="$POC_DIR/reference"
-FREECAD_OUTPUT_DIR="$POC_DIR/freecad/output"
-URDF_MESHES_DIR="$POC_DIR/urdf/meshes"
-
-if [ -f "$PROTO_FILE" ]; then
-    echo "Found $PROTO_FILE — assets already provisioned, skipping Stage 0/1/1b/3."
-else
-    echo ""
-    echo "=================================================================="
-    echo "webots/protos/TurtlebotPoc.proto not found — auto-provisioning"
-    echo "generated assets before launch (Stage 0 -> 1 -> 1b -> 3)."
-    echo "=================================================================="
-
-    # Stage 0 — fetch TurtleBot3 reference assets.
-    if [ -d "$REFERENCE_DIR/meshes" ] && [ -f "$REFERENCE_DIR/turtlebot3_burger.urdf" ]; then
-        echo ""
-        echo "-- Stage 0: reference assets already present, skipping fetch. --"
-    else
-        echo ""
-        echo "-- Stage 0: fetching TurtleBot3 reference assets (00_fetch_turtlebot3_assets.sh)... --"
-        if ! "$POC_DIR/00_fetch_turtlebot3_assets.sh"; then
-            echo "FATAL: Stage 0 (asset fetch) failed." >&2
-            exit 1
-        fi
-    fi
-
-    # Stage 1 — FreeCAD Mesh -> Part.Shape -> STEP export.
-    if [ -f "$FREECAD_OUTPUT_DIR/burger_base.step" ] \
-        && [ -f "$FREECAD_OUTPUT_DIR/left_tire.step" ] \
-        && [ -f "$FREECAD_OUTPUT_DIR/right_tire.step" ]; then
-        echo ""
-        echo "-- Stage 1: STEP files already present, skipping FreeCAD conversion. --"
-    else
-        FREECAD_BIN="${FREECAD_BIN:-freecadcmd}"
-        echo ""
-        echo "-- Stage 1: FreeCAD import & STEP export (FREECAD_BIN=$FREECAD_BIN). --"
-        echo "   This is known-slow — ~74s for burger_base alone (see ../findings/FINDINGS.md)."
-        if ! FREECAD_BIN="$FREECAD_BIN" "$POC_DIR/freecad/01_import_and_export_step.sh"; then
-            echo "FATAL: Stage 1 (FreeCAD STEP export) failed." >&2
-            echo "Is FREECAD_BIN set to a valid headless FreeCAD binary? e.g.:" >&2
-            echo "  export FREECAD_BIN=~/.local/opt/freecad-1.1.3/usr/bin/freecadcmd" >&2
-            exit 1
-        fi
-    fi
-
-    # Stage 1b — STEP round-trip check, producing the mesh re-exports that
-    # urdf/turtlebot3_poc.urdf actually references.
-    if [ -f "$URDF_MESHES_DIR/burger_base_roundtrip.stl" ] \
-        && [ -f "$URDF_MESHES_DIR/left_tire_roundtrip.stl" ] \
-        && [ -f "$URDF_MESHES_DIR/right_tire_roundtrip.stl" ]; then
-        echo ""
-        echo "-- Stage 1b: round-tripped meshes already present in urdf/meshes/, skipping. --"
-    else
-        FREECAD_BIN="${FREECAD_BIN:-freecadcmd}"
-        echo ""
-        echo "-- Stage 1b: STEP round-trip check (FREECAD_BIN=$FREECAD_BIN). --"
-        if ! "$FREECAD_BIN" -c "__file__=r'$POC_DIR/freecad/02_roundtrip_check.py'; exec(open(__file__).read())" 2>&1 | grep -v "Wayland\|Qt\|EGL"; then
-            echo "FATAL: Stage 1b (STEP round-trip check) failed." >&2
-            exit 1
-        fi
-        echo "-- Stage 1b: copying round-tripped meshes into urdf/meshes/ --"
-        mkdir -p "$URDF_MESHES_DIR"
-        cp "$FREECAD_OUTPUT_DIR/burger_base_roundtrip.stl" "$URDF_MESHES_DIR/"
-        cp "$FREECAD_OUTPUT_DIR/left_tire_roundtrip.stl" "$URDF_MESHES_DIR/"
-        cp "$FREECAD_OUTPUT_DIR/right_tire_roundtrip.stl" "$URDF_MESHES_DIR/"
-    fi
-
-    # Stage 3 — urdf2webots PROTO generation (pendulum-tools mamba env).
-    echo ""
-    echo "-- Stage 3: generating webots/protos/TurtlebotPoc.proto via urdf2webots (pendulum-tools env). --"
-    if ! command -v mamba >/dev/null 2>&1; then
-        echo "FATAL: mamba not found on PATH — cannot run urdf2webots in the pendulum-tools env." >&2
-        echo "See ../README.md Stage 3 for the manual command." >&2
-        exit 1
-    fi
-    mkdir -p "$POC_DIR/webots/protos"
-    if ! mamba run -n pendulum-tools python3 -m urdf2webots.importer \
-        --input="$POC_DIR/urdf/turtlebot3_poc.urdf" \
-        --output="$PROTO_FILE" \
-        --target=R2025a; then
-        echo "FATAL: Stage 3 (urdf2webots conversion) failed." >&2
-        echo "Is urdf2webots installed in pendulum-tools? See ../README.md Stage 3:" >&2
-        echo "  mamba run -n pendulum-tools pip install urdf2webots" >&2
-        exit 1
-    fi
-
-    if [ ! -f "$PROTO_FILE" ]; then
-        echo "FATAL: auto-provisioning completed but $PROTO_FILE still missing." >&2
-        exit 1
-    fi
-
-    echo ""
-    echo "=================================================================="
-    echo "Auto-provisioning complete."
-    echo "=================================================================="
-fi
+# See _provision_assets.sh (shared with run_batch.sh) for the prerequisite
+# chain and skip-check details.
+provision_assets
 
 echo ""
 echo "Launching Webots (realtime, GUI) on: $WORLD"

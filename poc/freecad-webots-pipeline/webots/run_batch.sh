@@ -7,6 +7,13 @@
 # Tries a direct invocation first (DISPLAY is expected to be set, e.g. :1).
 # Falls back to xvfb-run automatically if the direct invocation fails with
 # a display-related error.
+#
+# A fresh checkout of main lacks the gitignored generated assets this world
+# needs (reference/, freecad/output/, urdf/meshes/, webots/protos/) — see
+# ../README.md "Reproducing end to end". Like run_gui.sh, this script
+# auto-provisions them via the shared logic in _provision_assets.sh (issue
+# #26 review finding #6) before falling back to the old fail-fast behavior
+# for anything auto-provisioning itself can't fix.
 
 set -uo pipefail
 
@@ -14,6 +21,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORLD="${1:-$SCRIPT_DIR/worlds/turtlebot3_poc.wbt}"
 WEBOTS_BIN="${WEBOTS_BIN:-/usr/local/bin/webots}"
 LOG_FILE="$SCRIPT_DIR/run_batch.log"
+
+# shellcheck source=./_provision_assets.sh
+source "$SCRIPT_DIR/_provision_assets.sh"
+
+# --- Stage 0/1/1b/3 auto-provisioning -------------------------------------
+# See _provision_assets.sh (shared with run_gui.sh) for the prerequisite
+# chain and skip-check details.
+provision_assets
 
 if [ ! -f "$WORLD" ]; then
     echo "World file not found: $WORLD"
