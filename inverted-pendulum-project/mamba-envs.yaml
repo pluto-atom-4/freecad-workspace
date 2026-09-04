@@ -29,15 +29,21 @@ environments:
       - numpy>=1.24
       - scipy>=1.10
       - matplotlib>=3.7
+      - pyyaml>=6.0       # Issue #9 Stage 0: 02_Design_Inputs/robot_parameters.py
+                          # loader. Already present transitively (e.g. via
+                          # matplotlib) — listed explicitly now that it's a
+                          # direct import, so a fresh env built from this
+                          # recipe alone doesn't silently lose it later.
     pip_packages: []
     description: >
       All phases (1-6): simulation, servo positioning, assembly linking,
       parametric CadQuery bracket generation, trimesh mesh validation/repair.
-      FreeCAD is invoked externally via subprocess (freecadcmd), never
-      imported into this environment.
+      Issue #9 Stage 0: PyYAML for the robot_parameters.yaml design-input
+      loader. FreeCAD is invoked externally via subprocess (freecadcmd),
+      never imported into this environment.
     setup_command: |
       mamba create -n pendulum-tools -c conda-forge python=3.11 \
-        cadquery trimesh numpy scipy matplotlib -y
+        cadquery trimesh numpy scipy matplotlib pyyaml -y
 
 # FreeCAD (external, invoked via subprocess only)
 #
@@ -65,7 +71,7 @@ usage: |
   mamba list
 
   # Verify imports
-  mamba run -n pendulum-tools python -c "import cadquery, trimesh, numpy, scipy, matplotlib; print('OK')"
+  mamba run -n pendulum-tools python -c "import cadquery, trimesh, numpy, scipy, matplotlib, yaml; print('OK')"
 
   # Remove environment
   mamba env remove -n pendulum-tools -y
