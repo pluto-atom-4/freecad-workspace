@@ -23,11 +23,13 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-POC_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORLD="${1:-$SCRIPT_DIR/worlds/turtlebot3_poc.wbt}"
 WEBOTS_BIN="${WEBOTS_BIN:-/usr/local/bin/webots}"
 
 # shellcheck source=./_provision_assets.sh
+# Sets POC_DIR (among other prerequisite-chain vars) from its own location —
+# no need to compute POC_DIR here too; nothing in this file used the local
+# value before this source line (review finding #3).
 source "$SCRIPT_DIR/_provision_assets.sh"
 
 if [ ! -f "$WORLD" ]; then

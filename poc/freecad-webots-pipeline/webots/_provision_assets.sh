@@ -48,8 +48,15 @@ provision_assets() {
     echo "auto-provisioning generated assets before launch (Stage 0 -> 1 -> 1b -> 3)."
     echo "=================================================================="
 
-    # Stage 0 — fetch TurtleBot3 reference assets.
-    if [ -s "$REFERENCE_DIR/turtlebot3_burger.urdf" ] && [ -d "$REFERENCE_DIR/meshes" ]; then
+    # Stage 0 — fetch TurtleBot3 reference assets. Check the URDF plus each
+    # individual mesh STL that 00_fetch_turtlebot3_assets.sh fetches (see its
+    # FILES array) rather than just the containing meshes/ directory's
+    # existence — a directory can exist but be incomplete/empty after an
+    # interrupted prior run (review finding #1).
+    if [ -s "$REFERENCE_DIR/turtlebot3_burger.urdf" ] \
+        && [ -s "$REFERENCE_DIR/meshes/burger_base.stl" ] \
+        && [ -s "$REFERENCE_DIR/meshes/left_tire.stl" ] \
+        && [ -s "$REFERENCE_DIR/meshes/right_tire.stl" ]; then
         echo ""
         echo "-- Stage 0: reference assets already present, skipping fetch. --"
     else
