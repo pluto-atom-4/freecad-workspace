@@ -7,6 +7,13 @@
 # Tries a direct invocation first (DISPLAY is expected to be set, e.g. :1).
 # Falls back to xvfb-run automatically if the direct invocation fails with
 # a display-related error.
+#
+# A fresh checkout of main lacks the gitignored generated assets this world
+# needs (reference/, freecad/output/, urdf/meshes/, webots/protos/) — see
+# ../README.md "Reproducing end to end". Like run_gui.sh, this script
+# auto-provisions them via the shared logic in _provision_assets.sh (issue
+# #26 review finding #6) before falling back to the old fail-fast behavior
+# for anything auto-provisioning itself can't fix.
 
 set -uo pipefail
 
@@ -15,11 +22,25 @@ WORLD="${1:-$SCRIPT_DIR/worlds/turtlebot3_poc.wbt}"
 WEBOTS_BIN="${WEBOTS_BIN:-/usr/local/bin/webots}"
 LOG_FILE="$SCRIPT_DIR/run_batch.log"
 
-if [ ! -f "$WORLD" ]; then
-    echo "World file not found: $WORLD"
-    echo "Run urdf2webots first (see ../README.md Stage 3)."
-    exit 1
-fi
+# shellcheck source=./_provision_assets.sh
+source "$SCRIPT_DIR/_provision_assets.sh"
+
+# Fail fast on a bad/typo'd $WORLD, and on a missing/bad WEBOTS_BIN, before
+# burning the (multi-minute) Stage 0/1/1b/3 auto-provisioning pipeline
+# below — provisioning always targets the fixed
+# webots/protos/TurtlebotPoc.proto regardless of $WORLD, so neither check
+# can be fixed by provisioning anyway. Shared with run_gui.sh so both give
+# the same message instead of two copies that drift (review finding #2,
+# round 2; finding #3 and #7, round 3).
+require_world_file "$WORLD"
+require_webots_bin
+
+# --- Stage 0/1/1b/3 auto-provisioning -------------------------------------
+# See _provision_assets.sh (shared with run_gui.sh) for the prerequisite
+# chain and skip-check details. Passing $WORLD lets provision_assets skip
+# entirely if this world doesn't even reference the generated PROTO
+# (review finding #5, round 3).
+provision_assets "$WORLD"
 
 run_webots() {
     "$WEBOTS_BIN" --batch --mode=fast --no-rendering --minimize --stdout "$WORLD"
