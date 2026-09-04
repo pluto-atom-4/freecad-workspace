@@ -75,10 +75,15 @@ def main() -> int:
     left_motor.setVelocity(TARGET_VELOCITY_RAD_S)
     right_motor.setVelocity(TARGET_VELOCITY_RAD_S)
 
+    # A PositionSensor's value is NaN until the simulation has advanced at
+    # least one time step past enable() (a minor but easy-to-hit Webots
+    # quirk — see FINDINGS.md), so take the "initial" reading after step 1,
+    # not before any step.
+    robot.step(TIME_STEP_MS)
     initial_left = left_sensor.getValue() if left_sensor else None
     initial_right = right_sensor.getValue() if right_sensor else None
 
-    step_count = 0
+    step_count = 1
     while robot.step(TIME_STEP_MS) != -1 and step_count < SIM_STEPS:
         step_count += 1
 
