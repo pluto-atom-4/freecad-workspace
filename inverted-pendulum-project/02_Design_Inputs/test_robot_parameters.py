@@ -333,7 +333,7 @@ def test_unknown_status_raises(tmp_path):
         load_robot_parameters(yaml_path)
 
 
-@pytest.mark.parametrize("bad_value", [0.0, -1.0])
+@pytest.mark.parametrize("bad_value", [0.0, -1.0, float("nan"), float("inf")])
 def test_non_positive_density_raises(tmp_path, bad_value):
     data = _valid_minimal_yaml_dict()
     data["chassis"]["density_kg_m3"] = bad_value
@@ -344,7 +344,7 @@ def test_non_positive_density_raises(tmp_path, bad_value):
         load_robot_parameters(yaml_path)
 
 
-@pytest.mark.parametrize("bad_value", [0.0, -0.1])
+@pytest.mark.parametrize("bad_value", [0.0, -0.1, float("nan"), float("inf")])
 def test_non_positive_target_mass_raises(tmp_path, bad_value):
     data = _valid_minimal_yaml_dict()
     data["wheel"]["target_mass_kg"] = bad_value
@@ -355,9 +355,10 @@ def test_non_positive_target_mass_raises(tmp_path, bad_value):
         load_robot_parameters(yaml_path)
 
 
-def test_non_positive_dimension_raises(tmp_path):
+@pytest.mark.parametrize("bad_value", [-5.0, float("nan"), float("inf")])
+def test_non_positive_dimension_raises(tmp_path, bad_value):
     data = _valid_minimal_yaml_dict()
-    data["wheel"]["diameter_mm"] = -5.0
+    data["wheel"]["diameter_mm"] = bad_value
     yaml_path = tmp_path / "robot_parameters.yaml"
     yaml_path.write_text(yaml.safe_dump(data), encoding="utf-8")
 

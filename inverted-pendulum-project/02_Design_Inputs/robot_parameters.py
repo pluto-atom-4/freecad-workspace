@@ -23,7 +23,7 @@ Usage:
 
     params = load_robot_parameters()
     print(params.chassis.length_mm, params.wheel.diameter_mm)
-    print(params.mass_for_link("Wheel_Left"))
+    print(params.target_mass_for_link_kg("Wheel_Left"))
 
 Can also be run standalone to sanity-check and pretty-print the parsed file:
     python3 robot_parameters.py
@@ -32,6 +32,7 @@ Can also be run standalone to sanity-check and pretty-print the parsed file:
 from __future__ import annotations
 
 import json
+import math
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -64,8 +65,8 @@ def _require_keys(data: Dict[str, Any], keys: "tuple[str, ...]", context: str) -
 def _require_positive(value: float, name: str) -> float:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         raise RobotParametersError(f"{name} must be numeric, got {value!r}")
-    if value <= 0:
-        raise RobotParametersError(f"{name} must be positive, got {value}")
+    if not math.isfinite(value) or value <= 0:
+        raise RobotParametersError(f"{name} must be a finite positive number, got {value}")
     return float(value)
 
 
@@ -73,6 +74,19 @@ def _require_nonempty_str(value: Any, name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise RobotParametersError(f"{name} must be a non-empty string, got {value!r}")
     return value
+
+
+def _parse_component(
+    raw: Any,
+    context: str,
+    cls: "type[ComponentSpec]",
+    extra_keys: "tuple[str, ...]",
+) -> "ComponentSpec":
+    if not isinstance(raw, dict):
+        raise RobotParametersError(f"'{context}' must be a mapping")
+    keys = extra_keys + ("material", "density_kg_m3", "target_mass_kg")
+    _require_keys(raw, keys, context)
+    return cls(**{key: raw[key] for key in keys})
 
 
 @dataclass
@@ -222,55 +236,12 @@ def load_robot_parameters(path: Optional[Union[str, Path]] = None) -> RobotParam
 
     _require_keys(raw, ("schema_version", "status", "chassis", "wheel", "pendulum"), str(yaml_path))
 
-    chassis_raw = raw["chassis"]
-    if not isinstance(chassis_raw, dict):
-        raise RobotParametersError(f"{yaml_path}: 'chassis' must be a mapping")
-    _require_keys(
-        chassis_raw,
-        ("length_mm", "width_mm", "height_mm", "material", "density_kg_m3", "target_mass_kg"),
-        "chassis",
-    )
-    chassis = ChassisSpec(
-        material=chassis_raw["material"],
-        density_kg_m3=chassis_raw["density_kg_m3"],
-        target_mass_kg=chassis_raw["target_mass_kg"],
-        length_mm=chassis_raw["length_mm"],
-        width_mm=chassis_raw["width_mm"],
-        height_mm=chassis_raw["height_mm"],
-    )
-
-    wheel_raw = raw["wheel"]
-    if not isinstance(wheel_raw, dict):
-        raise RobotParametersError(f"{yaml_path}: 'wheel' must be a mapping")
-    _require_keys(
-        wheel_raw,
-        ("diameter_mm", "width_mm", "track_mm", "material", "density_kg_m3", "target_mass_kg"),
-        "wheel",
-    )
-    wheel = WheelSpec(
-        material=wheel_raw["material"],
-        density_kg_m3=wheel_raw["density_kg_m3"],
-        target_mass_kg=wheel_raw["target_mass_kg"],
-        diameter_mm=wheel_raw["diameter_mm"],
-        width_mm=wheel_raw["width_mm"],
-        track_mm=wheel_raw["track_mm"],
-    )
-
-    pendulum_raw = raw["pendulum"]
-    if not isinstance(pendulum_raw, dict):
-        raise RobotParametersError(f"{yaml_path}: 'pendulum' must be a mapping")
-    _require_keys(
-        pendulum_raw,
-        ("arm_length_mm", "pivot_height_mm", "material", "density_kg_m3", "target_mass_kg"),
-        "pendulum",
-    )
-    pendulum = PendulumSpec(
-        material=pendulum_raw["material"],
-        density_kg_m3=pendulum_raw["density_kg_m3"],
-        target_mass_kg=pendulum_raw["target_mass_kg"],
-        arm_length_mm=pendulum_raw["arm_length_mm"],
-        pivot_height_mm=pendulum_raw["pivot_height_mm"],
-    )
+    chassis = _parse_component(raw["chassis"], "chassis", ChassisSpec,
+                                ("length_mm", "width_mm", "height_mm"))
+    wheel = _parse_component(raw["wheel"], "wheel", WheelSpec,
+                              ("diameter_mm", "width_mm", "track_mm"))
+    pendulum = _parse_component(raw["pendulum"], "pendulum", PendulumSpec,
+                                 ("arm_length_mm", "pivot_height_mm"))
 
     links_raw = raw.get("links", {})
     if not isinstance(links_raw, dict):
