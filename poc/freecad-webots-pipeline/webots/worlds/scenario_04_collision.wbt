@@ -1,0 +1,63 @@
+#VRML_SIM R2025a utf8
+
+# Stage 3 world (issue #24) — instantiates the urdf2webots-generated
+# TurtlebotPoc PROTO (from urdf/turtlebot3_poc.urdf via
+# webots/protos/TurtlebotPoc.proto) with the scenario_04_collision
+# controller attached. Per issue #28, this world now uses the standard
+# Webots library PROTOs (TexturedBackground, TexturedBackgroundLight,
+# RectangleArena) for a more polished visualization instead of the
+# hand-rolled Background/DirectionalLight/Solid-floor nodes. This
+# introduces a network dependency on first run to resolve those
+# EXTERNPROTOs (Webots caches them locally after the first successful
+# resolve, so subsequent runs don't need network access).
+
+EXTERNPROTO "../protos/TurtlebotPoc.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/RectangleArena.proto"
+
+WorldInfo {
+  info [
+    "Stage 3 POC world for issue #24 -- FreeCAD -> Webots pipeline spike."
+    "Not part of the real project robot; TurtleBot3 Burger used as a public reference model."
+  ]
+  title "turtlebot3_poc"
+  basicTimeStep 32
+}
+Viewpoint {
+  orientation -0.3 0.3 0.9 1.2
+  position -0.6 -0.96 0.6
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+RectangleArena {
+  floorSize 2 2
+  floorTileSize 0.2 0.2
+}
+Solid {
+  translation 0.5 0 0.05
+  rotation 0 0 1 0
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.8 0.2 0.2
+      }
+      geometry Box {
+        size 0.1 0.5 0.1
+      }
+    }
+  ]
+  boundingObject Box {
+    size 0.1 0.5 0.1
+  }
+  physics Physics {
+    density 1000
+  }
+}
+TurtlebotPoc {
+  translation 0 0 0.03
+  controller "scenario_04_collision"
+  supervisor TRUE
+}
