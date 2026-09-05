@@ -37,6 +37,7 @@ RectangleArena {
   floorTileSize 0.2 0.2
 }
 TurtlebotPoc {
-  translation 0 0 0.02
+  translation 0 0 0.03
   controller "wheel_articulation_check"
+  supervisor TRUE
 }

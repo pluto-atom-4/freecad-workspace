@@ -5,10 +5,19 @@
 
   Structural copy of the ROBOTIS turtlebot3_burger.urdf fetched by
   ../00_fetch_turtlebot3_assets.sh (pinned SHA recorded in ../NOTICE),
-  trimmed to the parts this spike cares about: base_footprint -> base_link,
+  trimmed to the parts this spike cares about: base_link (root),
   two continuous wheel joints, and the fixed caster. The lds/imu links
   (sensor mounts with no bearing on wheel articulation) are dropped to
   keep the POC minimal.
+
+  Per issue #32: the original ROBOTIS-matching massless base_footprint
+  root link + fixed base_joint to base_link were removed. That structure
+  left the generated Webots PROTO's Robot node without its own physics/
+  boundingObject (both landed one level down, on a nested base_link
+  Solid), which Webots implicitly welds to the static world — the
+  chassis could spin its wheels but never translate. base_link is now
+  the URDF root link directly, so the generated PROTO's Robot node
+  itself carries physics/boundingObject.
 
   Per decision #4 in the issue #24 implementation plan, the <mesh> tags
   below point at the FreeCAD STEP-round-tripped re-exports produced by
@@ -30,15 +39,6 @@
   <material name="dark">
     <color rgba="0.3 0.3 0.3 1.0"/>
   </material>
-
-  <!-- Massless footprint frame, matching the ROBOTIS reference URDF -->
-  <link name="base_footprint"/>
-
-  <joint name="base_joint" type="fixed">
-    <parent link="base_footprint"/>
-    <child link="base_link"/>
-    <origin xyz="0.0 0.0 0.010" rpy="0 0 0"/>
-  </joint>
 
   <link name="base_link">
     <visual>

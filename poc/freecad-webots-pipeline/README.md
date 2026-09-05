@@ -133,8 +133,11 @@ is the actual point of the spike.)
 ### Stage 2 — POC URDF
 
 `urdf/turtlebot3_poc.urdf` is already hand-authored and committed — a
-structural copy of the fetched reference URDF (`base_footprint` → fixed
-`base_joint` → `base_link`; `wheel_left_joint`/`wheel_right_joint` as
+structural copy of the fetched reference URDF, with `base_link` as the
+root link directly (see issue #32 — the reference URDF's massless
+`base_footprint` root + fixed `base_joint` were dropped, since that
+structure left the generated Webots PROTO's `Robot` node without its own
+`physics`/`boundingObject`); `wheel_left_joint`/`wheel_right_joint` as
 `type="continuous"`, `axis="0 0 1"`, `origin rpy="-1.57 0 0"`; fixed
 `caster_back_joint` with a box-collision-only `caster_back_link`, no
 mesh — matching the real ROBOTIS URDF). Nothing to run for this stage

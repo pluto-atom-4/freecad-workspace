@@ -28,7 +28,7 @@ webots/run_batch.log for FINDINGS.md.
 
 import sys
 
-from controller import Robot
+from controller import Supervisor
 
 TIME_STEP_MS = 32
 TARGET_VELOCITY_RAD_S = 2.0
@@ -51,7 +51,11 @@ WHEEL_MOTOR_NAME_FALLBACKS = [
 
 
 def main() -> int:
-    robot = Robot()
+    # Supervisor is a Robot subclass (issue #32) — all existing Motor/
+    # PositionSensor code below keeps working unchanged; the only reason
+    # for the upgrade is getSelf()/getPosition() below, to directly
+    # confirm chassis translation (not just wheel-angle rotation).
+    robot = Supervisor()
 
     all_name_sets = [WHEEL_MOTOR_NAMES] + WHEEL_MOTOR_NAME_FALLBACKS
 
@@ -96,6 +100,15 @@ def main() -> int:
     initial_left = left_sensor.getValue() if left_sensor else None
     initial_right = right_sensor.getValue() if right_sensor else None
 
+    # Chassis global position (issue #32) — the wheel-angle check alone
+    # cannot distinguish "chassis actually translated" from "wheels spun
+    # in place because the chassis got welded to the static world" (the
+    # base_footprint root-link bug). getSelf() returns this Robot node
+    # itself (requires `supervisor TRUE` on the PROTO instance in the
+    # .wbt world file).
+    self_node = robot.getSelf()
+    initial_position = self_node.getPosition()
+
     # Observed angular velocity is computed from the position-sensor delta
     # since the previous print, not read via Motor.getVelocity() — that API
     # returns the last *commanded target* velocity (set once above via
@@ -134,11 +147,17 @@ def main() -> int:
 
     final_left = left_sensor.getValue() if left_sensor else None
     final_right = right_sensor.getValue() if right_sensor else None
+    final_position = self_node.getPosition()
 
     print(f"\nRan {step_count} simulation steps at {TIME_STEP_MS}ms each "
           f"({step_count * TIME_STEP_MS / 1000.0:.2f}s simulated).")
     print(f"Commanded velocity: {TARGET_VELOCITY_RAD_S} rad/s on both wheels.")
 
+    dx = final_position[0] - initial_position[0]
+    dy = final_position[1] - initial_position[1]
+    print(f"Chassis position: {initial_position} -> {final_position} (dx={dx:.4f}, dy={dy:.4f})")
+
+    wheels_rotated = False
     result_ok = True
     if left_sensor and right_sensor:
         delta_left = final_left - initial_left
@@ -150,12 +169,32 @@ def main() -> int:
             print("FAIL: wheel joint position did not change under commanded velocity.")
             result_ok = False
         else:
+            wheels_rotated = True
             print("PASS: both wheel joints rotated under commanded velocity.")
     else:
         print("WARN: no position sensor devices found on the wheel joints — "
               "cannot directly confirm rotation, only that setVelocity() was "
               "accepted without error. Treating as inconclusive, not PASS.")
         result_ok = False
+
+    # Chassis displacement check (issue #32) — required IN ADDITION to the
+    # wheel-angle check above, not instead of it. This is what actually
+    # catches the base_footprint root-link bug: with that bug, the wheel
+    # joints rotate normally (PASS above) but the chassis stays welded to
+    # the static world (dx == dy == 0), which the wheel-angle check alone
+    # could never detect.
+    chassis_moved = abs(dx) > 1e-3 or abs(dy) > 1e-3
+    if not chassis_moved:
+        if wheels_rotated:
+            print("FAIL: wheels rotated but chassis did not translate "
+                  "(dx/dy both below 1e-3) — the robot is likely welded "
+                  "to the static world (see issue #32).")
+        else:
+            print("FAIL: chassis did not translate (dx/dy both below 1e-3).")
+    else:
+        print("PASS: chassis translated under commanded wheel velocity.")
+
+    result_ok = result_ok and chassis_moved
 
     print(f"\nVERDICT: {'PASS' if result_ok else 'FAIL/INCONCLUSIVE'}")
     return 0 if result_ok else 1
