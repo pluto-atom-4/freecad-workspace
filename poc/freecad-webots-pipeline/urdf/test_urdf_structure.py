@@ -17,13 +17,12 @@ from pathlib import Path
 URDF_PATH = Path(__file__).resolve().parent / "turtlebot3_poc.urdf"
 
 EXPECTED_LINKS = {
-    "base_footprint", "base_link",
+    "base_link",
     "wheel_left_link", "wheel_right_link",
     "caster_back_link",
 }
 
 EXPECTED_JOINTS = {
-    "base_joint": "fixed",
     "wheel_left_joint": "continuous",
     "wheel_right_joint": "continuous",
     "caster_back_joint": "fixed",

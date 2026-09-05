@@ -215,6 +215,20 @@ This succeeded on the first attempt against turtlebot3_poc.urdf with no
 errors or warnings (console output: "Root link: base_footprint" / "There
 are 5 links, 4 joints and 0 sensors"). Notable behavior:
 
+> **Addendum (2026-09-04, issue #32):** this `base_footprint` root was
+> later identified as the root cause of a robot-doesn't-translate bug —
+> with `base_footprint` (massless) as the URDF root and `base_link`
+> (which carries all real mass/inertia/collision) attached one level
+> down via a fixed `base_joint`, the generated PROTO's `Robot` node ends
+> up with no `physics`/`boundingObject` of its own (they land on the
+> nested `base_link` Solid instead), which Webots implicitly welds to
+> the static world via an ODE fixed joint — the robot could spin its
+> wheels but never translate. `urdf/turtlebot3_poc.urdf` was restructured
+> to drop `base_footprint`/`base_joint` entirely; post-fix the URDF root
+> link is `base_link` directly, and the regenerated PROTO's `Robot` node
+> carries `physics`/`boundingObject` itself (console output now reads
+> "Root link: base_link" / "There are 4 links, 3 joints and 0 sensors").
+
 - Relative `<mesh filename="meshes/....stl">` paths in the URDF are
   resolved relative to the URDF file's own directory, and the generated
   PROTO's Mesh `url` fields are rewritten relative to the PROTO's own

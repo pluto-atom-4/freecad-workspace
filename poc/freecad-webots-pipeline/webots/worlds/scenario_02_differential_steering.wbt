@@ -2,7 +2,7 @@
 
 # Stage 3 world (issue #24) — instantiates the urdf2webots-generated
 # TurtlebotPoc PROTO (from urdf/turtlebot3_poc.urdf via
-# webots/protos/TurtlebotPoc.proto) with the wheel_articulation_check
+# webots/protos/TurtlebotPoc.proto) with the scenario_02_differential_steering
 # controller attached. Per issue #28, this world now uses the standard
 # Webots library PROTOs (TexturedBackground, TexturedBackgroundLight,
 # RectangleArena) for a more polished visualization instead of the
@@ -38,6 +38,6 @@ RectangleArena {
 }
 TurtlebotPoc {
   translation 0 0 0.03
-  controller "wheel_articulation_check"
+  controller "scenario_02_differential_steering"
   supervisor TRUE
 }
