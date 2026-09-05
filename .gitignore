@@ -73,3 +73,7 @@ issue-content*.json
 /poc/freecad-webots-pipeline/webots/protos/
 /poc/freecad-webots-pipeline/webots/run_batch.log*
 /poc/freecad-webots-pipeline/webots/worlds/.*.wbproj
+
+feat-idea.md
+
+NOTICE
