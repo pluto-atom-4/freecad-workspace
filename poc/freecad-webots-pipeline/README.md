@@ -170,6 +170,15 @@ Then run the (already-committed) world and articulation check:
 ./webots/run_batch.sh webots/worlds/turtlebot3_poc.wbt
 ```
 
+Per issue #28, `turtlebot3_poc.wbt` uses the standard Webots library
+PROTOs (`TexturedBackground`, `TexturedBackgroundLight`, `RectangleArena`)
+for a more polished viewpoint/background/arena instead of hand-rolled
+nodes. In addition to the local `../protos/TurtlebotPoc.proto`
+`EXTERNPROTO`, this means the first Webots launch after a fresh checkout
+needs network access to resolve those three `EXTERNPROTO`s from
+`raw.githubusercontent.com` — Webots caches them locally after that, so
+subsequent runs don't need network access.
+
 `webots/controllers/wheel_articulation_check/wheel_articulation_check.py`
 commands both wheel motors to a fixed velocity, steps the simulation a
 handful of times, and reports pass/fail based on whether the wheel joint

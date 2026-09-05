@@ -3,12 +3,18 @@
 # Stage 3 world (issue #24) — instantiates the urdf2webots-generated
 # TurtlebotPoc PROTO (from urdf/turtlebot3_poc.urdf via
 # webots/protos/TurtlebotPoc.proto) with the wheel_articulation_check
-# controller attached. Deliberately uses only Webots base nodes (Background,
-# DirectionalLight, a plain Solid floor) instead of the TexturedBackground/
-# RectangleArena PROTOs, to avoid depending on a live EXTERNPROTO fetch for
-# a batch/no-rendering articulation smoke test.
+# controller attached. Per issue #28, this world now uses the standard
+# Webots library PROTOs (TexturedBackground, TexturedBackgroundLight,
+# RectangleArena) for a more polished visualization instead of the
+# hand-rolled Background/DirectionalLight/Solid-floor nodes. This
+# introduces a network dependency on first run to resolve those
+# EXTERNPROTOs (Webots caches them locally after the first successful
+# resolve, so subsequent runs don't need network access).
 
 EXTERNPROTO "../protos/TurtlebotPoc.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/RectangleArena.proto"
 
 WorldInfo {
   info [
@@ -20,34 +26,15 @@ WorldInfo {
 }
 Viewpoint {
   orientation -0.3 0.3 0.9 1.2
-  position 0.6 -0.6 0.5
+  position -0.6 -0.96 0.6
 }
-Background {
-  skyColor [
-    0.4 0.7 1.0
-  ]
+TexturedBackground {
 }
-DirectionalLight {
-  direction 0.3 -0.3 -1
-  intensity 1
+TexturedBackgroundLight {
 }
-Solid {
-  translation 0 0 -0.001
-  children [
-    Shape {
-      appearance PBRAppearance {
-        baseColor 0.6 0.6 0.6
-        roughness 1
-        metalness 0
-      }
-      geometry Box {
-        size 2 2 0.002
-      }
-    }
-  ]
-  boundingObject Box {
-    size 2 2 0.002
-  }
+RectangleArena {
+  floorSize 2 2
+  floorTileSize 0.2 0.2
 }
 TurtlebotPoc {
   translation 0 0 0.02
