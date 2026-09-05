@@ -34,7 +34,7 @@ from __future__ import annotations
 import json
 import math
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
@@ -80,11 +80,12 @@ def _parse_component(
     raw: Any,
     context: str,
     cls: "type[ComponentSpec]",
-    extra_keys: "tuple[str, ...]",
+    path: Optional[Union[str, Path]] = None,
 ) -> "ComponentSpec":
     if not isinstance(raw, dict):
-        raise RobotParametersError(f"'{context}' must be a mapping")
-    keys = extra_keys + ("material", "density_kg_m3", "target_mass_kg")
+        prefix = f"{path}: " if path is not None else ""
+        raise RobotParametersError(f"{prefix}'{context}' must be a mapping")
+    keys = tuple(f.name for f in fields(cls))
     _require_keys(raw, keys, context)
     return cls(**{key: raw[key] for key in keys})
 
@@ -236,12 +237,9 @@ def load_robot_parameters(path: Optional[Union[str, Path]] = None) -> RobotParam
 
     _require_keys(raw, ("schema_version", "status", "chassis", "wheel", "pendulum"), str(yaml_path))
 
-    chassis = _parse_component(raw["chassis"], "chassis", ChassisSpec,
-                                ("length_mm", "width_mm", "height_mm"))
-    wheel = _parse_component(raw["wheel"], "wheel", WheelSpec,
-                              ("diameter_mm", "width_mm", "track_mm"))
-    pendulum = _parse_component(raw["pendulum"], "pendulum", PendulumSpec,
-                                 ("arm_length_mm", "pivot_height_mm"))
+    chassis = _parse_component(raw["chassis"], "chassis", ChassisSpec, yaml_path)
+    wheel = _parse_component(raw["wheel"], "wheel", WheelSpec, yaml_path)
+    pendulum = _parse_component(raw["pendulum"], "pendulum", PendulumSpec, yaml_path)
 
     links_raw = raw.get("links", {})
     if not isinstance(links_raw, dict):

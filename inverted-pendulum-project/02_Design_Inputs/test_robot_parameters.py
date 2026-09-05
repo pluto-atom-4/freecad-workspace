@@ -12,7 +12,9 @@ Usage:
 """
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+import re
 from textwrap import dedent
 
 import pytest
@@ -24,10 +26,12 @@ from robot_parameters import (  # noqa: E402
     DEFAULT_YAML_PATH,
     SCHEMA_VERSION,
     ChassisSpec,
+    ComponentSpec,
     PendulumSpec,
     RobotParameters,
     RobotParametersError,
     WheelSpec,
+    _parse_component,
     load_robot_parameters,
 )
 
@@ -415,8 +419,56 @@ def test_chassis_not_a_mapping_raises(tmp_path):
     yaml_path = tmp_path / "robot_parameters.yaml"
     yaml_path.write_text(yaml.safe_dump(data), encoding="utf-8")
 
-    with pytest.raises(RobotParametersError):
+    with pytest.raises(RobotParametersError, match=rf"^{re.escape(str(yaml_path))}: 'chassis' must be a mapping$"):
         load_robot_parameters(yaml_path)
+
+
+@pytest.mark.parametrize("component", ["wheel", "pendulum"])
+def test_other_components_not_a_mapping_raises(tmp_path, component):
+    data = _valid_minimal_yaml_dict()
+    data[component] = "not-a-mapping"
+    yaml_path = tmp_path / "robot_parameters.yaml"
+    yaml_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    with pytest.raises(RobotParametersError, match=rf"^{re.escape(str(yaml_path))}: '{component}' must be a mapping$"):
+        load_robot_parameters(yaml_path)
+
+
+def test_parse_component_error_message_with_and_without_path():
+    with pytest.raises(RobotParametersError, match=r"^'chassis' must be a mapping$"):
+        _parse_component("not-a-dict", "chassis", ChassisSpec)
+
+    with pytest.raises(RobotParametersError, match=r"^/some/path\.yaml: 'chassis' must be a mapping$"):
+        _parse_component("not-a-dict", "chassis", ChassisSpec, path="/some/path.yaml")
+
+
+def test_parse_component_derives_fields_from_dataclass():
+    @dataclass
+    class CustomSpec(ComponentSpec):
+        custom_field: str
+
+    # Missing custom_field raises RobotParametersError rather than TypeError
+    with pytest.raises(RobotParametersError, match=r"custom: missing required key\(s\): \['custom_field'\]"):
+        _parse_component(
+            {"material": "PLA", "density_kg_m3": 1200.0, "target_mass_kg": 0.1},
+            "custom",
+            CustomSpec,
+        )
+
+    # When present, constructs successfully
+    spec = _parse_component(
+        {
+            "material": "PLA",
+            "density_kg_m3": 1200.0,
+            "target_mass_kg": 0.1,
+            "custom_field": "test_val",
+        },
+        "custom",
+        CustomSpec,
+    )
+    assert isinstance(spec, CustomSpec)
+    assert spec.custom_field == "test_val"
+    assert spec.material == "PLA"
 
 
 if __name__ == "__main__":
