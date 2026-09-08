@@ -29,6 +29,7 @@ environments:
       - numpy>=1.24
       - scipy>=1.10
       - matplotlib>=3.7
+      - pytest>=9.1
       - pyyaml>=6.0       # Issue #9 Stage 0: 02_Design_Inputs/robot_parameters.py
                           # loader. Already present transitively (e.g. via
                           # matplotlib) — listed explicitly now that it's a
