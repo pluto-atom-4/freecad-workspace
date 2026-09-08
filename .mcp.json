@@ -15,6 +15,15 @@
       "headers": {
         "Authorization": "Bearer ${GITHUB_MCP_PAT}"
       }
+    },
+    "code-review-graph": {
+      "command": "uvx",
+      "args": [
+        "code-review-graph",
+        "serve"
+      ],
+      "cwd": "/home/pluto-atom-4/freecad-workspace",
+      "type": "stdio"
     }
   }
 }
