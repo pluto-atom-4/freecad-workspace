@@ -8,6 +8,13 @@
         "FREECAD_XMLRPC_PORT": "9875",
         "FREECAD_SOCKET_PORT": "9876"
       }
+    },
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer ${GITHUB_MCP_PAT}"
+      }
     }
   }
 }
