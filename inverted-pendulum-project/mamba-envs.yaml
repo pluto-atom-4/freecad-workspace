@@ -35,7 +35,19 @@ environments:
                           # matplotlib) — listed explicitly now that it's a
                           # direct import, so a fresh env built from this
                           # recipe alone doesn't silently lose it later.
-    pip_packages: []
+    # pip-only: ROS/URDF tooling from issue #9's URDF export work. Not on
+    # conda-forge (ROS packaging lives on the separate robostack channel,
+    # which this recipe intentionally does not add) — installed via pip to
+    # match what's actually running in the live env. See
+    # mamba-envs.lock.yml for the exact pinned versions this recipe should
+    # reproduce: rospkg==1.6.1, urdf2webots==2025.0.0, catkin-pkg==1.1.0,
+    # distro==1.9.0, docutils==0.23.
+    pip_packages:
+      - rospkg          # Issue #9: parses ROS package.xml metadata for URDF export
+      - urdf2webots     # Issue #9: converts URDF -> Webots PROTO
+      - catkin-pkg      # transitive dep of rospkg (ROS build-system metadata)
+      - distro          # transitive dep of rospkg/catkin-pkg (Linux distro detection)
+      - docutils        # transitive dep of rospkg/catkin-pkg (reST parsing)
     description: >
       All phases (1-6): simulation, servo positioning, assembly linking,
       parametric CadQuery bracket generation, trimesh mesh validation/repair.
