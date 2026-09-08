@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Test script for plate generator - includes debug output"""
+"""
+NOTE: standalone FreeCAD-console script, not a pytest test (no test_
+functions/assertions, uses sys.exit() unconditionally at module
+scope). Run via `freecadcmd plates_smoketest.py` or paste into the
+FreeCAD Python console. Do not rename with a test_/_test prefix —
+pytest would try to import it and crash on the sys.exit() calls above.
+
+Test script for plate generator - includes debug output
+"""
 
 import sys
 import os
@@ -75,7 +83,7 @@ try:
     print("✓ Document recomputed")
 
     # Save
-    output_path = Path(__file__).parent / "test_plates.FCStd"
+    output_path = Path(__file__).parent / "plates_smoketest.FCStd"
     doc.saveAs(str(output_path))
     print(f"✓ Document saved: {output_path}")
     print(f"  File size: {output_path.stat().st_size} bytes")
