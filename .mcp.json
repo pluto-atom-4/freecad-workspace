@@ -17,13 +17,14 @@
       }
     },
     "code-review-graph": {
-      "command": "uvx",
-      "args": [
-        "code-review-graph",
-        "serve"
-      ],
-      "cwd": "/home/pluto-atom-4/freecad-workspace",
-      "type": "stdio"
+      "type": "stdio",
+      "command": "code-review-graph",
+      "args": ["serve"]
+    },
+    "graphify": {
+      "type": "stdio",
+      "command": "graphify-mcp",
+      "args": ["graphify-out/graph.json"]
     }
   }
 }
