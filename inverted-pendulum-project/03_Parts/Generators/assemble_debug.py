@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 """
+NOTE: standalone FreeCAD-console debug driver, not a pytest test (no
+test_ functions/assertions, uses sys.exit() unconditionally at module
+scope). Run via `freecadcmd assemble_debug.py` or paste into the
+FreeCAD Python console. Do not rename with a test_/_test prefix —
+pytest would try to import it and crash on the sys.exit() calls above.
+
 Debug script to test assemble_plates.py and capture actual errors.
 Run in FreeCAD Python console.
 """
