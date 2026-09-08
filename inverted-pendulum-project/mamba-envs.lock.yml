@@ -322,5 +322,14 @@ dependencies:
   - zfp=1.0.1
   - zlib-ng=2.3.3
   - zstd=1.5.7
+  - pip:
+    - catkin-pkg==1.1.0
+    - distro==1.9.0
+    - docutils==0.23
+    - iniconfig==2.3.0
+    - pluggy==1.6.0
+    - pytest==9.1.1
+    - rospkg==1.6.1
+    - urdf2webots==2025.0.0
 
 prefix: "/home/pluto-atom-4/miniforge3/envs/pendulum-tools"
