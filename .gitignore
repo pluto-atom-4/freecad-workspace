@@ -77,3 +77,11 @@ issue-content*.json
 feat-idea.md
 
 NOTICE
+# Added by code-review-graph
+.code-review-graph/
+
+# graphify (issue #41) — local generated knowledge graph, rebuilt per-dev via
+# `graphify update .` / auto-reindex hooks. Not committed, like .code-review-graph/.
+graphify-out/
+.graphify_cache/
+GRAPH_REPORT.md
