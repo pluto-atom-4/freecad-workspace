@@ -75,16 +75,21 @@ Pendulum_Link's Bottom_Plate mounting hole instead of the old
 body-centerline placement (see _mount_wheel_on_pendulum_plate()), and
 Base_Link is now a flat plate (BASE_LINK_PLATE_THICKNESS_MM thick,
 BASE_LINK_LENGTH_MM long) instead of a solid chassis.height_mm-tall box
-(see build_base_link()), and repositioned to sit directly under the
-Pendulum_Link + STS3032_Mount assembly instead of floating near the
-ground at CHASSIS_GROUND_CLEARANCE_MM (see
-_position_base_link_under_pendulum()). Wheel_Right
+(see build_base_link()), and repositioned flush with Bottom_Plate's top
+face -- a deck plate at the pivot/servo level -- instead of floating near
+the ground at CHASSIS_GROUND_CLEARANCE_MM (see
+_position_base_link_under_pendulum(); a human fine-tuned this live in the
+FreeCAD GUI, ported back here). Wheel_Right
 is NOT part of this redesign yet -- it has no mirrored Pendulum_Link_Right
 to mount on, so it keeps its original body-centerline geometry and is
 hidden by _set_default_visibility() rather than shown stale/disconnected.
 Expect validate()'s track-width-symmetry, wheel-Z-match, and
-no-interpenetration checks to FAIL under a GUI run until the mirrored right
-side is implemented -- that is a known, transitional state, not a bug; see
+no-interpenetration checks to FAIL until the mirrored right side is
+implemented, and "Pendulum_Link positioned above Base_Link" to FAIL too --
+Base_Link now sits mid-stack (flush with Bottom_Plate's top), not below
+the whole assembly, so that check's original "chassis below pendulum"
+assumption no longer holds by design. All known, transitional states, not
+bugs; see
 root CLAUDE.md / DESIGN.md for the open decisions.
 
 Output:
@@ -658,93 +663,44 @@ class BodyWheelsGenerator:
             print(f"ERROR re-mounting {wheel_name}: {e}")
             return False
 
-    def _pendulum_assembly_global_bbox(self):
-        """Combined global BoundBox of Pendulum_Link's plates
-        (Top/Middle/Bottom_Plate, Part::Feature) and STS3032_Mount's servo
-        meshes (Mesh::Feature) -- the two child types need different global-
-        placement recipes:
+    def _position_base_link_under_pendulum(self) -> bool:
+        """Redesign follow-up (Issue #9, live-bridge probe, then manually
+        fine-tuned live and ported back here): reposition Base_Link
+        (translate only, same plate shape) so its top face sits flush
+        against Bottom_Plate's own top face, centered under Bottom_Plate's
+        X/Y center -- a deck plate resting on top of Bottom_Plate, right at
+        the pivot/servo level, instead of floating near the ground at
+        CHASSIS_GROUND_CLEARANCE_MM or under the assembly's overall lowest
+        point (an earlier version of this method targeted that; a human
+        manually repositioning it live in the FreeCAD GUI settled on this
+        flush-with-Bottom_Plate's-top arrangement instead, confirmed
+        visually as the intended one).
 
-        - Part::Feature (plates): `.Shape` is placed with the object's OWN
-          Placement already, but not its ANCESTOR App::Part containers' --
-          compose those manually via `obj.getGlobalPlacement()` applied to
-          `.Shape.BoundBox` (same recipe used by
-          _mount_wheel_on_pendulum_plate() for Bottom_Plate's mounting hole,
-          already verified against Wheel_Left's live-rendered position).
-        - Mesh::Feature (servo meshes): empirically, the object's OWN
-          Placement is NOT what the live GUI renders it with -- composing
-          the immediate parent container's getGlobalPlacement() with the
-          mesh object's own Placement reproduces
-          `obj.getGlobalPlacement()` exactly, but that lands ~150mm away
-          from the plate it visibly touches on screen. What matches the
-          rendered scene is the parent container's getGlobalPlacement()
-          applied directly to the mesh's own `.Mesh.BoundBox`, skipping the
-          mesh object's own Placement entirely. Confirmed by isolating one
-          plate + one mesh and comparing to a live screenshot -- not fully
-          explained (a FreeCAD Mesh::Feature/App::Part interaction), but
-          reproducible.
+        Must run after build_pendulum_link() (needs Bottom_Plate's final
+        global placement). Independent of _mount_wheel_on_pendulum_plate()
+        -- Wheel_Left's mount is relative to Bottom_Plate directly, not
+        Base_Link, so this reposition doesn't disturb it.
         """
-        sts_mount = self.output_doc.getObject("STS3032_Mount")
-        if sts_mount is None:
-            return None
-        parent_gp = sts_mount.getGlobalPlacement()
+        try:
+            base_link = self.output_doc.getObject("Base_Link")
+            bottom_plate = self.output_doc.getObject("Bottom_Plate")
+            if base_link is None or bottom_plate is None:
+                print("ERROR: Base_Link or Bottom_Plate not found")
+                return False
 
-        total = None
-
-        def extend(bbox) -> None:
-            nonlocal total
-            if total is None:
-                total = App.BoundBox(bbox)
-            else:
-                total.add(bbox)
-
-        for child in sts_mount.Group:
-            if hasattr(child, "Mesh"):
-                extend(child.Mesh.BoundBox.transformed(parent_gp.toMatrix()))
-
-        for name in ("Top_Plate", "Middle_Plate", "Bottom_Plate"):
-            obj = self.output_doc.getObject(name)
-            if obj is None:
-                continue
-            # `.Shape` (direct property) already has this object's OWN
-            # Placement baked in -- using it here together with
+            # `.Shape` (direct property) already has Bottom_Plate's OWN
+            # Placement baked in -- using it together with
             # getGlobalPlacement() (which ALSO includes that same own
             # Placement) would double-apply it. Part.getShape(...,
             # transform=False) gives the raw, unplaced shape instead --
             # same recipe _mount_wheel_on_pendulum_plate() uses for
             # Bottom_Plate's mounting hole.
-            raw_local = Part.getShape(obj, "", needSubElement=False, transform=False)
-            extend(raw_local.BoundBox.transformed(obj.getGlobalPlacement().toMatrix()))
+            raw_local = Part.getShape(bottom_plate, "", needSubElement=False, transform=False)
+            bp_bbox = raw_local.BoundBox.transformed(bottom_plate.getGlobalPlacement().toMatrix())
 
-        return total
-
-    def _position_base_link_under_pendulum(self) -> bool:
-        """Redesign follow-up (Issue #9, live-bridge probe): reposition
-        Base_Link (translate only, same plate shape) so its top face
-        touches the combined Pendulum_Link + STS3032_Mount assembly's
-        lowest global Z, centered under that assembly's X/Y center --
-        instead of floating near the ground at CHASSIS_GROUND_CLEARANCE_MM
-        regardless of where the pendulum ended up.
-
-        Must run after build_pendulum_link() (needs its final global
-        bbox, via _pendulum_assembly_global_bbox()). Independent of
-        _mount_wheel_on_pendulum_plate() -- Wheel_Left's mount is relative
-        to Bottom_Plate directly, not Base_Link, so this reposition doesn't
-        disturb it.
-        """
-        try:
-            base_link = self.output_doc.getObject("Base_Link")
-            if base_link is None:
-                print("ERROR: Base_Link not found")
-                return False
-
-            pendulum_bbox = self._pendulum_assembly_global_bbox()
-            if pendulum_bbox is None:
-                print("ERROR: could not compute Pendulum_Link/STS3032_Mount bbox")
-                return False
-
-            target_center_x = (pendulum_bbox.XMin + pendulum_bbox.XMax) / 2.0
-            target_center_y = (pendulum_bbox.YMin + pendulum_bbox.YMax) / 2.0
-            target_top_z = pendulum_bbox.ZMin
+            target_center_x = (bp_bbox.XMin + bp_bbox.XMax) / 2.0
+            target_center_y = (bp_bbox.YMin + bp_bbox.YMax) / 2.0
+            target_top_z = bp_bbox.ZMax
 
             local_bbox = base_link.Shape.BoundBox
             current_center_x = (local_bbox.XMin + local_bbox.XMax) / 2.0
@@ -769,13 +725,12 @@ class BodyWheelsGenerator:
                     record.bounding_box_mm = _bbox_to_dict(base_link.Shape.BoundBox)
                     record.notes = (
                         (record.notes + " " if record.notes else "")
-                        + "Repositioned under Pendulum_Link/STS3032_Mount "
-                        f"(top Z={target_top_z:.2f}mm) instead of "
-                        "CHASSIS_GROUND_CLEARANCE_MM above the ground plane."
+                        + f"Repositioned flush with Bottom_Plate's top (Z={target_top_z:.2f}mm) "
+                        "instead of CHASSIS_GROUND_CLEARANCE_MM above the ground plane."
                     )
                     break
 
-            print(f"✓ Base_Link: repositioned under Pendulum_Link/STS3032_Mount, "
+            print(f"✓ Base_Link: repositioned flush with Bottom_Plate's top, "
                   f"top Z={target_top_z:.2f} mm, center=({target_center_x:.2f}, "
                   f"{target_center_y:.2f})")
             return True
