@@ -632,8 +632,30 @@ class BodyWheelsGenerator:
     # Output
     # ---------------------------------------------------------------
 
+    def _set_default_visibility(self) -> None:
+        """Mark every object visible so the saved file doesn't open blank.
+
+        Plain-cylinder/box `Part::Feature` objects created headlessly have no
+        `ViewObject` at all unless a GUI is up (`App.GuiUp`) -- there is no
+        App-side "Visibility" property to set without one, so this is a
+        no-op for a true headless `freecadcmd script.py` run (confirmed via
+        Issue #9's live-bridge verification of PR #52: every object came out
+        `Visibility=False` on disk from exactly such a run). It only takes
+        effect when this script executes with a GUI available, e.g. driven
+        through the live FreeCAD MCP bridge's `execute_python` -- the
+        camera/viewpoint itself is GUI-only state and can never be embedded
+        by a headless save regardless of this fix.
+        """
+        if not getattr(App, "GuiUp", False):
+            return
+        for obj in self.output_doc.Objects:
+            view_obj = getattr(obj, "ViewObject", None)
+            if view_obj is not None:
+                view_obj.Visibility = True
+
     def save_document(self) -> bool:
         try:
+            self._set_default_visibility()
             output_path = SCRIPT_DIR / OUTPUT_FCSTD_FILENAME
             self.output_doc.saveAs(str(output_path))
             print(f"✓ Saved output document: {output_path}")
