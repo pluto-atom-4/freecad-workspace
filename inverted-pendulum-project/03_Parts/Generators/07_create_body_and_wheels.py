@@ -68,6 +68,20 @@ from the GUI itself and is outside this script's control). Not fixed --
 validate dimensions against a true headless run; see root CLAUDE.md's
 "FreeCAD Live Bridge -- Known Limitations" section.
 
+Redesign follow-up (Issue #9, live-bridge probe after PR #52) -- IN PROGRESS,
+ONE-SIDED: Pendulum_Link is tilted 90 deg (PENDULUM_LINK_TILT_DEG) so its
+plate faces stand parallel to the wheel discs, and Wheel_Left is re-mounted
+on Pendulum_Link's Bottom_Plate mounting hole instead of the old
+body-centerline placement (see _mount_wheel_on_pendulum_plate()). Base_Link
+and Wheel_Right are NOT part of this redesign yet -- Base_Link's role
+(chassis box vs. removed entirely) is still undecided, and Wheel_Right has
+no mirrored Pendulum_Link_Right to mount on. Both are hidden by
+_set_default_visibility() rather than shown stale/disconnected. Expect
+validate()'s track-width-symmetry, wheel-Z-match, and
+no-interpenetration checks to FAIL under a GUI run until the mirrored right
+side is implemented -- that is a known, transitional state, not a bug; see
+root CLAUDE.md / DESIGN.md for the open decisions.
+
 Output:
     - robot_body_wheels.FCStd (new document, does not modify the source file)
     - 07_body_wheels_metadata.json (per-link dims/placement/volume, triangle
@@ -146,6 +160,24 @@ NEW_PRIMITIVE_TRIANGLE_BUDGET = 5000
 # Ground plane is Z=0. Chassis sits with some clearance above it; wheels'
 # bottom edge touches Z=0 (wheel center height = wheel radius).
 CHASSIS_GROUND_CLEARANCE_MM = 10.0
+
+# Redesign follow-up (Issue #9, live-bridge probe after PR #52): Wheel_Left
+# is re-mounted directly on Pendulum_Link's Bottom_Plate mounting hole
+# (Edge27/Edge37/Edge38 -- three arcs of one real bolt hole, confirmed via
+# their shared Curve.Center) instead of the old body-centerline + track_mm
+# placement. Values below are empirically chosen and live-bridge-verified:
+# distToShape against the whole PlateStack/STS3032_Mount compound was 0 at
+# every radius tried down to 5mm at the hole's own center (the hole center
+# sits INSIDE the plate-stack solid, not just close to its surface), so
+# shrinking the wheel alone cannot clear the interference -- an additional
+# lateral offset along the plate's local normal (global Y, given
+# PENDULUM_LINK_TILT_DEG below) is required. offset=6mm measured exactly
+# 3.0mm of clearance.
+PENDULUM_LINK_TILT_DEG = 90.0
+WHEEL_ON_PLATE_RADIUS_MM = 15.0
+WHEEL_ON_PLATE_WIDTH_MM = 6.0
+WHEEL_ON_PLATE_CLEARANCE_OFFSET_MM = 6.0
+WHEEL_ON_PLATE_HOLE_EDGE = "Edge27"
 
 
 @dataclass
@@ -459,6 +491,18 @@ class BodyWheelsGenerator:
                 Vector(offset_x, offset_y, offset_z), Rotation(Vector(0, 0, 1), 0)
             )
 
+            # Redesign follow-up (Issue #9, live-bridge probe): tilt the
+            # whole copied plate stack PENDULUM_LINK_TILT_DEG about local X,
+            # in place (same Base, rotation only) -- plate faces go from
+            # horizontal to parallel-with-the-wheel-discs. Wheel_Left's new
+            # hole-mount position (_mount_wheel_on_pendulum_plate() below)
+            # depends on this tilt already being applied.
+            tilt = Rotation(Vector(1, 0, 0), PENDULUM_LINK_TILT_DEG)
+            pendulum_link.Placement = Placement(
+                pendulum_link.Placement.Base,
+                tilt.multiply(pendulum_link.Placement.Rotation),
+            )
+
             self.output_doc.recompute()
 
             # `plate_bbox` above already reflects each plate's own Placement
@@ -511,6 +555,74 @@ class BodyWheelsGenerator:
             print(f"ERROR building Pendulum_Link: {e}")
             import traceback
             traceback.print_exc()
+            return False
+
+    def _mount_wheel_on_pendulum_plate(self, wheel_name: str) -> bool:
+        """Redesign follow-up (Issue #9, live-bridge probe after PR #52):
+        re-mount `wheel_name` on Pendulum_Link's Bottom_Plate, centered on
+        its existing WHEEL_ON_PLATE_HOLE_EDGE mounting hole, replacing the
+        original build_wheel() body-centerline placement.
+
+        Must run after build_pendulum_link() (needs Bottom_Plate's final,
+        tilted global placement) -- see run()'s call order.
+
+        Only wired up for Wheel_Left today. Wheel_Right has no mirrored
+        Pendulum_Link_Right/hole equivalent in this script yet (tracked as
+        follow-up work); it keeps its original build_wheel() geometry and
+        is hidden by _set_default_visibility() rather than left floating in
+        a stale, disconnected position.
+        """
+        try:
+            wheel_obj = self.output_doc.getObject(wheel_name)
+            plate_obj = self.output_doc.getObject("Bottom_Plate")
+            if wheel_obj is None or plate_obj is None:
+                print(f"ERROR: {wheel_name} or Bottom_Plate not found for hole-mount")
+                return False
+
+            local_edge = Part.getShape(
+                plate_obj, WHEEL_ON_PLATE_HOLE_EDGE, needSubElement=True, transform=False
+            )
+            local_center = Vector(*local_edge.Curve.Center)
+            hole_center_global = plate_obj.getGlobalPlacement().multVec(local_center)
+            new_center = hole_center_global + Vector(0.0, -WHEEL_ON_PLATE_CLEARANCE_OFFSET_MM, 0.0)
+
+            radius = WHEEL_ON_PLATE_RADIUS_MM
+            width = WHEEL_ON_PLATE_WIDTH_MM
+            shape = Part.makeCylinder(radius, width, Vector(0.0, -width / 2.0, 0.0), Vector(0.0, 1.0, 0.0))
+
+            old_volume = wheel_obj.Shape.Volume
+            old_triangles = self._tessellate_triangle_count(wheel_obj.Shape)
+
+            wheel_obj.Shape = shape
+            wheel_obj.Placement = Placement(new_center, Rotation())
+
+            triangles = self._tessellate_triangle_count(shape)
+            self.total_volume_mm3 += shape.Volume - old_volume
+            self.new_primitive_triangle_count += triangles - old_triangles
+
+            for record in self.links:
+                if record.name == wheel_name:
+                    record.dimensions_mm = {
+                        "diameter_mm": radius * 2.0, "radius_mm": radius, "width_mm": width,
+                    }
+                    record.placement = _placement_to_dict(wheel_obj.Placement)
+                    record.bounding_box_mm = _bbox_to_dict(shape.BoundBox)
+                    record.volume_mm3 = round(shape.Volume, 4)
+                    record.triangle_count = triangles
+                    record.notes = (
+                        f"Re-mounted on Bottom_Plate's {WHEEL_ON_PLATE_HOLE_EDGE} hole "
+                        f"(hole_center={tuple(round(v, 3) for v in hole_center_global)}), "
+                        f"offset {WHEEL_ON_PLATE_CLEARANCE_OFFSET_MM}mm along -Y "
+                        "(measured 3.0mm clearance from PlateStack/STS3032_Mount, "
+                        "live-bridge verified)"
+                    )
+                    break
+
+            print(f"✓ {wheel_name}: re-mounted on Bottom_Plate hole, radius={radius} mm, "
+                  f"width={width} mm, center={new_center}")
+            return True
+        except Exception as e:
+            print(f"ERROR re-mounting {wheel_name}: {e}")
             return False
 
     # ---------------------------------------------------------------
@@ -679,6 +791,18 @@ class BodyWheelsGenerator:
             if view_obj is not None:
                 view_obj.Visibility = True
 
+        # Redesign follow-up (Issue #9, live-bridge probe): Base_Link's
+        # chassis-box role is undecided (wheel mounting moved to
+        # Pendulum_Link's Bottom_Plate -- see _mount_wheel_on_pendulum_plate())
+        # and Wheel_Right has no mirrored counterpart to mount on yet. Hide
+        # both rather than show a disconnected stale wheel and an unused
+        # chassis box. Matches the live-bridge-verified working state.
+        for name in ("Base_Link", "Wheel_Right"):
+            obj = self.output_doc.getObject(name)
+            view_obj = getattr(obj, "ViewObject", None) if obj is not None else None
+            if view_obj is not None:
+                view_obj.Visibility = False
+
     def _set_camera_framing(self) -> None:
         """Frame the 3D view on the whole assembly (isometric + fit-all)
         before saving, so the embedded camera in the .FCStd shows the full
@@ -811,6 +935,12 @@ class BodyWheelsGenerator:
         print("Reusing pendulum linkage as Pendulum_Link...")
         print("-" * 70)
         if not self.build_pendulum_link():
+            return False
+        print()
+
+        print("Re-mounting Wheel_Left on Pendulum_Link's Bottom_Plate...")
+        print("-" * 70)
+        if not self._mount_wheel_on_pendulum_plate("Wheel_Left"):
             return False
         print()
 
