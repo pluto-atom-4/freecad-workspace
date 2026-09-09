@@ -4,326 +4,108 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Workspace Structure
 
-FreeCAD workspace with two independent projects, Python 3.11:
-
 ```
 freecad-workspace/
-├── freecad-mcp-server/        # FreeCAD MCP Server development (mamba/conda only)
-│   ├── mamba-envs.yaml        # freecad-mcp env spec (recipe)
-│   └── mamba-envs.lock.yml    # freecad-mcp env, pinned/reproducible
+├── freecad-mcp-server/        # FreeCAD MCP Server dev (mamba/conda only)
 ├── inverted-pendulum-project/ # Pendulum simulation & modeling (mamba/conda only)
-│   ├── mamba-envs.yaml        # pendulum-tools env spec (recipe)
-│   └── mamba-envs.lock.yml    # pendulum-tools env, pinned/reproducible
 ├── .gitignore
 ├── README.md
 └── CLAUDE.md
 ```
 
-**Note:** both projects are mamba-only — there is no `uv`, `pyproject.toml`, `uv.lock`, or
-`.venv` anywhere in this workspace. Each project is managed by its own single mamba/conda
-environment (`freecad-mcp` for `freecad-mcp-server`, `pendulum-tools` for
-`inverted-pendulum-project`), each with its own `mamba-envs.yaml` (recipe) and
-`mamba-envs.lock.yml` (pinned/reproducible export). FreeCAD itself is never installed into
-either environment — `freecad-mcp-server` talks to it externally over XML-RPC/socket (GUI
-AppImage), `inverted-pendulum-project` invokes it externally as a subprocess. Do not assume
-`uv sync`/`uv run` work anywhere in this workspace — they don't.
+Both projects are **mamba-only** — no `uv`, `pyproject.toml`, `uv.lock`, or `.venv` anywhere in
+this workspace. Each has its own env (`freecad-mcp`, `pendulum-tools`), its own
+`mamba-envs.yaml` (recipe) + `mamba-envs.lock.yml` (pinned export). FreeCAD itself is never
+installed into either env: `freecad-mcp-server` talks to it externally over XML-RPC/socket (GUI
+AppImage); `inverted-pendulum-project` invokes it externally as a headless `freecadcmd`
+subprocess, no MCP in its shipped pipeline. Don't assume `uv sync`/`uv run` work here.
 
 ## Projects Overview
 
-### FreeCAD MCP Server
+**freecad-mcp-server** — MCP bridge for AI assistants to control FreeCAD. PyPI package
+`freecad-robust-mcp` (import name `freecad_mcp`, not `freecad_robust_mcp`). Connection modes:
+XML-RPC (port 9875, recommended), JSON-RPC socket (9876), embedded (Linux only, avoid on
+macOS/Windows). Upstream source: [spkane/freecad-addon-robust-mcp-server](https://github.com/spkane/freecad-addon-robust-mcp-server)
+(its own separate `uv`/`mise`/`just` tooling — unrelated to this workspace's mamba setup).
 
-**Purpose:** Integration bridge for AI assistants (Claude, GPT) to interact with FreeCAD via MCP protocol.
-
-**Reference:** [Robust MCP Server Documentation](https://github.com/spkane/freecad-addon-robust-mcp-server)
-
-**Key Architecture:**
-- **Connection Modes:** XML-RPC (port 9875, recommended), JSON-RPC socket (port 9876), embedded (Linux only)
-- **Tool Categories:** 150+ tools across execution, document management, object creation, PartDesign, sketching, view control, export/import, macro management
-- **Plugin Structure:** Workbench-based plugin that starts the MCP bridge inside FreeCAD
-- **Communication:** XML-RPC or socket protocol for bridging FreeCAD and external MCP clients
-
-**Main Dependencies:** `freecad-robust-mcp` (PyPI package)
-
-**Development Workflow:**
-1. Start FreeCAD with MCP bridge running (via workbench or `just` commands from source)
-2. Configure MCP client (.mcp.json or ~/.claude/claude_desktop_config.json)
-3. Use 150+ available tools to manipulate FreeCAD documents, create geometries, manage macros
-
-### Inverted Pendulum Project
-
-**Purpose:** Simulation and numerical modeling of inverted pendulum dynamics with FreeCAD integration.
-
-**Main Dependencies:** numpy, scipy, matplotlib, freecad-robust-mcp
-
-**Key Features:**
-- Numerical simulation of pendulum dynamics using scipy
-- Data visualization with matplotlib
-- Export simulation results to FreeCAD models (STEP format)
-- Two FreeCAD integration modes: MCP (recommended) or direct Python bindings
-
-**FreeCAD Integration Modes:**
-1. **MCP Mode (Recommended)** — Connect to FreeCAD via Model Context Protocol
-   - Works from any Python environment
-   - Requires FreeCAD with MCP Bridge running (`./freecad-mcp-server/scripts/start-mcp-freecad.sh`)
-   - Uses XML-RPC (port 9875) or Socket (port 9876)
-   - Secure network communication, loose coupling
-
-2. **Direct Bindings Mode (Advanced)** — Access FreeCAD Python API directly
-   - Only works in FreeCAD's Python environment
-   - Direct access to FreeCAD objects
-   - No network overhead, tight coupling to FreeCAD
-
-**Typical Workflow:**
-- Define system dynamics using numpy/scipy
-- Compute solutions numerically
-- Visualize results with matplotlib
-- (Optional) Export to FreeCAD for 3D model visualization
-
-**See Also:**
-- `freecad_integration_example.py` — Integration patterns and code examples
-- `../freecad-mcp-server/scripts/start-mcp-freecad.sh` — Start FreeCAD with MCP Bridge
+**inverted-pendulum-project** — Pendulum simulation (numpy/scipy/matplotlib) + parametric CAD
+generation (cadquery → OCP, trimesh). FreeCAD integration is headless-subprocess-only via
+`FREECAD_BIN` (see below), never imported into the `pendulum-tools` env — it bundles its own
+OpenCASCADE build, which conflicts with OCP's if mixed in-process.
 
 ## Common Development Commands
 
-### Environment Management
-
-**freecad-mcp-server** (mamba/conda):
 ```bash
-mamba activate freecad-mcp
-cd freecad-mcp-server/ && python3 <script.py>
-# Or run directly without activating
-cd freecad-mcp-server/ && mamba run -n freecad-mcp python3 <script.py>
-# Recreate dependencies (after mamba-envs.yaml changes)
-mamba env remove -n freecad-mcp -y && mamba env create -n freecad-mcp -f freecad-mcp-server/mamba-envs.yaml
-```
-
-**inverted-pendulum-project** (mamba/conda):
-```bash
-mamba activate pendulum-tools
-cd inverted-pendulum-project/ && python3 <script.py>
-```
-
-### FreeCAD MCP Server
-
-**From Source Development** (if working with freecad-addon-robust-mcp-server repo directly):
-
-```bash
-# Setup from source (requires mise/just)
-git clone https://github.com/spkane/freecad-addon-robust-mcp-server.git
-cd freecad-addon-robust-mcp-server
-mise trust && mise install
-just setup
-
-# Start FreeCAD with MCP bridge
-just freecad::run-gui        # GUI mode
-just freecad::run-headless   # Headless mode
-
-# Run tests
-just testing::unit
-just testing::cov
-just testing::integration
-
-# Code quality
-just quality::lint
-just quality::typecheck
-just quality::format
-just quality::check          # All pre-commit hooks
-```
-
-**Using PyPI Package:**
-
-```bash
-cd freecad-mcp-server
-# freecad-robust-mcp is already installed via mamba env create -f mamba-envs.yaml
-# Configure in MCP client settings to use the package
-
-# Test connection (module import name is freecad_mcp, not freecad_robust_mcp)
+# freecad-mcp-server
+mamba run -n freecad-mcp python3 <script.py>
 mamba run -n freecad-mcp python3 -c "import freecad_mcp; print(freecad_mcp.__version__)"
+mamba run -n freecad-mcp freecad-mcp --version  # also confirms the required "mcp<2" pin is
+  # intact -- a bare `pip install freecad-robust-mcp` pulls mcp 2.x, which crashes with
+  # ModuleNotFoundError: No module named 'mcp.server.fastmcp'
 
-# Or check the CLI directly (also confirms the required "mcp<2" pin is intact —
-# a bare pip install pulls mcp 2.x by default, which crashes with
-# ModuleNotFoundError: No module named 'mcp.server.fastmcp')
-mamba run -n freecad-mcp freecad-mcp --version
-```
-
-### Inverted Pendulum Project
-
-No `uv`/`pyproject.toml` — uses the `pendulum-tools` mamba environment instead. See
-`inverted-pendulum-project/README.md` for the full setup.
-
-```bash
+# inverted-pendulum-project
 cd inverted-pendulum-project
-
-# Activate the environment (create it first if needed — see mamba-envs.yaml)
-mamba activate pendulum-tools
-
-# Run simulation
-python3 simulate.py
-
-# FreeCAD integration: headless subprocess only (no MCP for this project)
-export FREECAD_BIN=~/.local/bin/freecadcmd1.1   # or rely on "freecadcmd" from PATH
-python3 freecad_integration_example.py direct
-
-# Run tests
-python3 -m pytest
-
-# Open Python REPL
-python3
+export FREECAD_BIN=~/.local/bin/freecadcmd1.1   # or rely on "freecadcmd" on PATH
+mamba run -n pendulum-tools python3 -m pytest -q
 ```
 
-## Available MCP Tools (FreeCAD)
-
-**Major Categories (150+ tools total):**
-
-| Category | Count | Examples |
-|----------|-------|----------|
-| Execution & Debugging | 5 | execute_python, get_freecad_version, get_connection_status |
-| Document Management | 7 | create_document, open_document, save_document |
-| Object Creation | 8 | create_box, create_cylinder, create_sphere |
-| Object Management | 12 | edit_object, delete_object, boolean_operation |
-| PartDesign Sketching | 14 | create_sketch, add_sketch_circle, pad_sketch, pocket_sketch |
-| PartDesign Patterns | 5 | linear_pattern, polar_pattern, fillet_edges |
-| View & Display | 11 | get_screenshot, set_view_angle, set_object_color |
-| Undo/Redo | 3 | undo, redo, get_undo_redo_status |
-| Export/Import | 7 | export_step, export_stl, import_step |
-| Macro Management | 6 | create_macro, run_macro, delete_macro |
-| Parts Library | 2 | list_parts_library, insert_part_from_library |
+**`freecadcmd` 1.1.3 in this environment does not set `__name__ == "__main__"` for a plain
+positional or `--python` script argument** — a script's `if __name__ == "__main__":` guard
+silently never fires, exits 0 having done nothing (verified empirically, not documented
+upstream). Working invocation: `"$FREECAD_BIN" -c "exec(open('script.py').read())"`.
 
 ## MCP Client Configuration
 
-### Claude Code / Claude Desktop
-
-Create `.mcp.json` in project root or configure in `~/.claude/claude_desktop_config.json`:
-
-**Using PyPI package:**
-```json
-{
-  "mcpServers": {
-    "freecad": {
-      "command": "freecad-mcp",
-      "env": {
-        "FREECAD_MODE": "xmlrpc"
-      }
-    }
-  }
-}
-```
-
-**Using the upstream repo from source** (a separate clone of `freecad-addon-robust-mcp-server`
-itself, built with its own `uv`/`mise`/`just` tooling — unrelated to this workspace's
-`freecad-mcp-server/`, which is mamba-only):
-```json
-{
-  "mcpServers": {
-    "freecad": {
-      "command": "uv",
-      "args": ["run", "--project", "/path/to/freecad-addon-robust-mcp-server", "freecad-mcp"],
-      "env": {
-        "FREECAD_MODE": "xmlrpc",
-        "FREECAD_SOCKET_HOST": "localhost",
-        "FREECAD_XMLRPC_PORT": "9875"
-      }
-    }
-  }
-}
-```
-
-## Development Patterns
-
-### FreeCAD MCP Integration
-
-1. **Start FreeCAD with bridge** → must run before MCP client connects
-2. **Configure MCP client** → point to the `freecad-mcp` command (PyPI package) or, for
-   an upstream source checkout, its own `uv run` wrapper (see MCP Client Configuration above)
-3. **Use MCP tools** → 150+ tools available through Claude
-4. **Export models** → STEP, STL, 3MF, OBJ, IGES formats
-
-### Typical Workflow
-
-- Create geometry via MCP tools or through FreeCAD UI
-- Use `export_step` or `export_stl` to export results
-- Version control `.FCStd` files (FreeCAD native format) in git
-
-### Testing & Validation
-
-- Unit tests don't require FreeCAD running
-- Integration tests require FreeCAD with MCP bridge
-- Use `get_connection_status` to verify bridge connectivity
+`.mcp.json` (project root) configures the `freecad` MCP server. PyPI package usage:
+`"command": "freecad-mcp"`, env `FREECAD_MODE=xmlrpc`. For an upstream source checkout instead,
+`"command": "uv"` with `"args": ["run", "--project", "/path/to/freecad-addon-robust-mcp-server", "freecad-mcp"]`.
+See [Robust MCP Server Docs](https://spkane.github.io/freecad-addon-robust-mcp-server/) for the
+full tool catalog (150+ tools) rather than enumerating it here.
 
 ## Git & GitHub
 
-- Repository: freecad-workspace on GitHub
-- Each project is self-contained
-- `.gitignore` covers Python environments, build artifacts, FreeCAD files
+- Repository: freecad-workspace on GitHub. Each project is self-contained.
+- `.gitignore` excludes `.FCStd`/`.FCBak` files, Python envs, build artifacts — these live on
+  disk locally only; regenerate via each project's `0N_*.py` scripts, don't expect them tracked.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `freecad-mcp-server/mamba-envs.yaml` | freecad-mcp env recipe (unpinned) |
-| `freecad-mcp-server/mamba-envs.lock.yml` | freecad-mcp env, pinned/reproducible |
-| `inverted-pendulum-project/mamba-envs.yaml` | pendulum-tools env recipe (unpinned) |
-| `inverted-pendulum-project/mamba-envs.lock.yml` | pendulum-tools env, pinned/reproducible |
-| `.gitignore` | Excludes venv, __pycache__, .FCStd files |
+| `<project>/mamba-envs.yaml` | env recipe (unpinned) |
+| `<project>/mamba-envs.lock.yml` | env, pinned/reproducible export |
 | `.mcp.json` | MCP server configuration (project-level) |
 
 ## Troubleshooting
 
-**MCP client can't connect to FreeCAD:**
-- Verify FreeCAD has MCP bridge running (check console output for "MCP Bridge started!")
-- Check port availability (9875 for XML-RPC, 9876 for socket)
-- Ensure FREECAD_SOCKET_HOST matches (localhost vs remote)
+**MCP client can't connect to FreeCAD:** verify FreeCAD's MCP bridge is running (console shows
+"MCP Bridge started!"), check port (9875 XML-RPC / 9876 socket), `FREECAD_SOCKET_HOST` matches.
 
-**FreeCAD crashes in embedded mode:**
-- Don't use `FREECAD_MODE=embedded` on macOS/Windows — use `xmlrpc` or `socket` instead
+**freecad-mcp env broken:**
+`mamba env remove -n freecad-mcp -y && mamba env create -n freecad-mcp -f freecad-mcp-server/mamba-envs.lock.yml`
+(recreating from the unpinned recipe instead: keep the `mcp<2` pin in `pip_packages`.)
 
-**freecad-mcp env broken (freecad-mcp-server):**
-- Recreate from the pinned lock: `mamba env remove -n freecad-mcp -y && mamba env create -n freecad-mcp -f freecad-mcp-server/mamba-envs.lock.yml`
-- If recreating from the unpinned recipe instead, remember the `mcp<2` pin in `pip_packages` is required — a bare `pip install freecad-robust-mcp` pulls mcp 2.x, which crashes on import.
-
-**pendulum-tools env broken (inverted-pendulum-project):**
-- Recreate from the pinned lock: `mamba env remove -n pendulum-tools -y && mamba env create -n pendulum-tools -f inverted-pendulum-project/mamba-envs.lock.yml`
+**pendulum-tools env broken:**
+`mamba env remove -n pendulum-tools -y && mamba env create -n pendulum-tools -f inverted-pendulum-project/mamba-envs.lock.yml`
 
 ## FreeCAD Live Bridge — Known Limitations (freecad-mcp-workbench 0.6.2)
 
-Found while using the live `mcp__freecad__*` bridge as an ad-hoc human-review aid for
-`inverted-pendulum-project` (Issue #9 Stage 1, PR #52) — that project has no MCP integration
-in its shipped pipeline (headless `freecadcmd` only), but the bridge is still useful for a
-human/agent to open a script's output `.FCStd` and eyeball it. These apply to whichever
-bridge build is actually connected, currently `freecad-mcp-workbench` 0.6.2:
+The live `mcp__freecad__*` bridge is occasionally borrowed by `inverted-pendulum-project` as an
+ad-hoc human-review aid (its own pipeline stays headless-only). Found while doing so:
 
-- **`get_screenshot` is broken** — every call fails with
-  `AttributeError: 'dict' object has no attribute '__name__'`, regardless of view angle or
-  size. Workaround: call `execute_python` with a snippet that toggles visibility as needed
-  and calls `FreeCADGui.ActiveDocument.ActiveView.saveImage(path, width, height)` directly,
-  then read the saved file back off disk.
-- **`inspect_object` errors on `App::Part` container objects** (works fine on
-  `Part::Feature`/`Mesh::Feature`). Workaround: use `execute_python` to read `.Group`,
-  `.Placement`, etc. directly from the object.
-- **GUI-only state (visibility, camera) needs an `App.GuiUp` guard.** A script written for
-  headless `freecadcmd` execution has no `ViewObject` and no 3D view at all — `App.GuiUp` is
-  only `True` when the same script is instead driven through the live bridge's
-  `execute_python`. Any code that sets object visibility or camera framing must check
-  `if not getattr(App, "GuiUp", False): return` before touching `ViewObject`/`FreeCADGui`, or
-  it will crash (or silently no-op, depending on the call) under headless execution. See
-  `inverted-pendulum-project/03_Parts/Generators/07_create_body_and_wheels.py`'s
-  `_set_default_visibility()` / `_set_camera_framing()` for the pattern. A camera/viewpoint
-  set this way only ever gets embedded in the `.FCStd` when the save itself happens under a
-  GUI — a headless save can never carry one, regardless.
-- **A live GUI auto-tessellates shapes for on-screen display, which can contaminate
-  `Shape.BoundBox` reads.** Opening/recomputing a document under a live GUI causes FreeCAD's
-  view providers to tessellate each shape so it can be drawn — observed shrinking a
-  70.00mm-diameter cylinder's reported bounding box to ~69.90mm (chordal-deviation artifact),
-  enough to fail a tight dimensional check that passes exactly under headless execution. Do
-  dimensional validation against a true headless run, not a live-bridge session. If a script
-  tessellates a shape itself (e.g. for triangle-count reporting), always tessellate a
-  `.copy()` of the shape, never the shape actually assigned to `obj.Shape` — the same
-  contamination can happen internally, self-inflicted, even headlessly (see
-  `_tessellate_triangle_count()` in the same script).
-- **`freecadcmd` 1.1.3 in this environment does not set `__name__ == "__main__"` for a plain
-  positional or `--python` script argument** — a script's `if __name__ == "__main__":` guard
-  silently never fires; the process exits 0 having done nothing. Working invocation:
-  `"$FREECAD_BIN" -c "exec(open('script.py').read())"`.
+- **`get_screenshot` is broken** (`AttributeError: 'dict' object has no attribute '__name__'` on
+  every call). Workaround: `execute_python` → `FreeCADGui.ActiveDocument.ActiveView.saveImage(path, w, h)`
+  directly, then read the file back off disk.
+- **`inspect_object` errors on `App::Part` container objects** (fine on `Part::Feature`/`Mesh::Feature`).
+  Workaround: read `.Group`/`.Placement` etc. directly via `execute_python`.
+- **Visibility and camera are GUI-only state** — no `ViewObject`/3D view exists in a true headless
+  `freecadcmd` run. Guard any such code with `if not getattr(App, "GuiUp", False): return` (see
+  `07_create_body_and_wheels.py`'s `_set_default_visibility()`/`_set_camera_framing()`). A camera
+  set this way only embeds in the `.FCStd` if the save itself happens under a GUI.
+- **A live GUI auto-tessellates shapes for display, which can shrink `Shape.BoundBox` reads** —
+  observed a 70.00mm cylinder reading ~69.90mm. Validate dimensions against a true headless run,
+  not a live-bridge session; when tessellating in a script, always tessellate a `.copy()` of the
+  shape, never `obj.Shape` itself (same contamination happens self-inflicted, even headlessly).
 
 ## References
 
