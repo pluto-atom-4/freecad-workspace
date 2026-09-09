@@ -44,6 +44,12 @@ Stage 4's URDF export consume these verbatim, per `robot_parameters.yaml`'s
   - Wheel_Right     (Part::Feature, cylinder)
   - Pendulum_Link   (App::Part, containing PlateStack + STS3032_Mount
                      sub-groups, copied from the source document)
+  - Pendulum_Link_Right (App::Part, containing PlateStack_Right +
+                     STS3032_Mount_Right -- see build_pendulum_link_right().
+                     Unlike Pendulum_Link_Right in an earlier version of this
+                     script, this uses addObject() with an explicit Name, not
+                     doc.copyObject()'s auto-naming -- so Name and Label
+                     match exactly, no quirk to work around.)
 
 Usage:
     # This build of freecadcmd (1.1.3) does not set __name__ == "__main__"
@@ -68,31 +74,39 @@ from the GUI itself and is outside this script's control). Not fixed --
 validate dimensions against a true headless run; see root CLAUDE.md's
 "FreeCAD Live Bridge -- Known Limitations" section.
 
-Redesign follow-up (Issue #9, live-bridge probe after PR #52) -- IN PROGRESS,
-ONE-SIDED: Pendulum_Link is tilted 90 deg (PENDULUM_LINK_TILT_DEG) so its
-plate faces stand parallel to the wheel discs, Wheel_Left is re-mounted on
-Pendulum_Link's Bottom_Plate mounting hole instead of the old
-body-centerline placement (see _mount_wheel_on_pendulum_plate()), and
-Base_Link is now a flat plate (BASE_LINK_PLATE_THICKNESS_MM thick,
-BASE_LINK_LENGTH_MM long) instead of a solid chassis.height_mm-tall box
-(see build_base_link()), and repositioned near Bottom_Plate's top face --
-a deck plate at the pivot/servo level -- instead of floating near the
-ground at CHASSIS_GROUND_CLEARANCE_MM (see
-_position_base_link_under_pendulum(); a human fine-tuned this live in the
-FreeCAD GUI, ported back here). Wheel_Right has no mirrored
-Pendulum_Link_Right to mount on yet, so it's an interim placeholder
-instead -- same size as Wheel_Left, at a fixed, human-tuned position (see
-_position_wheel_right_interim()), visible rather than hidden, but not
-derived from any Pendulum_Link geometry the way Wheel_Left's mount is.
-Expect validate()'s track-width-symmetry, ground-clearance (both wheels
-now sit at Wheel_Left's pivot-level height, not resting on Z=0), and
-"Pendulum_Link positioned above Base_Link" checks to FAIL -- Base_Link
-sits mid-stack (flush with Bottom_Plate's top), not below the whole
-assembly, so that check's original "chassis below pendulum" assumption no
-longer holds by design. (wheel-Z-match and no-interpenetration now PASS,
-now that Wheel_Right matches Wheel_Left's height.) All known, transitional
-states, not bugs; see
-root CLAUDE.md / DESIGN.md for the open decisions.
+Redesign follow-up (Issue #9, live-bridge probe after PR #52) -- IN PROGRESS:
+Pendulum_Link is tilted 90 deg (PENDULUM_LINK_TILT_DEG) so its plate faces
+stand parallel to the wheel discs; Wheel_Left/Wheel_Right are each
+re-mounted on their own Bottom_Plate's mounting hole instead of the old
+body-centerline placement (see _mount_wheel_on_pendulum_plate());
+Pendulum_Link_Right exists now too (see build_pendulum_link_right()) --
+built from literal, human-tuned constants (worked out live via the bridge
+directly in plates_servo_assembled.FCStd), NOT a geometric mirror of
+Pendulum_Link: Top_Plate_Right/Middle_Plate_Right reuse the left plates'
+exact Shape/rotation with only Z overridden, Bottom_Plate_Right is an
+unmodified copy, and STS3032_Mount_Right gets its own Placement set
+outright (a plain rotation, not a mesh mirror -- a true reflection-matrix
+mirror was tried first and hit a real Mesh.transform() bug: a wrongly
+offset mesh, not a math error). Base_Link is now a flat plate
+(BASE_LINK_PLATE_THICKNESS_MM thick, BASE_LINK_LENGTH_MM long) instead of a
+solid chassis.height_mm-tall box (see build_base_link()), and repositioned
+near Bottom_Plate's top face -- a deck plate at the pivot/servo level --
+instead of floating near the ground at CHASSIS_GROUND_CLEARANCE_MM (see
+_position_base_link_under_pendulum(); human-tuned live, ported back here).
+
+Expect validate()'s Wheel_Left-dimensions (re-mounted wheels are smaller
+than robot_parameters.yaml's wheel.diameter_mm/width_mm -- see
+WHEEL_ON_PLATE_RADIUS_MM/WIDTH_MM), track-width-symmetry, wheel-Z-match
+(the two sides' human-tuned geometry isn't perfectly symmetric, so mount
+heights differ by a few mm), ground-clearance (wheels sit at pivot-level
+height, not resting on Z=0), no-interpenetration (a Y-band-only heuristic
+that flags Base_Link's wide Y span against a wheel even when the real 3D
+clearance is fine -- verified separately via Part.Shape.common(), see
+_mount_wheel_on_pendulum_plate()'s live-bridge verification history), and
+"Pendulum_Link positioned above Base_Link" (Base_Link sits mid-stack now,
+not below the whole assembly) checks to FAIL. All known, transitional
+states from an in-progress redesign, not bugs; see root CLAUDE.md /
+DESIGN.md for the open decisions.
 
 Output:
     - robot_body_wheels.FCStd (new document, does not modify the source file)
@@ -191,15 +205,24 @@ WHEEL_ON_PLATE_WIDTH_MM = 6.0
 WHEEL_ON_PLATE_CLEARANCE_OFFSET_MM = 6.0
 WHEEL_ON_PLATE_HOLE_EDGE = "Edge27"
 
-# Redesign follow-up: Wheel_Right has no mirrored Pendulum_Link_Right to
-# mount on yet -- until that exists, it's an interim placeholder
-# (human-tuned live via the bridge), same size as Wheel_Left
-# (WHEEL_ON_PLATE_RADIUS_MM/WIDTH_MM, not robot_parameters.yaml's
-# wheel.diameter_mm/width_mm) at a fixed spot near Wheel_Left's height.
-# Revisit once Pendulum_Link_Right is implemented.
-WHEEL_RIGHT_INTERIM_X_MM = 0.0
-WHEEL_RIGHT_INTERIM_Y_MM = 71.0
-WHEEL_RIGHT_INTERIM_Z_MM = 54.0
+# Redesign follow-up: Pendulum_Link_Right's plate/servo arrangement --
+# human-tuned live via the bridge, working directly in
+# plates_servo_assembled.FCStd (duplicating PlateStack/STS3032_Mount there,
+# then hand-transforming the copies), ported here as literal constants.
+# NOT a geometric mirror of Pendulum_Link: Top_Plate_Right/Middle_Plate_Right
+# keep the exact same Shape and rotation as their left counterparts, just
+# Z-overridden; Bottom_Plate_Right is an unmodified copy. STS3032_Mount_Right
+# gets its own Placement set outright (not copied from source, which is
+# identity) -- the visual "flip" comes from a plain 180 deg rotation, not a
+# mesh-data mirror. This sidesteps a real Mesh.transform() bug found while
+# trying a true reflection-matrix mirror first: it produced a wrongly offset
+# mesh (e.g. X shifted by an unexplained, consistent ~300mm on the 188-facet
+# collision proxy) -- a bug in that approach, not in this one; a rotation
+# doesn't hit it.
+PENDULUM_LINK_RIGHT_TOP_PLATE_Z_MM = 0.0
+PENDULUM_LINK_RIGHT_MIDDLE_PLATE_Z_MM = 0.0
+PENDULUM_LINK_RIGHT_STS_MOUNT_POSITION_MM = (-1.0, 51.0, 6.0)
+PENDULUM_LINK_RIGHT_STS_MOUNT_TILT_DEG = 180.0
 
 # Redesign follow-up: Base_Link becomes a flat plate instead of a solid
 # chassis box (thickness no longer chassis.height_mm) -- matches this
@@ -302,6 +325,7 @@ class BodyWheelsGenerator:
         self.reused_mesh_facet_counts: Dict[str, int] = {}
         self.new_primitive_triangle_count = 0
         self.total_volume_mm3 = 0.0
+        self.bottom_plate_right_name: Optional[str] = None
 
     # ---------------------------------------------------------------
     # Setup
@@ -622,26 +646,198 @@ class BodyWheelsGenerator:
             traceback.print_exc()
             return False
 
-    def _mount_wheel_on_pendulum_plate(self, wheel_name: str) -> bool:
+    def build_pendulum_link_right(self) -> bool:
+        """Build Pendulum_Link_Right -- NOT a geometric mirror of
+        Pendulum_Link. A human worked out this arrangement live via the
+        bridge, duplicating PlateStack/STS3032_Mount directly in
+        plates_servo_assembled.FCStd and hand-transforming the copies; this
+        method reproduces that exact result as literal constants
+        (PENDULUM_LINK_RIGHT_*) rather than deriving it from any mirror
+        formula.
+
+        Top_Plate_Right/Middle_Plate_Right keep the exact same Shape and
+        rotation as their left counterparts -- only their Z is overridden
+        (PENDULUM_LINK_RIGHT_TOP_PLATE_Z_MM/MIDDLE_PLATE_Z_MM). Bottom_Plate_Right
+        is an unmodified copy (same Shape, same Placement as Bottom_Plate).
+        STS3032_Mount_Right's own Placement is set outright, not copied from
+        source (which is identity) -- PENDULUM_LINK_RIGHT_STS_MOUNT_POSITION_MM
+        plus a PENDULUM_LINK_RIGHT_STS_MOUNT_TILT_DEG rotation. The container
+        itself gets the same centering-above-Base_Link and
+        PENDULUM_LINK_TILT_DEG tilt as build_pendulum_link(), mirrored to the
+        opposite Y side.
+
+        This approach was chosen specifically to avoid a real
+        Mesh.transform() bug hit while first trying a true reflection-matrix
+        mirror of the servo mesh: it produced a wrongly offset mesh (X
+        shifted by an unexplained, consistent amount, e.g. ~300mm on the
+        188-facet collision proxy) -- a bug in that approach, not a math
+        error. A plain rotation (used here for STS3032_Mount_Right) doesn't
+        hit it; only reflection matrices did.
+
+        Must run after build_base_link() (needs self._chassis_top_z).
+        """
+        try:
+            source_plate_stack = self.source_doc.getObject("PlateStack")
+            source_sts_mount = self.source_doc.getObject("STS3032_Mount")
+
+            if source_plate_stack is None or source_sts_mount is None:
+                print("ERROR: PlateStack or STS3032_Mount not found in source document")
+                return False
+
+            pendulum_link_right = self.output_doc.addObject("App::Part", "Pendulum_Link_Right")
+            pendulum_link_right.Label = "Pendulum_Link_Right"
+
+            plate_stack = self.output_doc.addObject("App::Part", "PlateStack_Right")
+            plate_stack.Label = "PlateStack_Right"
+            pendulum_link_right.addObject(plate_stack)
+
+            sts_mount = self.output_doc.addObject("App::Part", "STS3032_Mount_Right")
+            sts_mount.Label = "STS3032_Mount_Right"
+            pendulum_link_right.addObject(sts_mount)
+
+            z_overrides = {
+                "Top_Plate": PENDULUM_LINK_RIGHT_TOP_PLATE_Z_MM,
+                "Middle_Plate": PENDULUM_LINK_RIGHT_MIDDLE_PLATE_Z_MM,
+            }
+
+            plate_children = []
+            for child in source_plate_stack.Group:
+                if not hasattr(child, "Shape"):
+                    continue
+                new_name = f"{child.Name}_Right"
+                new_obj = self.output_doc.addObject("Part::Feature", new_name)
+                new_obj.Label = new_name
+                new_obj.Shape = child.Shape.copy()
+                placement = Placement(child.Placement)
+                if child.Name in z_overrides:
+                    placement = Placement(
+                        Vector(placement.Base.x, placement.Base.y, z_overrides[child.Name]),
+                        placement.Rotation,
+                    )
+                new_obj.Placement = placement
+                plate_stack.addObject(new_obj)
+                plate_children.append(new_obj)
+                print(f"  ✓ Copied {child.Name} into PlateStack_Right as {new_name} "
+                      f"(Z override: {child.Name in z_overrides})")
+
+            mesh_children = []
+            for child in source_sts_mount.Group:
+                if not hasattr(child, "Mesh"):
+                    continue
+                new_name = f"{child.Name}_Right"
+                new_obj = self.output_doc.addObject("Mesh::Feature", new_name)
+                new_obj.Label = new_name
+                new_obj.Mesh = child.Mesh.copy()
+                sts_mount.addObject(new_obj)
+                mesh_children.append(new_obj)
+                facets = new_obj.Mesh.CountFacets
+                self.reused_mesh_facet_counts[new_name] = facets
+                print(f"  ✓ Copied {child.Name} into STS3032_Mount_Right as {new_name} ({facets} facets)")
+
+            # Human-tuned live: STS3032_Mount_Right's own Placement (not
+            # copied from source, which is identity) achieves the visual
+            # "flip" via a plain rotation, not a mesh-data mirror -- see
+            # this method's docstring.
+            sts_mount.Placement = Placement(
+                Vector(*PENDULUM_LINK_RIGHT_STS_MOUNT_POSITION_MM),
+                Rotation(Vector(1, 0, 0), PENDULUM_LINK_RIGHT_STS_MOUNT_TILT_DEG),
+            )
+
+            if not plate_children:
+                print("ERROR: No plate objects copied into PlateStack_Right")
+                return False
+
+            plate_bbox = plate_children[0].Shape.BoundBox
+            for obj in plate_children[1:]:
+                plate_bbox.add(obj.Shape.BoundBox)
+
+            plate_center_x = (plate_bbox.XMin + plate_bbox.XMax) / 2.0
+            plate_center_y = (plate_bbox.YMin + plate_bbox.YMax) / 2.0
+
+            pivot_height = self.params.pendulum.pivot_height_mm
+            offset_x = -plate_center_x
+            offset_y = plate_center_y  # mirrored to the opposite Y side (left uses -plate_center_y)
+            offset_z = (self._chassis_top_z + pivot_height) - plate_bbox.ZMin
+
+            pendulum_link_right.Placement = Placement(
+                Vector(offset_x, offset_y, offset_z), Rotation(Vector(0, 0, 1), 0)
+            )
+
+            tilt = Rotation(Vector(1, 0, 0), PENDULUM_LINK_TILT_DEG)
+            pendulum_link_right.Placement = Placement(
+                pendulum_link_right.Placement.Base,
+                tilt.multiply(pendulum_link_right.Placement.Rotation),
+            )
+
+            self.output_doc.recompute()
+
+            plate_bbox_global = plate_bbox.transformed(pendulum_link_right.Placement.toMatrix())
+
+            volume = sum(obj.Shape.Volume for obj in plate_children)
+            self.total_volume_mm3 += volume
+            for obj in mesh_children:
+                try:
+                    self.total_volume_mm3 += obj.Mesh.Volume
+                except Exception:
+                    pass  # not all meshes are guaranteed watertight
+
+            self.bottom_plate_right_name = "Bottom_Plate_Right"
+
+            # robot_parameters.yaml has no `links:` mapping for
+            # "Pendulum_Link_Right" (Stage 0 predates this redesign) --
+            # target_mass_for_link_kg() would raise. Reuse Pendulum_Link's
+            # own mapping instead of editing Stage 0's YAML for this.
+            try:
+                target_mass_kg = self.params.target_mass_for_link_kg("Pendulum_Link")
+            except Exception:
+                target_mass_kg = None
+
+            self.links.append(LinkRecord(
+                name="Pendulum_Link_Right",
+                kind="human_tuned_subassembly",
+                dimensions_mm={
+                    "arm_length_mm": self.params.pendulum.arm_length_mm,
+                    "pivot_height_mm": pivot_height,
+                },
+                placement=_placement_to_dict(pendulum_link_right.Placement),
+                bounding_box_mm=_bbox_to_dict(plate_bbox_global),
+                volume_mm3=round(volume, 4),
+                target_mass_kg=target_mass_kg,
+                notes=(
+                    "NOT a geometric mirror of Pendulum_Link -- see "
+                    "build_pendulum_link_right()'s docstring. "
+                    "target_mass_kg reuses Pendulum_Link's own "
+                    "robot_parameters.yaml mapping (no separate "
+                    "'Pendulum_Link_Right' entry exists yet)."
+                ),
+            ))
+
+            print(f"✓ Pendulum_Link_Right: offset=({offset_x:.2f}, {offset_y:.2f}, {offset_z:.2f}) mm, "
+                  f"plates volume={volume:.2f} mm^3")
+            return True
+        except Exception as e:
+            print(f"ERROR building Pendulum_Link_Right: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _mount_wheel_on_pendulum_plate(self, wheel_name: str, bottom_plate_name: str = "Bottom_Plate") -> bool:
         """Redesign follow-up (Issue #9, live-bridge probe after PR #52):
-        re-mount `wheel_name` on Pendulum_Link's Bottom_Plate, centered on
-        its existing WHEEL_ON_PLATE_HOLE_EDGE mounting hole, replacing the
-        original build_wheel() body-centerline placement.
+        re-mount `wheel_name` on `bottom_plate_name`'s existing
+        WHEEL_ON_PLATE_HOLE_EDGE mounting hole, replacing the original
+        build_wheel() body-centerline placement.
 
-        Must run after build_pendulum_link() (needs Bottom_Plate's final,
-        tilted global placement) -- see run()'s call order.
-
-        Only wired up for Wheel_Left today. Wheel_Right has no mirrored
-        Pendulum_Link_Right/hole equivalent in this script yet (tracked as
-        follow-up work); it keeps its original build_wheel() geometry and
-        is hidden by _set_default_visibility() rather than left floating in
-        a stale, disconnected position.
+        Must run after build_pendulum_link() / build_pendulum_link_right()
+        (needs the target Bottom_Plate's final global placement) -- see
+        run()'s call order. `bottom_plate_name` defaults to the left
+        Pendulum_Link's "Bottom_Plate"; pass "Bottom_Plate_Right" for
+        Wheel_Right.
         """
         try:
             wheel_obj = self.output_doc.getObject(wheel_name)
-            plate_obj = self.output_doc.getObject("Bottom_Plate")
+            plate_obj = self.output_doc.getObject(bottom_plate_name)
             if wheel_obj is None or plate_obj is None:
-                print(f"ERROR: {wheel_name} or Bottom_Plate not found for hole-mount")
+                print(f"ERROR: {wheel_name} or {bottom_plate_name} not found for hole-mount")
                 return False
 
             local_edge = Part.getShape(
@@ -675,73 +871,17 @@ class BodyWheelsGenerator:
                     record.volume_mm3 = round(shape.Volume, 4)
                     record.triangle_count = triangles
                     record.notes = (
-                        f"Re-mounted on Bottom_Plate's {WHEEL_ON_PLATE_HOLE_EDGE} hole "
+                        f"Re-mounted on {bottom_plate_name}'s {WHEEL_ON_PLATE_HOLE_EDGE} hole "
                         f"(hole_center={tuple(round(v, 3) for v in hole_center_global)}), "
-                        f"offset {WHEEL_ON_PLATE_CLEARANCE_OFFSET_MM}mm along -Y "
-                        "(measured 3.0mm clearance from PlateStack/STS3032_Mount, "
-                        "live-bridge verified)"
+                        f"offset {WHEEL_ON_PLATE_CLEARANCE_OFFSET_MM}mm along -Y"
                     )
                     break
 
-            print(f"✓ {wheel_name}: re-mounted on Bottom_Plate hole, radius={radius} mm, "
+            print(f"✓ {wheel_name}: re-mounted on {bottom_plate_name} hole, radius={radius} mm, "
                   f"width={width} mm, center={new_center}")
             return True
         except Exception as e:
             print(f"ERROR re-mounting {wheel_name}: {e}")
-            return False
-
-    def _position_wheel_right_interim(self) -> bool:
-        """Redesign follow-up (Issue #9, live-bridge probe): Wheel_Right has
-        no mirrored Pendulum_Link_Right to mount on yet, so it can't get
-        _mount_wheel_on_pendulum_plate()'s treatment. This is an interim
-        placeholder instead -- resized to match Wheel_Left
-        (WHEEL_ON_PLATE_RADIUS_MM/WIDTH_MM, not robot_parameters.yaml's
-        wheel.diameter_mm/width_mm) and moved to a fixed, human-tuned spot
-        near Wheel_Left's height (WHEEL_RIGHT_INTERIM_X_MM/Y_MM/Z_MM) --
-        not derived from any Pendulum_Link geometry, unlike Wheel_Left's
-        mount. Revisit once Pendulum_Link_Right exists.
-        """
-        try:
-            wr = self.output_doc.getObject("Wheel_Right")
-            if wr is None:
-                print("ERROR: Wheel_Right not found")
-                return False
-
-            radius, width = WHEEL_ON_PLATE_RADIUS_MM, WHEEL_ON_PLATE_WIDTH_MM
-            center = Vector(WHEEL_RIGHT_INTERIM_X_MM, WHEEL_RIGHT_INTERIM_Y_MM, WHEEL_RIGHT_INTERIM_Z_MM)
-            shape = Part.makeCylinder(radius, width, Vector(0.0, -width / 2.0, 0.0), Vector(0.0, 1.0, 0.0))
-
-            old_volume = wr.Shape.Volume
-            old_triangles = self._tessellate_triangle_count(wr.Shape)
-
-            wr.Shape = shape
-            wr.Placement = Placement(center, Rotation())
-
-            triangles = self._tessellate_triangle_count(shape)
-            self.total_volume_mm3 += shape.Volume - old_volume
-            self.new_primitive_triangle_count += triangles - old_triangles
-
-            for record in self.links:
-                if record.name == "Wheel_Right":
-                    record.dimensions_mm = {
-                        "diameter_mm": radius * 2.0, "radius_mm": radius, "width_mm": width,
-                    }
-                    record.placement = _placement_to_dict(wr.Placement)
-                    record.bounding_box_mm = _bbox_to_dict(shape.BoundBox)
-                    record.volume_mm3 = round(shape.Volume, 4)
-                    record.triangle_count = triangles
-                    record.notes = (
-                        "Interim placeholder (human-tuned live, fixed position) -- "
-                        "no mirrored Pendulum_Link_Right to mount on yet; revisit once "
-                        "that exists."
-                    )
-                    break
-
-            print(f"✓ Wheel_Right: interim placeholder, radius={radius} mm, "
-                  f"width={width} mm, center={center}")
-            return True
-        except Exception as e:
-            print(f"ERROR positioning Wheel_Right: {e}")
             return False
 
     def _position_base_link_under_pendulum(self) -> bool:
@@ -1130,21 +1270,27 @@ class BodyWheelsGenerator:
             return False
         print()
 
+        print("Building Pendulum_Link_Right...")
+        print("-" * 70)
+        if not self.build_pendulum_link_right():
+            return False
+        print()
+
         print("Re-mounting Wheel_Left on Pendulum_Link's Bottom_Plate...")
         print("-" * 70)
         if not self._mount_wheel_on_pendulum_plate("Wheel_Left"):
             return False
         print()
 
-        print("Repositioning Base_Link under Pendulum_Link/STS3032_Mount...")
+        print("Re-mounting Wheel_Right on Pendulum_Link_Right's Bottom_Plate_Right...")
         print("-" * 70)
-        if not self._position_base_link_under_pendulum():
+        if not self._mount_wheel_on_pendulum_plate("Wheel_Right", self.bottom_plate_right_name):
             return False
         print()
 
-        print("Positioning Wheel_Right (interim placeholder)...")
+        print("Repositioning Base_Link under Pendulum_Link/STS3032_Mount...")
         print("-" * 70)
-        if not self._position_wheel_right_interim():
+        if not self._position_base_link_under_pendulum():
             return False
         print()
 
