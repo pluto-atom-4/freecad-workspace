@@ -75,9 +75,9 @@ Pendulum_Link's Bottom_Plate mounting hole instead of the old
 body-centerline placement (see _mount_wheel_on_pendulum_plate()), and
 Base_Link is now a flat plate (BASE_LINK_PLATE_THICKNESS_MM thick,
 BASE_LINK_LENGTH_MM long) instead of a solid chassis.height_mm-tall box
-(see build_base_link()), and repositioned flush with Bottom_Plate's top
-face -- a deck plate at the pivot/servo level -- instead of floating near
-the ground at CHASSIS_GROUND_CLEARANCE_MM (see
+(see build_base_link()), and repositioned near Bottom_Plate's top face --
+a deck plate at the pivot/servo level -- instead of floating near the
+ground at CHASSIS_GROUND_CLEARANCE_MM (see
 _position_base_link_under_pendulum(); a human fine-tuned this live in the
 FreeCAD GUI, ported back here). Wheel_Right
 is NOT part of this redesign yet -- it has no mirrored Pendulum_Link_Right
@@ -199,6 +199,16 @@ BASE_LINK_PLATE_THICKNESS_MM = 2.5
 # robot_parameters.yaml's chassis.length_mm (120mm) to 40mm -- width_mm
 # (Y dimension, 80mm) still comes from robot_parameters.yaml, unchanged.
 BASE_LINK_LENGTH_MM = 40.0
+
+# Redesign follow-up: Base_Link's final position, human-tuned live in the
+# FreeCAD GUI then ported back here -- Y is a fixed absolute value (not
+# centered on Bottom_Plate's own Y center anymore), and Z is nudged
+# BASE_LINK_Z_NUDGE_MM below flush-with-Bottom_Plate's-top (a small
+# negative value embeds it slightly into Bottom_Plate rather than leaving
+# a hairline gap). X stays centered on Bottom_Plate's own X center --
+# see _position_base_link_under_pendulum().
+BASE_LINK_Y_POSITION_MM = 19.00
+BASE_LINK_Z_NUDGE_MM = -0.2
 
 
 @dataclass
@@ -665,16 +675,21 @@ class BodyWheelsGenerator:
 
     def _position_base_link_under_pendulum(self) -> bool:
         """Redesign follow-up (Issue #9, live-bridge probe, then manually
-        fine-tuned live and ported back here): reposition Base_Link
-        (translate only, same plate shape) so its top face sits flush
-        against Bottom_Plate's own top face, centered under Bottom_Plate's
-        X/Y center -- a deck plate resting on top of Bottom_Plate, right at
-        the pivot/servo level, instead of floating near the ground at
-        CHASSIS_GROUND_CLEARANCE_MM or under the assembly's overall lowest
-        point (an earlier version of this method targeted that; a human
-        manually repositioning it live in the FreeCAD GUI settled on this
-        flush-with-Bottom_Plate's-top arrangement instead, confirmed
-        visually as the intended one).
+        fine-tuned live twice and ported back here): reposition Base_Link
+        (translate only, same plate shape) to a deck-plate position near
+        Bottom_Plate's top, at the pivot/servo level, instead of floating
+        near the ground at CHASSIS_GROUND_CLEARANCE_MM or under the
+        assembly's overall lowest point (earlier versions of this method
+        targeted those instead).
+
+        X stays centered on Bottom_Plate's own X center. Y is a fixed
+        absolute value (BASE_LINK_Y_POSITION_MM), not centered on
+        Bottom_Plate's Y anymore -- a human moved it there live and judged
+        it correct. Z is Bottom_Plate's own top face plus
+        BASE_LINK_Z_NUDGE_MM (a small negative nudge, embedding Base_Link
+        slightly into Bottom_Plate rather than leaving a hairline gap) --
+        also a human live-tuned value, not derived from any other
+        geometry.
 
         Must run after build_pendulum_link() (needs Bottom_Plate's final
         global placement). Independent of _mount_wheel_on_pendulum_plate()
@@ -699,8 +714,8 @@ class BodyWheelsGenerator:
             bp_bbox = raw_local.BoundBox.transformed(bottom_plate.getGlobalPlacement().toMatrix())
 
             target_center_x = (bp_bbox.XMin + bp_bbox.XMax) / 2.0
-            target_center_y = (bp_bbox.YMin + bp_bbox.YMax) / 2.0
-            target_top_z = bp_bbox.ZMax
+            target_center_y = BASE_LINK_Y_POSITION_MM
+            target_top_z = bp_bbox.ZMax + BASE_LINK_Z_NUDGE_MM
 
             local_bbox = base_link.Shape.BoundBox
             current_center_x = (local_bbox.XMin + local_bbox.XMax) / 2.0
@@ -725,12 +740,14 @@ class BodyWheelsGenerator:
                     record.bounding_box_mm = _bbox_to_dict(base_link.Shape.BoundBox)
                     record.notes = (
                         (record.notes + " " if record.notes else "")
-                        + f"Repositioned flush with Bottom_Plate's top (Z={target_top_z:.2f}mm) "
-                        "instead of CHASSIS_GROUND_CLEARANCE_MM above the ground plane."
+                        + f"Repositioned near Bottom_Plate's top (Z={target_top_z:.2f}mm, "
+                        f"Bottom_Plate top + {BASE_LINK_Z_NUDGE_MM}mm), Y={target_center_y}mm "
+                        "(human-tuned, fixed) -- instead of CHASSIS_GROUND_CLEARANCE_MM "
+                        "above the ground plane."
                     )
                     break
 
-            print(f"✓ Base_Link: repositioned flush with Bottom_Plate's top, "
+            print(f"✓ Base_Link: repositioned near Bottom_Plate's top, "
                   f"top Z={target_top_z:.2f} mm, center=({target_center_x:.2f}, "
                   f"{target_center_y:.2f})")
             return True

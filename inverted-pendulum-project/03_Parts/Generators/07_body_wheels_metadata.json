@@ -1,7 +1,7 @@
 {
   "phase": 7,
   "title": "Stage 1: Body + Wheel Geometry",
-  "timestamp": "2026-09-09T13:11:30.570834",
+  "timestamp": "2026-09-09T13:31:34.326571",
   "issue": 9,
   "source_document": "plates_servo_assembled.FCStd",
   "output_document": "robot_body_wheels.FCStd",
@@ -18,8 +18,8 @@
       "placement": {
         "position": {
           "x": -4.9914,
-          "y": -21.2758,
-          "z": 78.531
+          "y": 19.0,
+          "z": 78.331
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
@@ -30,15 +30,15 @@
       "bounding_box_mm": {
         "x_min": -24.9914,
         "x_max": 15.0086,
-        "y_min": -61.2758,
-        "y_max": 18.7242,
-        "z_min": 88.531,
-        "z_max": 91.031
+        "y_min": -21.0,
+        "y_max": 59.0,
+        "z_min": 88.331,
+        "z_max": 90.831
       },
       "volume_mm3": 8000.0,
       "target_mass_kg": 0.25,
       "triangle_count": 12,
-      "notes": "Redesigned as a flat plate (was a solid chassis.length_mm=120.0mm x chassis.height_mm=40.0mm box) -- length is now BASE_LINK_LENGTH_MM and thickness is now BASE_LINK_PLATE_THICKNESS_MM, not robot_parameters.yaml's chassis.length_mm/chassis.height_mm. Repositioned flush with Bottom_Plate's top (Z=91.03mm) instead of CHASSIS_GROUND_CLEARANCE_MM above the ground plane."
+      "notes": "Redesigned as a flat plate (was a solid chassis.length_mm=120.0mm x chassis.height_mm=40.0mm box) -- length is now BASE_LINK_LENGTH_MM and thickness is now BASE_LINK_PLATE_THICKNESS_MM, not robot_parameters.yaml's chassis.length_mm/chassis.height_mm. Repositioned near Bottom_Plate's top (Z=90.83mm, Bottom_Plate top + -0.2mm), Y=19.0mm (human-tuned, fixed) -- instead of CHASSIS_GROUND_CLEARANCE_MM above the ground plane."
     },
     "Wheel_Left": {
       "name": "Wheel_Left",
@@ -181,17 +181,17 @@
     {
       "check": "Ground clearance (chassis above Z=0, wheels resting on Z=0)",
       "passed": true,
-      "details": "Base_Link bottom Z=88.53 mm, wheel bottom Z=0.00 mm"
+      "details": "Base_Link bottom Z=88.33 mm, wheel bottom Z=0.00 mm"
     },
     {
       "check": "No Base_Link / wheel interpenetration",
       "passed": false,
-      "details": "Base_Link Y=[-61.28,18.72], Wheel_Left Y=[-31.53,-25.53], Wheel_Right Y=[47.50,62.50]"
+      "details": "Base_Link Y=[-21.00,59.00], Wheel_Left Y=[-31.53,-25.53], Wheel_Right Y=[47.50,62.50]"
     },
     {
       "check": "Pendulum_Link positioned above Base_Link",
       "passed": false,
-      "details": "PlateStack global bottom Z=49.01 mm vs Base_Link top Z=91.03 mm"
+      "details": "PlateStack global bottom Z=49.01 mm vs Base_Link top Z=90.83 mm"
     },
     {
       "check": "New primitive geometry under triangle budget",
