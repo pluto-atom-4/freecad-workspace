@@ -201,15 +201,19 @@ BASE_LINK_PLATE_THICKNESS_MM = 2.5
 BASE_LINK_LENGTH_MM = 40.0
 
 # Redesign follow-up: Base_Link's final position, human-tuned live in the
-# FreeCAD GUI (three separate passes) then ported back here -- X and Y are
+# FreeCAD GUI (four separate passes) then ported back here -- X and Y are
 # both fixed absolute values now (neither centered on Bottom_Plate
 # anymore), and Z is nudged BASE_LINK_Z_NUDGE_MM below
-# flush-with-Bottom_Plate's-top (a small negative value embeds it slightly
-# into Bottom_Plate rather than leaving a hairline gap). See
+# flush-with-Bottom_Plate's-top. The nudge was widened from -0.2 to -0.6mm
+# after inspecting real collision state (Part.Shape.common(), not just
+# distToShape/bbox overlap): -0.2 left Base_Link genuinely interpenetrating
+# the servo's feetech_STS3032_collision_proxy mesh by ~216mm^3 (a thin
+# ~0.28mm Z-sliver, full X/Y overlap) -- -0.6mm clears it with a real
+# 0.11mm gap (verified via Part.Shape.common().Volume == 0). See
 # _position_base_link_under_pendulum().
 BASE_LINK_X_POSITION_MM = 15.40
 BASE_LINK_Y_POSITION_MM = 19.00
-BASE_LINK_Z_NUDGE_MM = -0.2
+BASE_LINK_Z_NUDGE_MM = -0.6
 
 
 @dataclass
