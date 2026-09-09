@@ -20,7 +20,7 @@ and enable parametric updates without re-linking.
 | 2 — Alignment calc | `02_position_servo.py` + `test_02_servo_position.py` | `servo_placement.json` | ✅ |
 | 3 — Assembly link | `03_link_servo_to_assembly.py` | `plates_servo_assembled.FCStd`, `servo_link_config.json` | ✅ |
 | 4 — Export artifacts | `04_export_assembly_merged.py` | `plates_assembled_with_servo.{step,stl}`, `export_metadata.json` | ✅ |
-| 7 — Body+wheels (Issue #9) | `07_create_body_and_wheels.py` | `robot_body_wheels.FCStd`, `07_body_wheels_metadata.json` | ✅ (PR #52) |
+| 7 — Body+wheels (Issue #9) | `07_create_body_and_wheels.py` | `robot_body_wheels.FCStd`, `07_body_wheels_metadata.json` | 🔄 redesign in progress on `feat/issue-9-stage1-body-wheels` (see PR #52) |
 
 > **Note (issue #22):** Phase 2's `servo_placement.json` clearance check is Z-only and ignores
 > each plate's independent rotation — it originally misreported Bottom_Plate's clearance as
@@ -62,6 +62,9 @@ python3 03_Parts/Generators/01_convert_servo_stl_to_step.py
 | Live bridge's `get_screenshot`/`inspect_object` (App::Part) broken (`freecad-mcp-workbench` 0.6.2) | No built-in screenshot/inspect for App::Part | See root `CLAUDE.md`'s "FreeCAD Live Bridge" section for workarounds |
 | Visibility/camera are GUI-only state | A headless-generated `.FCStd` opens with objects invisible, no useful viewpoint | Guard visibility/camera code with `if not getattr(App, "GuiUp", False): return` (see `07_create_body_and_wheels.py`) |
 | Bridge's `execute_python(code="exec(open(path).read())")` doesn't fire a script's `__main__` guard (`__name__` is `"builtins"` there) | Running a generator through the bridge this way silently does nothing | Exec with explicit globals forcing `__name__='__main__'` — see root `CLAUDE.md`'s "FreeCAD Live Bridge" section for the exact snippet; this is the only way to get a fully-viewable `.FCStd` (visibility + camera baked in) |
+| A `Mesh::Feature`'s own `Placement` is ignored when nested in an `App::Part` | Composing it manually (as for `Part::Feature`) puts the mesh far from where it actually renders | Only the parent container's `getGlobalPlacement()` applied to the raw `.Mesh` data matches the render — see root `CLAUDE.md` |
+| `Mesh.transform()` with a reflection matrix can silently produce wrongly-offset geometry | A true mirror of a servo mesh landed with one coordinate shifted by an unexplained, large offset | Mirror via raw point data instead (negate a coordinate, reverse facet winding, rebuild the mesh) — see root `CLAUDE.md` |
+| `distToShape() == 0` doesn't distinguish touching from overlapping | A "0mm clearance" collision check can be a false alarm or a false pass | Use `shape_a.common(shape_b).Volume` for a definitive check |
 
 ## Related Work
 
@@ -70,6 +73,16 @@ pipeline's `plates_servo_assembled.FCStd` — not a new phase of the servo-integ
 A human review of that Stage 1 artifact found it didn't match what was pictured, despite passing
 every dimensional/structural check — see Issue #53 before starting Stage 2+ or any other new
 FreeCAD generation work here.
+
+Following that review, `07_create_body_and_wheels.py` is being redesigned iteratively on
+`feat/issue-9-stage1-body-wheels`: `Base_Link` is now a flat plate (not a solid box);
+`Wheel_Left`/`Wheel_Right` each mount on their own `Bottom_Plate`'s real mounting hole instead of
+a body-centerline formula; `Pendulum_Link` tilts 90° so its plates stand parallel to the wheels;
+`Pendulum_Link_Right` exists as a full second copy, built from literal constants rather than a
+geometric mirror (a true reflection mirror hit the `Mesh.transform()` bug above). The working
+pattern throughout: a human transforms objects live via the FreeCAD MCP bridge, values get
+verified for real collisions (`Part.Shape.common()`, not just distance), then get ported into the
+script as named constants with a note on where they came from — not re-derived from a formula.
 
 ## References
 

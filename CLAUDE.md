@@ -112,6 +112,19 @@ ad-hoc human-review aid (its own pipeline stays headless-only). Found while doin
   that context is `"builtins"`, not `"__main__"`, so the script's `if __name__ == "__main__":`
   guard never runs. Force it explicitly:
   `exec(compile(open(path).read(), path, 'exec'), {'__name__': '__main__', '__file__': path})`.
+- **A `Mesh::Feature`'s own `Placement` is ignored when nested in an `App::Part`** — only the
+  immediate parent container's `getGlobalPlacement()` applied directly to its raw `.Mesh` data
+  matches what actually renders (verified by isolating one mesh + one plate, comparing to a
+  screenshot). `Part::Feature` follows the normal convention (own `Placement` composes
+  normally); only `Mesh::Feature` has this quirk. Not fully explained, but reproducible.
+- **`Mesh.transform()` with a reflection matrix (e.g. `Matrix().scale(-1,1,1)`) can silently
+  produce wrongly-offset geometry** on some meshes (observed: one coordinate shifted by a large,
+  consistent, unexplained amount) — a real bug, not a math error. Mirror via raw point data
+  instead: negate the coordinate on every vertex from `mesh.Topology`, reverse each facet's
+  vertex order to fix normals, rebuild with `Mesh.Mesh((points, facets))`.
+- **`distToShape() == 0` doesn't distinguish touching from overlapping** — for a real collision
+  check, use `shape_a.common(shape_b).Volume`; nonzero means genuine interpenetration, zero means
+  clear (even if `distToShape` also read 0).
 
 ## References
 

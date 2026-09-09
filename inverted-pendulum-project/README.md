@@ -83,6 +83,9 @@ script can be run once through the separate live FreeCAD MCP bridge (not part of
 pipeline) to produce a `.FCStd` with visibility + camera framing actually baked in for visual
 review — see root `CLAUDE.md`'s "FreeCAD Live Bridge" section for the exact invocation and known
 caveats (dimensional checks read slightly off under a live GUI; validate headlessly instead).
+The same bridge also doubles as a design-iteration tool: a human transforms objects live, values
+get checked for real collisions, then get ported into the generator script as named constants
+(see Issue #9's Stage 1 redesign in `DESIGN.md` for a worked example).
 
 ### Phase 1: Convert servo STL to STEP
 
