@@ -70,14 +70,15 @@ validate dimensions against a true headless run; see root CLAUDE.md's
 
 Redesign follow-up (Issue #9, live-bridge probe after PR #52) -- IN PROGRESS,
 ONE-SIDED: Pendulum_Link is tilted 90 deg (PENDULUM_LINK_TILT_DEG) so its
-plate faces stand parallel to the wheel discs, and Wheel_Left is re-mounted
-on Pendulum_Link's Bottom_Plate mounting hole instead of the old
-body-centerline placement (see _mount_wheel_on_pendulum_plate()). Base_Link
-and Wheel_Right are NOT part of this redesign yet -- Base_Link's role
-(chassis box vs. removed entirely) is still undecided, and Wheel_Right has
-no mirrored Pendulum_Link_Right to mount on. Both are hidden by
-_set_default_visibility() rather than shown stale/disconnected. Expect
-validate()'s track-width-symmetry, wheel-Z-match, and
+plate faces stand parallel to the wheel discs, Wheel_Left is re-mounted on
+Pendulum_Link's Bottom_Plate mounting hole instead of the old
+body-centerline placement (see _mount_wheel_on_pendulum_plate()), and
+Base_Link is now a flat plate (BASE_LINK_PLATE_THICKNESS_MM thick) instead
+of a solid chassis.height_mm-tall box (see build_base_link()). Wheel_Right
+is NOT part of this redesign yet -- it has no mirrored Pendulum_Link_Right
+to mount on, so it keeps its original body-centerline geometry and is
+hidden by _set_default_visibility() rather than shown stale/disconnected.
+Expect validate()'s track-width-symmetry, wheel-Z-match, and
 no-interpenetration checks to FAIL under a GUI run until the mirrored right
 side is implemented -- that is a known, transitional state, not a bug; see
 root CLAUDE.md / DESIGN.md for the open decisions.
@@ -178,6 +179,13 @@ WHEEL_ON_PLATE_RADIUS_MM = 15.0
 WHEEL_ON_PLATE_WIDTH_MM = 6.0
 WHEEL_ON_PLATE_CLEARANCE_OFFSET_MM = 6.0
 WHEEL_ON_PLATE_HOLE_EDGE = "Edge27"
+
+# Redesign follow-up: Base_Link becomes a flat plate instead of a solid
+# chassis box (footprint still from robot_parameters.yaml's chassis.length_mm/
+# width_mm, but thickness no longer chassis.height_mm) -- matches this
+# project's existing Top_Plate/Middle_Plate/Bottom_Plate thickness
+# convention (2.5mm, empirically confirmed via their own Shape.BoundBox).
+BASE_LINK_PLATE_THICKNESS_MM = 2.5
 
 
 @dataclass
@@ -299,22 +307,31 @@ class BodyWheelsGenerator:
     # ---------------------------------------------------------------
 
     def build_base_link(self) -> bool:
-        """Create Base_Link: a chassis box sized from robot_parameters.yaml,
-        centered on X/Y at the origin, bottom face CHASSIS_GROUND_CLEARANCE_MM
-        above the Z=0 ground plane."""
+        """Create Base_Link: a flat plate (BASE_LINK_PLATE_THICKNESS_MM
+        thick), footprint from robot_parameters.yaml's chassis.length_mm/
+        width_mm, centered on X/Y at the origin, bottom face
+        CHASSIS_GROUND_CLEARANCE_MM above the Z=0 ground plane.
+
+        Redesign follow-up (Issue #9, live-bridge probe after PR #52):
+        originally a solid chassis.height_mm-tall box (a human review found
+        it didn't match the "enclosure" the plan called for). Now a thin
+        plate instead -- footprint unchanged, thickness no longer
+        chassis.height_mm (see BASE_LINK_PLATE_THICKNESS_MM's comment for
+        why: matches the existing Top/Middle/Bottom_Plate convention)."""
         try:
             chassis = self.params.chassis
-            length, width, height = chassis.length_mm, chassis.width_mm, chassis.height_mm
+            length, width = chassis.length_mm, chassis.width_mm
+            thickness = BASE_LINK_PLATE_THICKNESS_MM
 
             bottom_z = CHASSIS_GROUND_CLEARANCE_MM
             base_pnt = Vector(-length / 2.0, -width / 2.0, bottom_z)
-            shape = Part.makeBox(length, width, height, base_pnt)
+            shape = Part.makeBox(length, width, thickness, base_pnt)
 
             obj = self.output_doc.addObject("Part::Feature", "Base_Link")
             obj.Label = "Base_Link"
             obj.Shape = shape
 
-            self._chassis_top_z = bottom_z + height
+            self._chassis_top_z = bottom_z + thickness
             self._chassis_bottom_z = bottom_z
 
             triangles = self._tessellate_triangle_count(shape)
@@ -323,16 +340,22 @@ class BodyWheelsGenerator:
 
             self.links.append(LinkRecord(
                 name="Base_Link",
-                kind="primitive_box",
-                dimensions_mm={"length_mm": length, "width_mm": width, "height_mm": height},
+                kind="primitive_plate",
+                dimensions_mm={"length_mm": length, "width_mm": width, "thickness_mm": thickness},
                 placement=_placement_to_dict(obj.Placement),
                 bounding_box_mm=_bbox_to_dict(shape.BoundBox),
                 volume_mm3=round(shape.Volume, 4),
                 target_mass_kg=self.params.target_mass_for_link_kg("Base_Link"),
                 triangle_count=triangles,
+                notes=(
+                    "Redesigned as a flat plate (was a solid "
+                    f"chassis.height_mm={chassis.height_mm}mm box) -- "
+                    "thickness is now BASE_LINK_PLATE_THICKNESS_MM, not "
+                    "robot_parameters.yaml's chassis.height_mm."
+                ),
             ))
 
-            print(f"✓ Base_Link: {length}x{width}x{height} mm, "
+            print(f"✓ Base_Link: {length}x{width}x{thickness} mm plate, "
                   f"bottom Z={bottom_z} mm, volume={shape.Volume:.2f} mm^3, "
                   f"{triangles} triangles")
             return True
@@ -647,18 +670,20 @@ class BodyWheelsGenerator:
                     else "One or more required objects missing",
         ))
 
-        # Chassis dimensions match robot_parameters.yaml
+        # Base_Link plate dimensions: footprint from robot_parameters.yaml,
+        # thickness from BASE_LINK_PLATE_THICKNESS_MM (not chassis.height_mm
+        # -- see build_base_link()'s redesign note).
         bbox = base_link.Shape.BoundBox
         chassis_ok = (
             abs(bbox.XLength - chassis.length_mm) < 0.01
             and abs(bbox.YLength - chassis.width_mm) < 0.01
-            and abs(bbox.ZLength - chassis.height_mm) < 0.01
+            and abs(bbox.ZLength - BASE_LINK_PLATE_THICKNESS_MM) < 0.01
         )
         self.validations.append(ValidationResult(
-            check_name="Base_Link dimensions match robot_parameters.yaml",
+            check_name="Base_Link plate dimensions",
             passed=chassis_ok,
             details=f"BBox {bbox.XLength:.2f}x{bbox.YLength:.2f}x{bbox.ZLength:.2f} mm vs "
-                    f"expected {chassis.length_mm}x{chassis.width_mm}x{chassis.height_mm} mm",
+                    f"expected {chassis.length_mm}x{chassis.width_mm}x{BASE_LINK_PLATE_THICKNESS_MM} mm",
         ))
 
         # Wheel dimensions
@@ -791,17 +816,15 @@ class BodyWheelsGenerator:
             if view_obj is not None:
                 view_obj.Visibility = True
 
-        # Redesign follow-up (Issue #9, live-bridge probe): Base_Link's
-        # chassis-box role is undecided (wheel mounting moved to
-        # Pendulum_Link's Bottom_Plate -- see _mount_wheel_on_pendulum_plate())
-        # and Wheel_Right has no mirrored counterpart to mount on yet. Hide
-        # both rather than show a disconnected stale wheel and an unused
-        # chassis box. Matches the live-bridge-verified working state.
-        for name in ("Base_Link", "Wheel_Right"):
-            obj = self.output_doc.getObject(name)
-            view_obj = getattr(obj, "ViewObject", None) if obj is not None else None
-            if view_obj is not None:
-                view_obj.Visibility = False
+        # Redesign follow-up (Issue #9, live-bridge probe): Wheel_Right has
+        # no mirrored Pendulum_Link_Right/hole to mount on yet (tracked as
+        # follow-up work) -- hide it rather than show it floating, stale
+        # and disconnected, at its old body-centerline position. Base_Link
+        # (now a plate, see build_base_link()) stays visible.
+        wheel_right = self.output_doc.getObject("Wheel_Right")
+        view_obj = getattr(wheel_right, "ViewObject", None) if wheel_right is not None else None
+        if view_obj is not None:
+            view_obj.Visibility = False
 
     def _set_camera_framing(self) -> None:
         """Frame the 3D view on the whole assembly (isometric + fit-all)

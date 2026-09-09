@@ -1,7 +1,7 @@
 {
   "phase": 7,
   "title": "Stage 1: Body + Wheel Geometry",
-  "timestamp": "2026-09-09T12:41:55.289356",
+  "timestamp": "2026-09-09T12:46:26.114459",
   "issue": 9,
   "source_document": "plates_servo_assembled.FCStd",
   "output_document": "robot_body_wheels.FCStd",
@@ -9,11 +9,11 @@
   "links": {
     "Base_Link": {
       "name": "Base_Link",
-      "kind": "primitive_box",
+      "kind": "primitive_plate",
       "dimensions_mm": {
         "length_mm": 120.0,
         "width_mm": 80.0,
-        "height_mm": 40.0
+        "thickness_mm": 2.5
       },
       "placement": {
         "position": {
@@ -33,11 +33,12 @@
         "y_min": -40.0,
         "y_max": 40.0,
         "z_min": 10.0,
-        "z_max": 50.0
+        "z_max": 12.5
       },
-      "volume_mm3": 384000.0,
+      "volume_mm3": 24000.0,
       "target_mass_kg": 0.25,
-      "triangle_count": 12
+      "triangle_count": 12,
+      "notes": "Redesigned as a flat plate (was a solid chassis.height_mm=40.0mm box) -- thickness is now BASE_LINK_PLATE_THICKNESS_MM, not robot_parameters.yaml's chassis.height_mm."
     },
     "Wheel_Left": {
       "name": "Wheel_Left",
@@ -51,7 +52,7 @@
         "position": {
           "x": 15.0007,
           "y": -28.5258,
-          "z": 91.5095
+          "z": 54.0095
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
@@ -70,7 +71,7 @@
       "volume_mm3": 4241.1501,
       "target_mass_kg": 0.03,
       "triangle_count": 100,
-      "notes": "Re-mounted on Bottom_Plate's Edge27 hole (hole_center=(15.001, -22.526, 91.509)), offset 6.0mm along -Y (measured 3.0mm clearance from PlateStack/STS3032_Mount, live-bridge verified)"
+      "notes": "Re-mounted on Bottom_Plate's Edge27 hole (hole_center=(15.001, -22.526, 54.009)), offset 6.0mm along -Y (measured 3.0mm clearance from PlateStack/STS3032_Mount, live-bridge verified)"
     },
     "Wheel_Right": {
       "name": "Wheel_Right",
@@ -116,7 +117,7 @@
         "position": {
           "x": -8.0014,
           "y": -18.2758,
-          "z": 108.25
+          "z": 70.75
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
@@ -129,8 +130,8 @@
         "x_max": 29.9919,
         "y_min": -25.5258,
         "y_max": -20.0258,
-        "z_min": 86.5095,
-        "z_max": 166.5421
+        "z_min": 49.0095,
+        "z_max": 129.0421
       },
       "volume_mm3": 3863.4369,
       "target_mass_kg": 0.12,
@@ -146,7 +147,7 @@
       "feetech_STS3032_collision_proxy": 188
     },
     "reused_pendulum_mesh_note": "Inherited from Issue #3 (plates_servo_assembled.FCStd), not new Stage 1 geometry. Excluded from the <5000-triangle budget check above: per Issue #9 Decision #10, the servo's simulation <collision> geometry is emitted as URDF primitives (box + cylinder) in Stage 4, not this mesh -- this high-fidelity mesh is a visual-only asset.",
-    "total_volume_mm3": 464810.0378,
+    "total_volume_mm3": 104810.0378,
     "total_volume_note": "Sum of Base_Link + Wheel_Left + Wheel_Right + copied PlateStack plate volumes + (where watertight) copied STS3032_Mount mesh volumes. For Stage 3's future sanity check (Issue #9 Decision #12) against Phase 4's export_metadata.json geometry_stats.volume_mm3 figure (22708.46 mm^3 for plates+servo only, no wheels/chassis) -- NOT expected to match exactly once wheel/chassis volume is included; informational only."
   },
   "validations": [
@@ -156,9 +157,9 @@
       "details": "Base_Link, Wheel_Left, Wheel_Right, Pendulum_Link all found"
     },
     {
-      "check": "Base_Link dimensions match robot_parameters.yaml",
+      "check": "Base_Link plate dimensions",
       "passed": true,
-      "details": "BBox 120.00x80.00x40.00 mm vs expected 120.0x80.0x40.0 mm"
+      "details": "BBox 120.00x80.00x2.50 mm vs expected 120.0x80.0x2.5 mm"
     },
     {
       "check": "Wheel_Left dimensions match robot_parameters.yaml",
@@ -175,7 +176,7 @@
     {
       "check": "Wheels share identical Z placement",
       "passed": false,
-      "details": "Wheel_Left Z=[76.51,106.51], Wheel_Right Z=[0.00,70.00]"
+      "details": "Wheel_Left Z=[39.01,69.01], Wheel_Right Z=[0.00,70.00]"
     },
     {
       "check": "Ground clearance (chassis above Z=0, wheels resting on Z=0)",
@@ -190,7 +191,7 @@
     {
       "check": "Pendulum_Link positioned above Base_Link",
       "passed": true,
-      "details": "PlateStack global bottom Z=86.51 mm vs Base_Link top Z=50.00 mm"
+      "details": "PlateStack global bottom Z=49.01 mm vs Base_Link top Z=12.50 mm"
     },
     {
       "check": "New primitive geometry under triangle budget",
