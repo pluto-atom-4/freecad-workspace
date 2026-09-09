@@ -255,21 +255,29 @@ BASE_LINK_PLATE_THICKNESS_MM = 2.5
 BASE_LINK_LENGTH_MM = 40.0
 
 # Redesign follow-up: Base_Link's final position, human-tuned live in the
-# FreeCAD GUI (five separate passes) then ported back here -- X and Y are
+# FreeCAD GUI (six separate passes) then ported back here -- X and Y are
 # both fixed absolute values now (neither centered on Bottom_Plate
 # anymore), and Z is nudged BASE_LINK_Z_NUDGE_MM below
-# flush-with-Bottom_Plate's-top. The nudge went -0.2 -> -0.6mm after
-# inspecting real collision state (Part.Shape.common(), not just
-# distToShape/bbox overlap): -0.2 left Base_Link genuinely interpenetrating
-# the servo's feetech_STS3032_collision_proxy mesh by ~216mm^3 (a thin
-# ~0.28mm Z-sliver, full X/Y overlap); -0.6mm cleared it with a real 0.11mm
-# gap (verified via Part.Shape.common().Volume == 0) -- then -> -10.6mm in
-# a later pass that widened the whole layout (still Part.Shape.common()
-# verified == 0 against both sides' servo meshes afterward). See
-# _position_base_link_under_pendulum().
+# flush-with-Bottom_Plate's-top. NOTE: "below flush" here means
+# target_top_z = bp_bbox.ZMax + nudge, and Base_Link's actual
+# Placement.Base.z = target_top_z - 12.5 (12.5 = Base_Link's own as-built
+# local ZMax, i.e. CHASSIS_GROUND_CLEARANCE_MM + BASE_LINK_PLATE_THICKNESS_MM)
+# -- NOT target_top_z - thickness alone. An earlier version of this
+# comment/derivation used that wrong shortcut, which shipped a real 10mm
+# error in a "widen the layout" pass (nudge -0.6 -> -10.6mm, intended to
+# reproduce a human-verified Placement.Base.z=77.9mm but actually produced
+# 67.9mm for a while -- caught and fixed when asked to set Base_Link's Z
+# to a specific value and the metadata didn't match). The nudge history:
+# -0.2 -> -0.6mm after inspecting real collision state (Part.Shape.common(),
+# not just distToShape/bbox overlap): -0.2 left Base_Link genuinely
+# interpenetrating the servo's feetech_STS3032_collision_proxy mesh by
+# ~216mm^3 (a thin ~0.28mm Z-sliver, full X/Y overlap); -0.6mm cleared it
+# with a real 0.11mm gap (verified via Part.Shape.common().Volume == 0) --
+# then -> -0.631mm to hit Placement.Base.z=77.9mm exactly, per the
+# corrected formula above. See _position_base_link_under_pendulum().
 BASE_LINK_X_POSITION_MM = 15.40
 BASE_LINK_Y_POSITION_MM = 19.00
-BASE_LINK_Z_NUDGE_MM = -10.6
+BASE_LINK_Z_NUDGE_MM = -0.631
 
 
 @dataclass
@@ -949,11 +957,16 @@ class BodyWheelsGenerator:
         X and Y are both fixed absolute values now (BASE_LINK_X_POSITION_MM/
         BASE_LINK_Y_POSITION_MM), not centered on Bottom_Plate anymore -- a
         human moved it there live, across separate passes, and judged each
-        one correct. Z is Bottom_Plate's own top face plus
+        one correct. Z targets Bottom_Plate's own top face plus
         BASE_LINK_Z_NUDGE_MM (a small negative nudge, embedding Base_Link
         slightly into Bottom_Plate rather than leaving a hairline gap) --
         also a human live-tuned value, not derived from any other
-        geometry.
+        geometry. NOTE: the resulting Base_Link.Placement.Base.z is NOT
+        target_top_z minus the plate's thickness -- it's target_top_z
+        minus Base_Link's own as-built local Shape.BoundBox.ZMax (12.5mm:
+        CHASSIS_GROUND_CLEARANCE_MM + BASE_LINK_PLATE_THICKNESS_MM), since
+        `delta.z` below is computed against that local bbox, not zero. See
+        BASE_LINK_Z_NUDGE_MM's comment for a real bug this once caused.
 
         Must run after build_pendulum_link() (needs Bottom_Plate's final
         global placement). Independent of _mount_wheel_on_pendulum_plate()
