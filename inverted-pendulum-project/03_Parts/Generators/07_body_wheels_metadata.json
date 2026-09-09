@@ -1,7 +1,7 @@
 {
   "phase": 7,
   "title": "Stage 1: Body + Wheel Geometry",
-  "timestamp": "2026-09-09T13:31:34.326571",
+  "timestamp": "2026-09-09T13:34:26.444870",
   "issue": 9,
   "source_document": "plates_servo_assembled.FCStd",
   "output_document": "robot_body_wheels.FCStd",
@@ -17,7 +17,7 @@
       },
       "placement": {
         "position": {
-          "x": -4.9914,
+          "x": 15.4,
           "y": 19.0,
           "z": 78.331
         },
@@ -28,8 +28,8 @@
         }
       },
       "bounding_box_mm": {
-        "x_min": -24.9914,
-        "x_max": 15.0086,
+        "x_min": -4.6,
+        "x_max": 35.4,
         "y_min": -21.0,
         "y_max": 59.0,
         "z_min": 88.331,
@@ -38,7 +38,7 @@
       "volume_mm3": 8000.0,
       "target_mass_kg": 0.25,
       "triangle_count": 12,
-      "notes": "Redesigned as a flat plate (was a solid chassis.length_mm=120.0mm x chassis.height_mm=40.0mm box) -- length is now BASE_LINK_LENGTH_MM and thickness is now BASE_LINK_PLATE_THICKNESS_MM, not robot_parameters.yaml's chassis.length_mm/chassis.height_mm. Repositioned near Bottom_Plate's top (Z=90.83mm, Bottom_Plate top + -0.2mm), Y=19.0mm (human-tuned, fixed) -- instead of CHASSIS_GROUND_CLEARANCE_MM above the ground plane."
+      "notes": "Redesigned as a flat plate (was a solid chassis.length_mm=120.0mm x chassis.height_mm=40.0mm box) -- length is now BASE_LINK_LENGTH_MM and thickness is now BASE_LINK_PLATE_THICKNESS_MM, not robot_parameters.yaml's chassis.length_mm/chassis.height_mm. Repositioned near Bottom_Plate's top (Z=90.83mm, Bottom_Plate top + -0.2mm), X=15.4mm, Y=19.0mm (human-tuned, fixed) -- instead of CHASSIS_GROUND_CLEARANCE_MM above the ground plane."
     },
     "Wheel_Left": {
       "name": "Wheel_Left",

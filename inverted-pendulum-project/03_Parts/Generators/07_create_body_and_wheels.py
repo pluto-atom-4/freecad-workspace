@@ -201,12 +201,13 @@ BASE_LINK_PLATE_THICKNESS_MM = 2.5
 BASE_LINK_LENGTH_MM = 40.0
 
 # Redesign follow-up: Base_Link's final position, human-tuned live in the
-# FreeCAD GUI then ported back here -- Y is a fixed absolute value (not
-# centered on Bottom_Plate's own Y center anymore), and Z is nudged
-# BASE_LINK_Z_NUDGE_MM below flush-with-Bottom_Plate's-top (a small
-# negative value embeds it slightly into Bottom_Plate rather than leaving
-# a hairline gap). X stays centered on Bottom_Plate's own X center --
-# see _position_base_link_under_pendulum().
+# FreeCAD GUI (three separate passes) then ported back here -- X and Y are
+# both fixed absolute values now (neither centered on Bottom_Plate
+# anymore), and Z is nudged BASE_LINK_Z_NUDGE_MM below
+# flush-with-Bottom_Plate's-top (a small negative value embeds it slightly
+# into Bottom_Plate rather than leaving a hairline gap). See
+# _position_base_link_under_pendulum().
+BASE_LINK_X_POSITION_MM = 15.40
 BASE_LINK_Y_POSITION_MM = 19.00
 BASE_LINK_Z_NUDGE_MM = -0.2
 
@@ -682,10 +683,10 @@ class BodyWheelsGenerator:
         assembly's overall lowest point (earlier versions of this method
         targeted those instead).
 
-        X stays centered on Bottom_Plate's own X center. Y is a fixed
-        absolute value (BASE_LINK_Y_POSITION_MM), not centered on
-        Bottom_Plate's Y anymore -- a human moved it there live and judged
-        it correct. Z is Bottom_Plate's own top face plus
+        X and Y are both fixed absolute values now (BASE_LINK_X_POSITION_MM/
+        BASE_LINK_Y_POSITION_MM), not centered on Bottom_Plate anymore -- a
+        human moved it there live, across separate passes, and judged each
+        one correct. Z is Bottom_Plate's own top face plus
         BASE_LINK_Z_NUDGE_MM (a small negative nudge, embedding Base_Link
         slightly into Bottom_Plate rather than leaving a hairline gap) --
         also a human live-tuned value, not derived from any other
@@ -713,7 +714,7 @@ class BodyWheelsGenerator:
             raw_local = Part.getShape(bottom_plate, "", needSubElement=False, transform=False)
             bp_bbox = raw_local.BoundBox.transformed(bottom_plate.getGlobalPlacement().toMatrix())
 
-            target_center_x = (bp_bbox.XMin + bp_bbox.XMax) / 2.0
+            target_center_x = BASE_LINK_X_POSITION_MM
             target_center_y = BASE_LINK_Y_POSITION_MM
             target_top_z = bp_bbox.ZMax + BASE_LINK_Z_NUDGE_MM
 
@@ -741,9 +742,9 @@ class BodyWheelsGenerator:
                     record.notes = (
                         (record.notes + " " if record.notes else "")
                         + f"Repositioned near Bottom_Plate's top (Z={target_top_z:.2f}mm, "
-                        f"Bottom_Plate top + {BASE_LINK_Z_NUDGE_MM}mm), Y={target_center_y}mm "
-                        "(human-tuned, fixed) -- instead of CHASSIS_GROUND_CLEARANCE_MM "
-                        "above the ground plane."
+                        f"Bottom_Plate top + {BASE_LINK_Z_NUDGE_MM}mm), X={target_center_x}mm, "
+                        f"Y={target_center_y}mm (human-tuned, fixed) -- instead of "
+                        "CHASSIS_GROUND_CLEARANCE_MM above the ground plane."
                     )
                     break
 
