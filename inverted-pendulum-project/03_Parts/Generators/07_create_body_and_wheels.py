@@ -224,6 +224,25 @@ PENDULUM_LINK_RIGHT_MIDDLE_PLATE_Z_MM = 0.0
 PENDULUM_LINK_RIGHT_STS_MOUNT_POSITION_MM = (-1.0, 51.0, 6.0)
 PENDULUM_LINK_RIGHT_STS_MOUNT_TILT_DEG = 180.0
 
+# Redesign follow-up: Pendulum_Link_Right's container, human-tuned live a
+# second time (widening the layout) -- an additional (0, +44, -2.5)mm
+# translation on top of build_pendulum_link_right()'s own
+# centering-above-Base_Link + PENDULUM_LINK_TILT_DEG math, applied after
+# that math the same way BASE_LINK_Z_NUDGE_MM layers onto Base_Link's own
+# computed position below.
+PENDULUM_LINK_RIGHT_EXTRA_Y_MM = 44.0
+PENDULUM_LINK_RIGHT_EXTRA_Z_MM = -2.5
+
+# Redesign follow-up: Wheel_Right's hole-mount offset, human-tuned live a
+# second time -- NOT the same -Y offset WHEEL_ON_PLATE_CLEARANCE_OFFSET_MM
+# uses for Wheel_Left. After Pendulum_Link_Right's extra shift above, the
+# correct "away from the robot's centerline" direction for the right side
+# is +Y, not -Y (the two sides are on opposite sides of Y=0, so "away"
+# points opposite ways) -- exact value read back from the live-tuned
+# result via _mount_wheel_on_pendulum_plate()'s own hole-center math, not
+# estimated.
+WHEEL_RIGHT_HOLE_OFFSET_MM = (0.0, 9.0, -0.5)
+
 # Redesign follow-up: Base_Link becomes a flat plate instead of a solid
 # chassis box (thickness no longer chassis.height_mm) -- matches this
 # project's existing Top_Plate/Middle_Plate/Bottom_Plate thickness
@@ -236,19 +255,21 @@ BASE_LINK_PLATE_THICKNESS_MM = 2.5
 BASE_LINK_LENGTH_MM = 40.0
 
 # Redesign follow-up: Base_Link's final position, human-tuned live in the
-# FreeCAD GUI (four separate passes) then ported back here -- X and Y are
+# FreeCAD GUI (five separate passes) then ported back here -- X and Y are
 # both fixed absolute values now (neither centered on Bottom_Plate
 # anymore), and Z is nudged BASE_LINK_Z_NUDGE_MM below
-# flush-with-Bottom_Plate's-top. The nudge was widened from -0.2 to -0.6mm
-# after inspecting real collision state (Part.Shape.common(), not just
+# flush-with-Bottom_Plate's-top. The nudge went -0.2 -> -0.6mm after
+# inspecting real collision state (Part.Shape.common(), not just
 # distToShape/bbox overlap): -0.2 left Base_Link genuinely interpenetrating
 # the servo's feetech_STS3032_collision_proxy mesh by ~216mm^3 (a thin
-# ~0.28mm Z-sliver, full X/Y overlap) -- -0.6mm clears it with a real
-# 0.11mm gap (verified via Part.Shape.common().Volume == 0). See
+# ~0.28mm Z-sliver, full X/Y overlap); -0.6mm cleared it with a real 0.11mm
+# gap (verified via Part.Shape.common().Volume == 0) -- then -> -10.6mm in
+# a later pass that widened the whole layout (still Part.Shape.common()
+# verified == 0 against both sides' servo meshes afterward). See
 # _position_base_link_under_pendulum().
 BASE_LINK_X_POSITION_MM = 15.40
 BASE_LINK_Y_POSITION_MM = 19.00
-BASE_LINK_Z_NUDGE_MM = -0.6
+BASE_LINK_Z_NUDGE_MM = -10.6
 
 
 @dataclass
@@ -769,6 +790,16 @@ class BodyWheelsGenerator:
                 tilt.multiply(pendulum_link_right.Placement.Rotation),
             )
 
+            # Human-tuned live, second pass (widening the layout): an
+            # additional flat translation on top of the centering/tilt
+            # math above -- see PENDULUM_LINK_RIGHT_EXTRA_Y_MM/Z_MM's
+            # comment.
+            base = pendulum_link_right.Placement.Base
+            pendulum_link_right.Placement = Placement(
+                Vector(base.x, base.y + PENDULUM_LINK_RIGHT_EXTRA_Y_MM, base.z + PENDULUM_LINK_RIGHT_EXTRA_Z_MM),
+                pendulum_link_right.Placement.Rotation,
+            )
+
             self.output_doc.recompute()
 
             plate_bbox_global = plate_bbox.transformed(pendulum_link_right.Placement.toMatrix())
@@ -812,8 +843,9 @@ class BodyWheelsGenerator:
                 ),
             ))
 
-            print(f"✓ Pendulum_Link_Right: offset=({offset_x:.2f}, {offset_y:.2f}, {offset_z:.2f}) mm, "
-                  f"plates volume={volume:.2f} mm^3")
+            final_base = pendulum_link_right.Placement.Base
+            print(f"✓ Pendulum_Link_Right: final offset=({final_base.x:.2f}, {final_base.y:.2f}, "
+                  f"{final_base.z:.2f}) mm, plates volume={volume:.2f} mm^3")
             return True
         except Exception as e:
             print(f"ERROR building Pendulum_Link_Right: {e}")
@@ -821,7 +853,12 @@ class BodyWheelsGenerator:
             traceback.print_exc()
             return False
 
-    def _mount_wheel_on_pendulum_plate(self, wheel_name: str, bottom_plate_name: str = "Bottom_Plate") -> bool:
+    def _mount_wheel_on_pendulum_plate(
+        self,
+        wheel_name: str,
+        bottom_plate_name: str = "Bottom_Plate",
+        hole_offset: Optional[Vector] = None,
+    ) -> bool:
         """Redesign follow-up (Issue #9, live-bridge probe after PR #52):
         re-mount `wheel_name` on `bottom_plate_name`'s existing
         WHEEL_ON_PLATE_HOLE_EDGE mounting hole, replacing the original
@@ -832,6 +869,12 @@ class BodyWheelsGenerator:
         run()'s call order. `bottom_plate_name` defaults to the left
         Pendulum_Link's "Bottom_Plate"; pass "Bottom_Plate_Right" for
         Wheel_Right.
+
+        `hole_offset` defaults to (0, -WHEEL_ON_PLATE_CLEARANCE_OFFSET_MM, 0)
+        -- Wheel_Left's offset, "away from centerline" pointing -Y. Wheel_Right
+        sits on the opposite side of Y=0, so its own "away" direction is +Y --
+        pass WHEEL_RIGHT_HOLE_OFFSET_MM explicitly for that call rather than
+        reusing this default.
         """
         try:
             wheel_obj = self.output_doc.getObject(wheel_name)
@@ -840,12 +883,15 @@ class BodyWheelsGenerator:
                 print(f"ERROR: {wheel_name} or {bottom_plate_name} not found for hole-mount")
                 return False
 
+            if hole_offset is None:
+                hole_offset = Vector(0.0, -WHEEL_ON_PLATE_CLEARANCE_OFFSET_MM, 0.0)
+
             local_edge = Part.getShape(
                 plate_obj, WHEEL_ON_PLATE_HOLE_EDGE, needSubElement=True, transform=False
             )
             local_center = Vector(*local_edge.Curve.Center)
             hole_center_global = plate_obj.getGlobalPlacement().multVec(local_center)
-            new_center = hole_center_global + Vector(0.0, -WHEEL_ON_PLATE_CLEARANCE_OFFSET_MM, 0.0)
+            new_center = hole_center_global + hole_offset
 
             radius = WHEEL_ON_PLATE_RADIUS_MM
             width = WHEEL_ON_PLATE_WIDTH_MM
@@ -873,7 +919,7 @@ class BodyWheelsGenerator:
                     record.notes = (
                         f"Re-mounted on {bottom_plate_name}'s {WHEEL_ON_PLATE_HOLE_EDGE} hole "
                         f"(hole_center={tuple(round(v, 3) for v in hole_center_global)}), "
-                        f"offset {WHEEL_ON_PLATE_CLEARANCE_OFFSET_MM}mm along -Y"
+                        f"offset ({hole_offset.x:.3f}, {hole_offset.y:.3f}, {hole_offset.z:.3f})"
                     )
                     break
 
@@ -1284,7 +1330,9 @@ class BodyWheelsGenerator:
 
         print("Re-mounting Wheel_Right on Pendulum_Link_Right's Bottom_Plate_Right...")
         print("-" * 70)
-        if not self._mount_wheel_on_pendulum_plate("Wheel_Right", self.bottom_plate_right_name):
+        if not self._mount_wheel_on_pendulum_plate(
+            "Wheel_Right", self.bottom_plate_right_name, Vector(*WHEEL_RIGHT_HOLE_OFFSET_MM)
+        ):
             return False
         print()
 
