@@ -749,6 +749,13 @@ class BodyWheelsGenerator:
                 new_obj = self.output_doc.addObject("Mesh::Feature", new_name)
                 new_obj.Label = new_name
                 new_obj.Mesh = child.Mesh.copy()
+                # Matches build_pendulum_link()'s convention for the left
+                # side (copy the source's own Placement) for consistency,
+                # even though it's inert for rendering -- see the
+                # Mesh::Feature Placement quirk documented in root
+                # CLAUDE.md. sts_mount's own Placement (set explicitly
+                # below) is what actually positions this mesh.
+                new_obj.Placement = Placement(child.Placement)
                 sts_mount.addObject(new_obj)
                 mesh_children.append(new_obj)
                 facets = new_obj.Mesh.CountFacets
@@ -1026,11 +1033,12 @@ class BodyWheelsGenerator:
         pendulum_link = self.output_doc.getObject("Pendulum_Link")
 
         # Object names present (case-sensitive, exact match)
-        names_ok = all([base_link, wheel_left, wheel_right, pendulum_link])
+        pendulum_link_right = self.output_doc.getObject("Pendulum_Link_Right")
+        names_ok = all([base_link, wheel_left, wheel_right, pendulum_link, pendulum_link_right])
         self.validations.append(ValidationResult(
             check_name="Required object names present",
             passed=names_ok,
-            details="Base_Link, Wheel_Left, Wheel_Right, Pendulum_Link all found" if names_ok
+            details="Base_Link, Wheel_Left, Wheel_Right, Pendulum_Link, Pendulum_Link_Right all found" if names_ok
                     else "One or more required objects missing",
         ))
 

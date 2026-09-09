@@ -238,14 +238,20 @@ Phase 1 fallback above) is what actually runs the script end-to-end.
 **Output:**
 - `robot_body_wheels.FCStd` -- new, self-contained document (does not modify
   `plates_servo_assembled.FCStd`), containing:
-  - `Base_Link` (`Part::Feature`, chassis box, 120x80x40mm)
-  - `Wheel_Left` / `Wheel_Right` (`Part::Feature`, cylinders, dia 70mm x
-    15mm wide, 110mm track center-to-center, symmetric about the
-    centerline, resting on the Z=0 ground plane)
+  - `Base_Link` (`Part::Feature`, flat plate, 40x80x2.5mm -- redesigned
+    from an earlier 120x80x40mm solid box; see the module docstring and
+    root `CLAUDE.md`/`DESIGN.md` for why)
+  - `Wheel_Left` / `Wheel_Right` (`Part::Feature`, cylinders, dia 30mm x
+    6mm wide) -- each mounted on its own `Pendulum_Link`/`Pendulum_Link_Right`
+    `Bottom_Plate`'s real mounting hole, not on a body-centerline formula
   - `Pendulum_Link` (`App::Part`), containing copies of `PlateStack`
     (`Top_Plate`/`Middle_Plate`/`Bottom_Plate`) and `STS3032_Mount`
-    (servo visual + collision-proxy meshes), positioned
-    `pivot_height_mm` above `Base_Link`'s top, centered over its footprint
+    (servo visual + collision-proxy meshes), tilted so its plates stand
+    parallel to the wheel discs, positioned `pivot_height_mm` above
+    `Base_Link`'s top
+  - `Pendulum_Link_Right` (`App::Part`), a second copy built from literal,
+    human-tuned constants (not a geometric mirror of `Pendulum_Link`) --
+    see `build_pendulum_link_right()`
   - Object names are exact and case-sensitive -- Stage 2's joint config and
     Stage 4's URDF export consume them verbatim.
 - `07_body_wheels_metadata.json` -- per-link dimensions/placement/volume,

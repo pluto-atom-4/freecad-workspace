@@ -1,7 +1,7 @@
 {
   "phase": 7,
   "title": "Stage 1: Body + Wheel Geometry",
-  "timestamp": "2026-09-09T15:22:05.133406",
+  "timestamp": "2026-09-09T15:42:08.603533",
   "issue": 9,
   "source_document": "plates_servo_assembled.FCStd",
   "output_document": "robot_body_wheels.FCStd",
@@ -187,7 +187,7 @@
     {
       "check": "Required object names present",
       "passed": true,
-      "details": "Base_Link, Wheel_Left, Wheel_Right, Pendulum_Link all found"
+      "details": "Base_Link, Wheel_Left, Wheel_Right, Pendulum_Link, Pendulum_Link_Right all found"
     },
     {
       "check": "Base_Link plate dimensions",

@@ -51,6 +51,16 @@ OUTPUT_FCSTD = SCRIPT_DIR / "robot_body_wheels.FCStd"
 METADATA_JSON = SCRIPT_DIR / "07_body_wheels_metadata.json"
 SOURCE_DOC = SCRIPT_DIR / "plates_servo_assembled.FCStd"
 
+# All top-level objects 07_create_body_and_wheels.py creates -- what
+# ends up in the metadata JSON's `links` and what the source text must
+# literally mention.
+GENERATED_OBJECT_NAMES = {"Base_Link", "Wheel_Left", "Wheel_Right", "Pendulum_Link", "Pendulum_Link_Right"}
+
+# Subset robot_parameters.yaml's `links:` mapping must cover.
+# Pendulum_Link_Right is deliberately excluded: Stage 0 predates it, and
+# the generator reuses Pendulum_Link's own mapping for it instead of
+# requiring a separate YAML entry (see build_pendulum_link_right()'s
+# target_mass_kg handling).
 REQUIRED_LINK_NAMES = {"Base_Link", "Wheel_Left", "Wheel_Right", "Pendulum_Link"}
 TRIANGLE_BUDGET = 5000
 DIMENSION_TOLERANCE_MM = 0.05
@@ -137,7 +147,7 @@ def test_generator_script_exists_and_has_expected_object_names_in_source():
     text mentions the exact, case-sensitive object names it must create."""
     assert GENERATOR_SCRIPT.is_file()
     text = GENERATOR_SCRIPT.read_text()
-    for name in REQUIRED_LINK_NAMES:
+    for name in GENERATED_OBJECT_NAMES:
         assert f'"{name}"' in text, f"{name!r} not found as a literal in {GENERATOR_SCRIPT.name}"
 
 
@@ -208,7 +218,7 @@ def test_freecadcmd_run_produces_valid_output():
     assert metadata["all_validations_passed"] is True
 
     links = metadata["links"]
-    assert REQUIRED_LINK_NAMES == set(links.keys())
+    assert GENERATED_OBJECT_NAMES == set(links.keys())
 
     params = load_robot_parameters()
 
