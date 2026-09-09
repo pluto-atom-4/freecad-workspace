@@ -642,9 +642,18 @@ class BodyWheelsGenerator:
         Issue #9's live-bridge verification of PR #52: every object came out
         `Visibility=False` on disk from exactly such a run). It only takes
         effect when this script executes with a GUI available, e.g. driven
-        through the live FreeCAD MCP bridge's `execute_python` -- the
-        camera/viewpoint itself is GUI-only state and can never be embedded
-        by a headless save regardless of this fix.
+        through the live FreeCAD MCP bridge's `execute_python`.
+
+        `self.output_doc.Objects` is FreeCAD's flat, document-wide object
+        list -- it already includes objects nested under `Pendulum_Link`'s
+        `App::Part` groups (`PlateStack`/`STS3032_Mount` and their plate/mesh
+        children), regardless of App::Part grouping. Empirically re-verified
+        live through the MCP bridge (Issue #9 follow-up, PR #52): with a GUI
+        up, this loop already sets `Visibility = True` on every one of those
+        nested objects -- there is no separate nested-visibility bug to fix
+        here. The camera/viewpoint itself is GUI-only state and can never be
+        embedded by a headless save regardless of this fix; see
+        `_set_camera_framing()` below for the GUI-only camera addition.
         """
         if not getattr(App, "GuiUp", False):
             return
@@ -653,9 +662,42 @@ class BodyWheelsGenerator:
             if view_obj is not None:
                 view_obj.Visibility = True
 
+    def _set_camera_framing(self) -> None:
+        """Frame the 3D view on the whole assembly (isometric + fit-all)
+        before saving, so the embedded camera in the .FCStd shows the full
+        model instead of whatever viewpoint was last active.
+
+        Like `_set_default_visibility()`, this is GUI-only: a headless
+        `freecadcmd script.py` run has no `FreeCADGui` module at all (it is
+        imported here, lazily, only inside this GUI-guarded branch -- an
+        unconditional module-level `import FreeCADGui` would break the
+        headless path this script is primarily run through), no 3D view, and
+        therefore no camera to set -- this is a no-op headlessly, and a
+        headless save embeds no camera/viewpoint at all, same as before this
+        change. It only takes effect when this script executes with a GUI
+        available, e.g. driven through the live FreeCAD MCP bridge's
+        `execute_python`. Confirmed working live through the bridge (Issue
+        #9 follow-up, PR #52): `view.viewIsometric()` followed by
+        `view.fitAll()` on the output document's `ActiveView`.
+        """
+        if not getattr(App, "GuiUp", False):
+            return
+        try:
+            import FreeCADGui as Gui
+            gui_doc = Gui.getDocument(self.output_doc.Name)
+            view = gui_doc.ActiveView if gui_doc is not None else None
+            if view is None:
+                print("  ⚠ WARNING: No ActiveView available; skipping camera framing")
+                return
+            view.viewIsometric()
+            view.fitAll()
+        except Exception as e:
+            print(f"  ⚠ WARNING: Could not set camera framing: {e}")
+
     def save_document(self) -> bool:
         try:
             self._set_default_visibility()
+            self._set_camera_framing()
             output_path = SCRIPT_DIR / OUTPUT_FCSTD_FILENAME
             self.output_doc.saveAs(str(output_path))
             print(f"✓ Saved output document: {output_path}")
