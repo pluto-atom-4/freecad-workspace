@@ -1,7 +1,7 @@
 {
   "phase": 7,
   "title": "Stage 1: Body + Wheel Geometry",
-  "timestamp": "2026-09-09T12:46:26.114459",
+  "timestamp": "2026-09-09T12:50:36.473402",
   "issue": 9,
   "source_document": "plates_servo_assembled.FCStd",
   "output_document": "robot_body_wheels.FCStd",
@@ -11,7 +11,7 @@
       "name": "Base_Link",
       "kind": "primitive_plate",
       "dimensions_mm": {
-        "length_mm": 120.0,
+        "length_mm": 40.0,
         "width_mm": 80.0,
         "thickness_mm": 2.5
       },
@@ -28,17 +28,17 @@
         }
       },
       "bounding_box_mm": {
-        "x_min": -60.0,
-        "x_max": 60.0,
+        "x_min": -20.0,
+        "x_max": 20.0,
         "y_min": -40.0,
         "y_max": 40.0,
         "z_min": 10.0,
         "z_max": 12.5
       },
-      "volume_mm3": 24000.0,
+      "volume_mm3": 8000.0,
       "target_mass_kg": 0.25,
       "triangle_count": 12,
-      "notes": "Redesigned as a flat plate (was a solid chassis.height_mm=40.0mm box) -- thickness is now BASE_LINK_PLATE_THICKNESS_MM, not robot_parameters.yaml's chassis.height_mm."
+      "notes": "Redesigned as a flat plate (was a solid chassis.length_mm=120.0mm x chassis.height_mm=40.0mm box) -- length is now BASE_LINK_LENGTH_MM and thickness is now BASE_LINK_PLATE_THICKNESS_MM, not robot_parameters.yaml's chassis.length_mm/chassis.height_mm."
     },
     "Wheel_Left": {
       "name": "Wheel_Left",
@@ -147,7 +147,7 @@
       "feetech_STS3032_collision_proxy": 188
     },
     "reused_pendulum_mesh_note": "Inherited from Issue #3 (plates_servo_assembled.FCStd), not new Stage 1 geometry. Excluded from the <5000-triangle budget check above: per Issue #9 Decision #10, the servo's simulation <collision> geometry is emitted as URDF primitives (box + cylinder) in Stage 4, not this mesh -- this high-fidelity mesh is a visual-only asset.",
-    "total_volume_mm3": 104810.0378,
+    "total_volume_mm3": 88810.0378,
     "total_volume_note": "Sum of Base_Link + Wheel_Left + Wheel_Right + copied PlateStack plate volumes + (where watertight) copied STS3032_Mount mesh volumes. For Stage 3's future sanity check (Issue #9 Decision #12) against Phase 4's export_metadata.json geometry_stats.volume_mm3 figure (22708.46 mm^3 for plates+servo only, no wheels/chassis) -- NOT expected to match exactly once wheel/chassis volume is included; informational only."
   },
   "validations": [
@@ -159,7 +159,7 @@
     {
       "check": "Base_Link plate dimensions",
       "passed": true,
-      "details": "BBox 120.00x80.00x2.50 mm vs expected 120.0x80.0x2.5 mm"
+      "details": "BBox 40.00x80.00x2.50 mm vs expected 40.0x80.0x2.5 mm"
     },
     {
       "check": "Wheel_Left dimensions match robot_parameters.yaml",

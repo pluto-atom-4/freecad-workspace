@@ -181,11 +181,15 @@ WHEEL_ON_PLATE_CLEARANCE_OFFSET_MM = 6.0
 WHEEL_ON_PLATE_HOLE_EDGE = "Edge27"
 
 # Redesign follow-up: Base_Link becomes a flat plate instead of a solid
-# chassis box (footprint still from robot_parameters.yaml's chassis.length_mm/
-# width_mm, but thickness no longer chassis.height_mm) -- matches this
+# chassis box (thickness no longer chassis.height_mm) -- matches this
 # project's existing Top_Plate/Middle_Plate/Bottom_Plate thickness
 # convention (2.5mm, empirically confirmed via their own Shape.BoundBox).
 BASE_LINK_PLATE_THICKNESS_MM = 2.5
+
+# Redesign follow-up: Base_Link's length (X dimension) shrunk from
+# robot_parameters.yaml's chassis.length_mm (120mm) to 40mm -- width_mm
+# (Y dimension, 80mm) still comes from robot_parameters.yaml, unchanged.
+BASE_LINK_LENGTH_MM = 40.0
 
 
 @dataclass
@@ -308,19 +312,19 @@ class BodyWheelsGenerator:
 
     def build_base_link(self) -> bool:
         """Create Base_Link: a flat plate (BASE_LINK_PLATE_THICKNESS_MM
-        thick), footprint from robot_parameters.yaml's chassis.length_mm/
-        width_mm, centered on X/Y at the origin, bottom face
+        thick, BASE_LINK_LENGTH_MM long), width from robot_parameters.yaml's
+        chassis.width_mm, centered on X/Y at the origin, bottom face
         CHASSIS_GROUND_CLEARANCE_MM above the Z=0 ground plane.
 
         Redesign follow-up (Issue #9, live-bridge probe after PR #52):
-        originally a solid chassis.height_mm-tall box (a human review found
-        it didn't match the "enclosure" the plan called for). Now a thin
-        plate instead -- footprint unchanged, thickness no longer
-        chassis.height_mm (see BASE_LINK_PLATE_THICKNESS_MM's comment for
-        why: matches the existing Top/Middle/Bottom_Plate convention)."""
+        originally a solid chassis.length_mm x chassis.width_mm x
+        chassis.height_mm box (a human review found it didn't match the
+        "enclosure" the plan called for). Now a thin plate instead, and
+        shrunk from chassis.length_mm (120mm) down to BASE_LINK_LENGTH_MM
+        (40mm) -- width still from robot_parameters.yaml, unchanged."""
         try:
             chassis = self.params.chassis
-            length, width = chassis.length_mm, chassis.width_mm
+            length, width = BASE_LINK_LENGTH_MM, chassis.width_mm
             thickness = BASE_LINK_PLATE_THICKNESS_MM
 
             bottom_z = CHASSIS_GROUND_CLEARANCE_MM
@@ -349,9 +353,11 @@ class BodyWheelsGenerator:
                 triangle_count=triangles,
                 notes=(
                     "Redesigned as a flat plate (was a solid "
+                    f"chassis.length_mm={chassis.length_mm}mm x "
                     f"chassis.height_mm={chassis.height_mm}mm box) -- "
-                    "thickness is now BASE_LINK_PLATE_THICKNESS_MM, not "
-                    "robot_parameters.yaml's chassis.height_mm."
+                    "length is now BASE_LINK_LENGTH_MM and thickness is now "
+                    "BASE_LINK_PLATE_THICKNESS_MM, not robot_parameters."
+                    "yaml's chassis.length_mm/chassis.height_mm."
                 ),
             ))
 
@@ -670,12 +676,13 @@ class BodyWheelsGenerator:
                     else "One or more required objects missing",
         ))
 
-        # Base_Link plate dimensions: footprint from robot_parameters.yaml,
-        # thickness from BASE_LINK_PLATE_THICKNESS_MM (not chassis.height_mm
-        # -- see build_base_link()'s redesign note).
+        # Base_Link plate dimensions: length from BASE_LINK_LENGTH_MM,
+        # width from robot_parameters.yaml's chassis.width_mm, thickness
+        # from BASE_LINK_PLATE_THICKNESS_MM (not chassis.length_mm/
+        # chassis.height_mm -- see build_base_link()'s redesign note).
         bbox = base_link.Shape.BoundBox
         chassis_ok = (
-            abs(bbox.XLength - chassis.length_mm) < 0.01
+            abs(bbox.XLength - BASE_LINK_LENGTH_MM) < 0.01
             and abs(bbox.YLength - chassis.width_mm) < 0.01
             and abs(bbox.ZLength - BASE_LINK_PLATE_THICKNESS_MM) < 0.01
         )
@@ -683,7 +690,7 @@ class BodyWheelsGenerator:
             check_name="Base_Link plate dimensions",
             passed=chassis_ok,
             details=f"BBox {bbox.XLength:.2f}x{bbox.YLength:.2f}x{bbox.ZLength:.2f} mm vs "
-                    f"expected {chassis.length_mm}x{chassis.width_mm}x{BASE_LINK_PLATE_THICKNESS_MM} mm",
+                    f"expected {BASE_LINK_LENGTH_MM}x{chassis.width_mm}x{BASE_LINK_PLATE_THICKNESS_MM} mm",
         ))
 
         # Wheel dimensions
