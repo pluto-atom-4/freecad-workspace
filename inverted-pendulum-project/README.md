@@ -78,6 +78,12 @@ use_freecad_direct()
 - Full FreeCAD Python API available (Part, Mesh, App, …)
 - FreeCAD process boundary keeps its OpenCASCADE build isolated from OCP/CadQuery
 
+**Human/agent review only:** this project's shipped scripts stay headless-only, but a generator
+script can be run once through the separate live FreeCAD MCP bridge (not part of this project's
+pipeline) to produce a `.FCStd` with visibility + camera framing actually baked in for visual
+review — see root `CLAUDE.md`'s "FreeCAD Live Bridge" section for the exact invocation and known
+caveats (dimensional checks read slightly off under a live GUI; validate headlessly instead).
+
 ### Phase 1: Convert servo STL to STEP
 
 ```bash

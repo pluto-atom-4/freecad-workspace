@@ -106,6 +106,12 @@ ad-hoc human-review aid (its own pipeline stays headless-only). Found while doin
   observed a 70.00mm cylinder reading ~69.90mm. Validate dimensions against a true headless run,
   not a live-bridge session; when tessellating in a script, always tessellate a `.copy()` of the
   shape, never `obj.Shape` itself (same contamination happens self-inflicted, even headlessly).
+- **To produce a fully-viewable `.FCStd` (visible objects + framed camera baked in), run the
+  generator script itself through the bridge** — its own `App.GuiUp`-guarded code needs a GUI to
+  fire. `execute_python(code="exec(open(path).read())")` alone silently no-ops: `__name__` in
+  that context is `"builtins"`, not `"__main__"`, so the script's `if __name__ == "__main__":`
+  guard never runs. Force it explicitly:
+  `exec(compile(open(path).read(), path, 'exec'), {'__name__': '__main__', '__file__': path})`.
 
 ## References
 

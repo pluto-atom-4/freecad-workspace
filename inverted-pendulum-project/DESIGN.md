@@ -61,6 +61,7 @@ python3 03_Parts/Generators/01_convert_servo_stl_to_step.py
 | Live GUI auto-tessellates shapes, shrinking `Shape.BoundBox` reads (~70.00mm cylinder → ~69.90mm) | Dimensional checks can fail only under a live-bridge run, not headless | Validate against a true headless run; tessellate a `.copy()`, never `obj.Shape` itself |
 | Live bridge's `get_screenshot`/`inspect_object` (App::Part) broken (`freecad-mcp-workbench` 0.6.2) | No built-in screenshot/inspect for App::Part | See root `CLAUDE.md`'s "FreeCAD Live Bridge" section for workarounds |
 | Visibility/camera are GUI-only state | A headless-generated `.FCStd` opens with objects invisible, no useful viewpoint | Guard visibility/camera code with `if not getattr(App, "GuiUp", False): return` (see `07_create_body_and_wheels.py`) |
+| Bridge's `execute_python(code="exec(open(path).read())")` doesn't fire a script's `__main__` guard (`__name__` is `"builtins"` there) | Running a generator through the bridge this way silently does nothing | Exec with explicit globals forcing `__name__='__main__'` — see root `CLAUDE.md`'s "FreeCAD Live Bridge" section for the exact snippet; this is the only way to get a fully-viewable `.FCStd` (visibility + camera baked in) |
 
 ## Related Work
 
