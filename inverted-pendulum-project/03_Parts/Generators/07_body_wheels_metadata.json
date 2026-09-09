@@ -1,7 +1,7 @@
 {
   "phase": 7,
   "title": "Stage 1: Body + Wheel Geometry",
-  "timestamp": "2026-09-09T13:47:08.258465",
+  "timestamp": "2026-09-09T13:55:44.673496",
   "issue": 9,
   "source_document": "plates_servo_assembled.FCStd",
   "output_document": "robot_body_wheels.FCStd",
@@ -77,15 +77,15 @@
       "name": "Wheel_Right",
       "kind": "primitive_cylinder",
       "dimensions_mm": {
-        "diameter_mm": 70.0,
-        "radius_mm": 35.0,
-        "width_mm": 15.0
+        "diameter_mm": 30.0,
+        "radius_mm": 15.0,
+        "width_mm": 6.0
       },
       "placement": {
         "position": {
           "x": 0.0,
-          "y": 0.0,
-          "z": 0.0
+          "y": 71.0,
+          "z": 54.0
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
@@ -94,17 +94,17 @@
         }
       },
       "bounding_box_mm": {
-        "x_min": -35.0,
-        "x_max": 35.0,
-        "y_min": 47.5,
-        "y_max": 62.5,
-        "z_min": 0.0,
-        "z_max": 70.0
+        "x_min": -15.0,
+        "x_max": 15.0,
+        "y_min": -3.0,
+        "y_max": 3.0,
+        "z_min": -15.0,
+        "z_max": 15.0
       },
-      "volume_mm3": 57726.765,
+      "volume_mm3": 4241.1501,
       "target_mass_kg": 0.03,
       "triangle_count": 100,
-      "notes": "center_y_mm=55.0, track_mm=110.0"
+      "notes": "Interim placeholder (human-tuned live, fixed position) -- no mirrored Pendulum_Link_Right to mount on yet; revisit once that exists."
     },
     "Pendulum_Link": {
       "name": "Pendulum_Link",
@@ -147,7 +147,7 @@
       "feetech_STS3032_collision_proxy": 188
     },
     "reused_pendulum_mesh_note": "Inherited from Issue #3 (plates_servo_assembled.FCStd), not new Stage 1 geometry. Excluded from the <5000-triangle budget check above: per Issue #9 Decision #10, the servo's simulation <collision> geometry is emitted as URDF primitives (box + cylinder) in Stage 4, not this mesh -- this high-fidelity mesh is a visual-only asset.",
-    "total_volume_mm3": 88810.0378,
+    "total_volume_mm3": 35324.4229,
     "total_volume_note": "Sum of Base_Link + Wheel_Left + Wheel_Right + copied PlateStack plate volumes + (where watertight) copied STS3032_Mount mesh volumes. For Stage 3's future sanity check (Issue #9 Decision #12) against Phase 4's export_metadata.json geometry_stats.volume_mm3 figure (22708.46 mm^3 for plates+servo only, no wheels/chassis) -- NOT expected to match exactly once wheel/chassis volume is included; informational only."
   },
   "validations": [
@@ -169,24 +169,24 @@
     {
       "check": "Wheel track width and symmetry",
       "passed": false,
-      "details": "track=83.53 mm (expected 110.0 mm), centers=(-28.53, 55.00) mm (symmetric about Y=0)",
-      "value": 83.5258,
+      "details": "track=99.53 mm (expected 110.0 mm), centers=(-28.53, 71.00) mm (symmetric about Y=0)",
+      "value": 99.5258,
       "tolerance": 110.0
     },
     {
       "check": "Wheels share identical Z placement",
-      "passed": false,
-      "details": "Wheel_Left Z=[39.01,69.01], Wheel_Right Z=[0.00,70.00]"
+      "passed": true,
+      "details": "Wheel_Left Z=[39.01,69.01], Wheel_Right Z=[39.00,69.00]"
     },
     {
       "check": "Ground clearance (chassis above Z=0, wheels resting on Z=0)",
-      "passed": true,
-      "details": "Base_Link bottom Z=87.93 mm, wheel bottom Z=0.00 mm"
+      "passed": false,
+      "details": "Base_Link bottom Z=87.93 mm, wheel bottom Z=39.00 mm"
     },
     {
       "check": "No Base_Link / wheel interpenetration",
-      "passed": false,
-      "details": "Base_Link Y=[-21.00,59.00], Wheel_Left Y=[-31.53,-25.53], Wheel_Right Y=[47.50,62.50]"
+      "passed": true,
+      "details": "Base_Link Y=[-21.00,59.00], Wheel_Left Y=[-31.53,-25.53], Wheel_Right Y=[68.00,74.00]"
     },
     {
       "check": "Pendulum_Link positioned above Base_Link",

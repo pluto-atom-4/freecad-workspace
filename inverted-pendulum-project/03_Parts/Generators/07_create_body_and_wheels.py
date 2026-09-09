@@ -79,17 +79,19 @@ BASE_LINK_LENGTH_MM long) instead of a solid chassis.height_mm-tall box
 a deck plate at the pivot/servo level -- instead of floating near the
 ground at CHASSIS_GROUND_CLEARANCE_MM (see
 _position_base_link_under_pendulum(); a human fine-tuned this live in the
-FreeCAD GUI, ported back here). Wheel_Right
-is NOT part of this redesign yet -- it has no mirrored Pendulum_Link_Right
-to mount on, so it keeps its original body-centerline geometry and is
-hidden by _set_default_visibility() rather than shown stale/disconnected.
-Expect validate()'s track-width-symmetry, wheel-Z-match, and
-no-interpenetration checks to FAIL until the mirrored right side is
-implemented, and "Pendulum_Link positioned above Base_Link" to FAIL too --
-Base_Link now sits mid-stack (flush with Bottom_Plate's top), not below
-the whole assembly, so that check's original "chassis below pendulum"
-assumption no longer holds by design. All known, transitional states, not
-bugs; see
+FreeCAD GUI, ported back here). Wheel_Right has no mirrored
+Pendulum_Link_Right to mount on yet, so it's an interim placeholder
+instead -- same size as Wheel_Left, at a fixed, human-tuned position (see
+_position_wheel_right_interim()), visible rather than hidden, but not
+derived from any Pendulum_Link geometry the way Wheel_Left's mount is.
+Expect validate()'s track-width-symmetry, ground-clearance (both wheels
+now sit at Wheel_Left's pivot-level height, not resting on Z=0), and
+"Pendulum_Link positioned above Base_Link" checks to FAIL -- Base_Link
+sits mid-stack (flush with Bottom_Plate's top), not below the whole
+assembly, so that check's original "chassis below pendulum" assumption no
+longer holds by design. (wheel-Z-match and no-interpenetration now PASS,
+now that Wheel_Right matches Wheel_Left's height.) All known, transitional
+states, not bugs; see
 root CLAUDE.md / DESIGN.md for the open decisions.
 
 Output:
@@ -188,6 +190,16 @@ WHEEL_ON_PLATE_RADIUS_MM = 15.0
 WHEEL_ON_PLATE_WIDTH_MM = 6.0
 WHEEL_ON_PLATE_CLEARANCE_OFFSET_MM = 6.0
 WHEEL_ON_PLATE_HOLE_EDGE = "Edge27"
+
+# Redesign follow-up: Wheel_Right has no mirrored Pendulum_Link_Right to
+# mount on yet -- until that exists, it's an interim placeholder
+# (human-tuned live via the bridge), same size as Wheel_Left
+# (WHEEL_ON_PLATE_RADIUS_MM/WIDTH_MM, not robot_parameters.yaml's
+# wheel.diameter_mm/width_mm) at a fixed spot near Wheel_Left's height.
+# Revisit once Pendulum_Link_Right is implemented.
+WHEEL_RIGHT_INTERIM_X_MM = 0.0
+WHEEL_RIGHT_INTERIM_Y_MM = 71.0
+WHEEL_RIGHT_INTERIM_Z_MM = 54.0
 
 # Redesign follow-up: Base_Link becomes a flat plate instead of a solid
 # chassis box (thickness no longer chassis.height_mm) -- matches this
@@ -678,6 +690,60 @@ class BodyWheelsGenerator:
             print(f"ERROR re-mounting {wheel_name}: {e}")
             return False
 
+    def _position_wheel_right_interim(self) -> bool:
+        """Redesign follow-up (Issue #9, live-bridge probe): Wheel_Right has
+        no mirrored Pendulum_Link_Right to mount on yet, so it can't get
+        _mount_wheel_on_pendulum_plate()'s treatment. This is an interim
+        placeholder instead -- resized to match Wheel_Left
+        (WHEEL_ON_PLATE_RADIUS_MM/WIDTH_MM, not robot_parameters.yaml's
+        wheel.diameter_mm/width_mm) and moved to a fixed, human-tuned spot
+        near Wheel_Left's height (WHEEL_RIGHT_INTERIM_X_MM/Y_MM/Z_MM) --
+        not derived from any Pendulum_Link geometry, unlike Wheel_Left's
+        mount. Revisit once Pendulum_Link_Right exists.
+        """
+        try:
+            wr = self.output_doc.getObject("Wheel_Right")
+            if wr is None:
+                print("ERROR: Wheel_Right not found")
+                return False
+
+            radius, width = WHEEL_ON_PLATE_RADIUS_MM, WHEEL_ON_PLATE_WIDTH_MM
+            center = Vector(WHEEL_RIGHT_INTERIM_X_MM, WHEEL_RIGHT_INTERIM_Y_MM, WHEEL_RIGHT_INTERIM_Z_MM)
+            shape = Part.makeCylinder(radius, width, Vector(0.0, -width / 2.0, 0.0), Vector(0.0, 1.0, 0.0))
+
+            old_volume = wr.Shape.Volume
+            old_triangles = self._tessellate_triangle_count(wr.Shape)
+
+            wr.Shape = shape
+            wr.Placement = Placement(center, Rotation())
+
+            triangles = self._tessellate_triangle_count(shape)
+            self.total_volume_mm3 += shape.Volume - old_volume
+            self.new_primitive_triangle_count += triangles - old_triangles
+
+            for record in self.links:
+                if record.name == "Wheel_Right":
+                    record.dimensions_mm = {
+                        "diameter_mm": radius * 2.0, "radius_mm": radius, "width_mm": width,
+                    }
+                    record.placement = _placement_to_dict(wr.Placement)
+                    record.bounding_box_mm = _bbox_to_dict(shape.BoundBox)
+                    record.volume_mm3 = round(shape.Volume, 4)
+                    record.triangle_count = triangles
+                    record.notes = (
+                        "Interim placeholder (human-tuned live, fixed position) -- "
+                        "no mirrored Pendulum_Link_Right to mount on yet; revisit once "
+                        "that exists."
+                    )
+                    break
+
+            print(f"✓ Wheel_Right: interim placeholder, radius={radius} mm, "
+                  f"width={width} mm, center={center}")
+            return True
+        except Exception as e:
+            print(f"ERROR positioning Wheel_Right: {e}")
+            return False
+
     def _position_base_link_under_pendulum(self) -> bool:
         """Redesign follow-up (Issue #9, live-bridge probe, then manually
         fine-tuned live twice and ported back here): reposition Base_Link
@@ -929,16 +995,6 @@ class BodyWheelsGenerator:
             if view_obj is not None:
                 view_obj.Visibility = True
 
-        # Redesign follow-up (Issue #9, live-bridge probe): Wheel_Right has
-        # no mirrored Pendulum_Link_Right/hole to mount on yet (tracked as
-        # follow-up work) -- hide it rather than show it floating, stale
-        # and disconnected, at its old body-centerline position. Base_Link
-        # (now a plate, see build_base_link()) stays visible.
-        wheel_right = self.output_doc.getObject("Wheel_Right")
-        view_obj = getattr(wheel_right, "ViewObject", None) if wheel_right is not None else None
-        if view_obj is not None:
-            view_obj.Visibility = False
-
     def _set_camera_framing(self) -> None:
         """Frame the 3D view on the whole assembly (isometric + fit-all)
         before saving, so the embedded camera in the .FCStd shows the full
@@ -1083,6 +1139,12 @@ class BodyWheelsGenerator:
         print("Repositioning Base_Link under Pendulum_Link/STS3032_Mount...")
         print("-" * 70)
         if not self._position_base_link_under_pendulum():
+            return False
+        print()
+
+        print("Positioning Wheel_Right (interim placeholder)...")
+        print("-" * 70)
+        if not self._position_wheel_right_interim():
             return False
         print()
 
