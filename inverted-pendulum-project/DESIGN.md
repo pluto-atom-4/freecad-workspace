@@ -317,6 +317,27 @@ freecad 03_Parts/Generators/plates_assembled.FCStd
 | Phase 2 edge indexing brittle | Fails if plate changes | Include visualization helper script |
 | STEP file 36 MB large | Slow transfer | Document optimization paths |
 | Phase 4 not implemented | Cannot export yet | Schedule for implementation |
+| Live GUI auto-tessellates shapes for display, contaminating `Shape.BoundBox` reads (a 70.00mm cylinder read ~69.90mm) | Dimensional validation can fail only when a generator script is run live through the FreeCAD MCP bridge, not headlessly | Validate dimensions against a true headless `freecadcmd` run; if a script tessellates internally, always tessellate a `.copy()` of the shape (see `07_create_body_and_wheels.py`'s `_tessellate_triangle_count()`) |
+| Live bridge's `get_screenshot` broken (`freecad-mcp-workbench` 0.6.2) | No built-in visual-review screenshot | Workaround via `execute_python` + `FreeCADGui...ActiveView.saveImage()`, see root `CLAUDE.md`'s "FreeCAD Live Bridge — Known Limitations" |
+| `freecadcmd` 1.1.3 doesn't set `__name__=="__main__"` for `--python`/positional invocation | Script silently no-ops, exits 0 | Invoke as `"$FREECAD_BIN" -c "exec(open('script.py').read())"` instead |
+| Visibility/camera are GUI-only state | A headless-generated `.FCStd` opens with all objects invisible, no useful viewpoint | Guard visibility/camera-setting code with `if not getattr(App, "GuiUp", False): return`; only takes effect when driven through the live bridge (see `07_create_body_and_wheels.py`'s `_set_default_visibility()`/`_set_camera_framing()`) |
+
+---
+
+## Related Work: Issue #9 Stage 1 (Body + Wheel Geometry)
+
+`03_Parts/Generators/07_create_body_and_wheels.py` (Issue #9, PR #52) builds `Base_Link`/
+`Wheel_Left`/`Wheel_Right` as new primitives, sized from `02_Design_Inputs/robot_parameters.yaml`,
+and reuses this document's `PlateStack`/`STS3032_Mount` (copied, not linked) as a `Pendulum_Link`
+subassembly in a new `robot_body_wheels.FCStd`. It's a downstream consumer of this pipeline's
+`plates_servo_assembled.FCStd`, not a new phase of the servo-integration work above — see Issue #9
+for its own plan/decisions, and the "Known Limitations" row above for what a live-bridge human
+review of its output actually found (GUI-only tessellation/visibility/camera caveats).
+
+Separately: a human review of that Stage 1 artifact found it didn't match what was actually
+pictured, despite passing every dimensional/structural check (see Issue #53 for the full
+human-intent-vs-generated-artifact writeup and workflow recommendations) — worth reading before
+starting Stage 2+ or any other new FreeCAD generation work in this repo.
 
 ---
 
@@ -330,5 +351,6 @@ freecad 03_Parts/Generators/plates_assembled.FCStd
 
 ---
 
-**Status:** Design documented, Phases 1-3 complete, Phase 4 in progress  
-**Last Updated:** 2026-08-28
+**Status:** Design documented, Phases 1-3 complete, Phase 4 in progress. See "Related Work"
+above for Issue #9 Stage 1's downstream use of this pipeline's output.
+**Last Updated:** 2026-09-09

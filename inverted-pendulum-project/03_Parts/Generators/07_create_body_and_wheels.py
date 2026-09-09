@@ -46,10 +46,27 @@ Stage 4's URDF export consume these verbatim, per `robot_parameters.yaml`'s
                      sub-groups, copied from the source document)
 
 Usage:
-    freecadcmd --python 07_create_body_and_wheels.py
+    # This build of freecadcmd (1.1.3) does not set __name__ == "__main__"
+    # for a plain positional or --python script argument -- the guard below
+    # never fires that way and the process exits 0 having done nothing
+    # (verified empirically). Use -c "exec(...)" instead:
+    "${FREECAD_BIN:-freecadcmd}" -c "exec(open('07_create_body_and_wheels.py').read())"
     # or, pinning a specific FreeCAD build:
-    FREECAD_BIN=~/.local/opt/freecad-1.1.3/usr/bin/freecadcmd \\
-      freecadcmd --python 07_create_body_and_wheels.py
+    FREECAD_BIN=~/.local/opt/freecad-1.1.3/usr/bin/freecadcmd
+    "$FREECAD_BIN" -c "exec(open('07_create_body_and_wheels.py').read())"
+
+Known limitation -- live GUI runs only (not headless): opening/recomputing
+this script's objects under a live GUI (e.g. driven through the FreeCAD MCP
+bridge's execute_python, as opposed to a true headless freecadcmd run) makes
+FreeCAD's view providers auto-tessellate each shape for on-screen display,
+which can shrink Shape.BoundBox reads by a small chordal-deviation amount --
+observed as a 70.00mm wheel diameter reading ~69.90mm, enough to fail this
+script's own tight dimensional validation. This is a different contamination
+source than the one _tessellate_triangle_count() below guards against (that
+one is self-inflicted by this script's own tessellation call; this one comes
+from the GUI itself and is outside this script's control). Not fixed --
+validate dimensions against a true headless run; see root CLAUDE.md's
+"FreeCAD Live Bridge -- Known Limitations" section.
 
 Output:
     - robot_body_wheels.FCStd (new document, does not modify the source file)

@@ -284,6 +284,47 @@ itself, built with its own `uv`/`mise`/`just` tooling — unrelated to this work
 **pendulum-tools env broken (inverted-pendulum-project):**
 - Recreate from the pinned lock: `mamba env remove -n pendulum-tools -y && mamba env create -n pendulum-tools -f inverted-pendulum-project/mamba-envs.lock.yml`
 
+## FreeCAD Live Bridge — Known Limitations (freecad-mcp-workbench 0.6.2)
+
+Found while using the live `mcp__freecad__*` bridge as an ad-hoc human-review aid for
+`inverted-pendulum-project` (Issue #9 Stage 1, PR #52) — that project has no MCP integration
+in its shipped pipeline (headless `freecadcmd` only), but the bridge is still useful for a
+human/agent to open a script's output `.FCStd` and eyeball it. These apply to whichever
+bridge build is actually connected, currently `freecad-mcp-workbench` 0.6.2:
+
+- **`get_screenshot` is broken** — every call fails with
+  `AttributeError: 'dict' object has no attribute '__name__'`, regardless of view angle or
+  size. Workaround: call `execute_python` with a snippet that toggles visibility as needed
+  and calls `FreeCADGui.ActiveDocument.ActiveView.saveImage(path, width, height)` directly,
+  then read the saved file back off disk.
+- **`inspect_object` errors on `App::Part` container objects** (works fine on
+  `Part::Feature`/`Mesh::Feature`). Workaround: use `execute_python` to read `.Group`,
+  `.Placement`, etc. directly from the object.
+- **GUI-only state (visibility, camera) needs an `App.GuiUp` guard.** A script written for
+  headless `freecadcmd` execution has no `ViewObject` and no 3D view at all — `App.GuiUp` is
+  only `True` when the same script is instead driven through the live bridge's
+  `execute_python`. Any code that sets object visibility or camera framing must check
+  `if not getattr(App, "GuiUp", False): return` before touching `ViewObject`/`FreeCADGui`, or
+  it will crash (or silently no-op, depending on the call) under headless execution. See
+  `inverted-pendulum-project/03_Parts/Generators/07_create_body_and_wheels.py`'s
+  `_set_default_visibility()` / `_set_camera_framing()` for the pattern. A camera/viewpoint
+  set this way only ever gets embedded in the `.FCStd` when the save itself happens under a
+  GUI — a headless save can never carry one, regardless.
+- **A live GUI auto-tessellates shapes for on-screen display, which can contaminate
+  `Shape.BoundBox` reads.** Opening/recomputing a document under a live GUI causes FreeCAD's
+  view providers to tessellate each shape so it can be drawn — observed shrinking a
+  70.00mm-diameter cylinder's reported bounding box to ~69.90mm (chordal-deviation artifact),
+  enough to fail a tight dimensional check that passes exactly under headless execution. Do
+  dimensional validation against a true headless run, not a live-bridge session. If a script
+  tessellates a shape itself (e.g. for triangle-count reporting), always tessellate a
+  `.copy()` of the shape, never the shape actually assigned to `obj.Shape` — the same
+  contamination can happen internally, self-inflicted, even headlessly (see
+  `_tessellate_triangle_count()` in the same script).
+- **`freecadcmd` 1.1.3 in this environment does not set `__name__ == "__main__"` for a plain
+  positional or `--python` script argument** — a script's `if __name__ == "__main__":` guard
+  silently never fires; the process exits 0 having done nothing. Working invocation:
+  `"$FREECAD_BIN" -c "exec(open('script.py').read())"`.
+
 ## References
 
 - [FreeCAD](https://www.freecadweb.org/)
