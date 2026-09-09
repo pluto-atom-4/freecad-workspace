@@ -200,6 +200,62 @@ python3 test_05_integration.py
 
 ---
 
+## Robot Body + Wheel Geometry (Issue #9, Stage 1)
+
+Stage 1 of Issue #9's "FreeCAD Mechanical Model with URDF Export" plan.
+Builds the two-wheel robot chassis and wheels, and reuses the existing
+3-plate pendulum linkage + servo (Issue #3's `plates_servo_assembled.FCStd`)
+as a `Pendulum_Link` subassembly. Reads all dimensions from Stage 0's
+`../../02_Design_Inputs/robot_parameters.yaml` (via `robot_parameters.py`)
+rather than hardcoding them.
+
+**Scope:** geometry only. Joint constraints (Stage 2), mass/inertia in SI
+units (Stage 3), and URDF export (Stage 4) are separate, not-yet-implemented
+stages -- see Issue #9's consolidated plan comment.
+
+**Script:** `07_create_body_and_wheels.py`
+
+**Requirements:**
+- Headless FreeCAD binary (`freecadcmd`), resolved via `FREECAD_BIN` (see
+  Environment section below)
+- `plates_servo_assembled.FCStd` in this directory (source for the reused
+  pendulum linkage; not modified)
+- `../../02_Design_Inputs/robot_parameters.yaml` (read via
+  `robot_parameters.py`)
+
+**Usage:**
+```bash
+FREECAD_BIN=~/.local/opt/freecad-1.1.3/usr/bin/freecadcmd
+"$FREECAD_BIN" -c "exec(open('07_create_body_and_wheels.py').read())"
+```
+Note: unlike Phases 1-5's documented `freecadcmd --python script.py` form,
+this build of `freecadcmd` (1.1.3) does not set `__name__ == "__main__"`
+for a plain positional script argument, so a script's
+`if __name__ == "__main__":` guard never fires that way (verified
+empirically). The `-c "exec(open(...).read())"` form (already used as the
+Phase 1 fallback above) is what actually runs the script end-to-end.
+
+**Output:**
+- `robot_body_wheels.FCStd` -- new, self-contained document (does not modify
+  `plates_servo_assembled.FCStd`), containing:
+  - `Base_Link` (`Part::Feature`, chassis box, 120x80x40mm)
+  - `Wheel_Left` / `Wheel_Right` (`Part::Feature`, cylinders, dia 70mm x
+    15mm wide, 110mm track center-to-center, symmetric about the
+    centerline, resting on the Z=0 ground plane)
+  - `Pendulum_Link` (`App::Part`), containing copies of `PlateStack`
+    (`Top_Plate`/`Middle_Plate`/`Bottom_Plate`) and `STS3032_Mount`
+    (servo visual + collision-proxy meshes), positioned
+    `pivot_height_mm` above `Base_Link`'s top, centered over its footprint
+  - Object names are exact and case-sensitive -- Stage 2's joint config and
+    Stage 4's URDF export consume them verbatim.
+- `07_body_wheels_metadata.json` -- per-link dimensions/placement/volume,
+  new-primitive triangle count (budget: <5000, per Issue #9's acceptance
+  criteria), reused-mesh facet counts (reported separately, not counted
+  against the budget -- see the JSON's own `reused_pendulum_mesh_note`),
+  and validation results.
+
+**Time:** ~10-20 seconds
+
 ## Legacy Scripts
 
 ### `simple_part.py`
@@ -241,6 +297,10 @@ Generators/
 ├── 04_export_assembly_merged.py
 ├── test_05_integration.py
 ├── test_05_integration_live.py
+├── 07_create_body_and_wheels.py
+├── test_07_body_wheels_geometry.py
+├── robot_body_wheels.FCStd
+├── 07_body_wheels_metadata.json
 ├── plates_assembled.FCStd
 ├── servo_placement.json
 ├── servo_link_config.json
