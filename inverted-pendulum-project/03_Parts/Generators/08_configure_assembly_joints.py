@@ -165,6 +165,24 @@ class JointConfigurator:
             print(f"ERROR loading source document: {e}")
             return False
 
+    def _show_descendants(self, obj) -> None:
+        """Recursively force Visibility=True on obj and every nested child
+        (via .Group). A nested App::Part container (e.g. Pendulum_Link,
+        Pendulum_Link_Right) has no own .Shape -- its App::Link wrapper's
+        render/bounding-box only populates if every leaf Part::Feature/
+        Mesh::Feature AND every intermediate App::Part in the chain has its
+        own Visibility=True, independent of the top container's or the
+        Link's visibility flag (confirmed live via FreeCAD bridge, Issue
+        #63 -- FLT_MAX bbox sentinel otherwise). A flat Part::Feature
+        source (Base_Link, Wheel_Left, Wheel_Right) has no .Group, so this
+        is a no-op for those."""
+        try:
+            obj.ViewObject.Visibility = True
+        except Exception:
+            pass
+        for child in getattr(obj, "Group", []):
+            self._show_descendants(child)
+
     def build_assembly_and_links(self) -> bool:
         try:
             self.assembly = self.doc.addObject("Assembly::AssemblyObject", "Assembly")
@@ -182,6 +200,7 @@ class JointConfigurator:
                 self.links[name] = link
                 if getattr(App, "GuiUp", False):
                     try:
+                        self._show_descendants(src)
                         src.ViewObject.Visibility = False
                         link.ViewObject.Visibility = True
                     except Exception:
