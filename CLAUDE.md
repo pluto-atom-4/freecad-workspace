@@ -133,6 +133,7 @@ ad-hoc human-review aid (its own pipeline stays headless-only). Found while doin
 - **`distToShape() == 0` doesn't distinguish touching from overlapping** — for a real collision
   check, use `shape_a.common(shape_b).Volume`; nonzero means genuine interpenetration, zero means
   clear (even if `distToShape` also read 0).
+- **Assembly::JointGroup/Joint object creation (native Assembly workbench, used by `03_Parts/Generators/08_configure_assembly_joints.py`) segfaults in true headless `freecadcmd` 1.1.3 whenever the `JointObject` module is imported** — reproducible and isolated via bisection: `doc.addObject('Assembly::JointGroup', ...)` alone works fine headlessly; add `import JointObject` (needed for the Joint proxy class) and any subsequent Assembly/JointGroup object creation crashes the process with "Application unexpectedly terminated" and no Python traceback — not an exception catchable in the script. The same code runs without crashing through the live FreeCAD MCP bridge (GUI-backed, `App.GuiUp=True`). Until FreeCAD fixes this upstream, any script creating Assembly workbench Joint objects must run via the bridge's `execute_python` (forcing `__name__ == "__main__"` per this file's documented compile/exec trick), not a plain `freecadcmd -c` invocation.
 
 ## References
 
