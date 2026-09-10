@@ -1,4 +1,34 @@
 {
+  "team": {
+    "agents_path": ".claude/agents",
+    "default_session_mode": "interactive"
+  },
+  "agents": {
+    "architect": {
+      "model": "sonnet",
+      "thinking": {
+        "effort": "high"
+      }
+    },
+    "builder": {
+      "model": "haiku",
+      "thinking": {
+        "effort": "high"
+      }
+    },
+    "reviewer": {
+      "model": "haiku",
+      "thinking": {
+        "effort": "medium"
+      }
+    },
+    "investigator": {
+      "model": "haiku",
+      "thinking": {
+        "effort": "low"
+      }
+    }
+  },
   "permissions": {
     "allow": [
       "Bash(graphify query *)",
