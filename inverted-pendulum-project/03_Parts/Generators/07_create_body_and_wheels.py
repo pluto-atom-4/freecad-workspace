@@ -96,17 +96,27 @@ _position_base_link_under_pendulum(); human-tuned live, ported back here).
 
 Expect validate()'s Wheel_Left-dimensions (re-mounted wheels are smaller
 than robot_parameters.yaml's wheel.diameter_mm/width_mm -- see
-WHEEL_ON_PLATE_RADIUS_MM/WIDTH_MM), track-width-symmetry, wheel-Z-match
-(the two sides' human-tuned geometry isn't perfectly symmetric, so mount
-heights differ by a few mm), ground-clearance (wheels sit at pivot-level
-height, not resting on Z=0), no-interpenetration (a Y-band-only heuristic
+WHEEL_ON_PLATE_RADIUS_MM/WIDTH_MM), track-width-symmetry, ground-clearance
+(wheels sit at pivot-level height, not resting on Z=0), and "Pendulum_Link
+positioned above Base_Link" (Base_Link sits mid-stack now, not below the
+whole assembly) checks to FAIL -- marked `known_transitional=True` on their
+ValidationResult (Issue #54); see that flag's field comment for the
+single-source-of-truth mechanism this feeds into
+(test_07_body_wheels_geometry.py's integration test reads it instead of
+hardcoding expectations). All known, transitional states from an
+in-progress redesign, not bugs; see root CLAUDE.md / DESIGN.md for the open
+decisions.
+
+Update (Issue #54 verification pass): wheel-Z-match (the two sides' mount
+heights, once expected to differ by a few mm from imperfectly symmetric
+human-tuned geometry) and no-interpenetration (a Y-band-only heuristic
 that flags Base_Link's wide Y span against a wheel even when the real 3D
-clearance is fine -- verified separately via Part.Shape.common(), see
-_mount_wheel_on_pendulum_plate()'s live-bridge verification history), and
-"Pendulum_Link positioned above Base_Link" (Base_Link sits mid-stack now,
-not below the whole assembly) checks to FAIL. All known, transitional
-states from an in-progress redesign, not bugs; see root CLAUDE.md /
-DESIGN.md for the open decisions.
+clearance is fine -- see _mount_wheel_on_pendulum_plate()'s live-bridge
+verification history) both now PASS reliably against the current
+placement constants -- the redesign progressed past these two failures
+since the paragraph above was first written. Left un-flagged (no
+`known_transitional`) accordingly; see the inline comments on those two
+ValidationResult calls in validate().
 
 Output:
     - robot_body_wheels.FCStd (new document, does not modify the source file)
@@ -287,6 +297,12 @@ class ValidationResult:
     details: str
     value: Optional[float] = None
     tolerance: Optional[float] = None
+    known_transitional: bool = False  # Issue #9 redesign in progress; see
+    # module docstring "Redesign follow-up" paragraph. True marks a check
+    # that is *expected* to fail right now, not a regression. Update this
+    # flag (not a separate list) as the redesign's checks are fixed --
+    # single source of truth for both the printed summary and
+    # test_07_body_wheels_geometry.py's integration test (Issue #54).
 
     def to_dict(self) -> dict:
         result = {"check": self.check_name, "passed": self.passed, "details": self.details}
@@ -294,6 +310,8 @@ class ValidationResult:
             result["value"] = round(self.value, 4) if isinstance(self.value, float) else self.value
         if self.tolerance is not None:
             result["tolerance"] = self.tolerance
+        if self.known_transitional:
+            result["known_transitional"] = True
         return result
 
 
@@ -1081,6 +1099,7 @@ class BodyWheelsGenerator:
             passed=wheel_dia_ok and wheel_width_ok,
             details=f"BBox X(dia)={wl_bbox.XLength:.2f} mm, Y(width)={wl_bbox.YLength:.2f} mm "
                     f"vs expected dia={wheel.diameter_mm} mm, width={wheel.width_mm} mm",
+            known_transitional=True,
         ))
 
         # Track width, symmetric about centerline
@@ -1097,6 +1116,7 @@ class BodyWheelsGenerator:
                     f"centers=({wl_center_y:.2f}, {wr_center_y:.2f}) mm (symmetric about Y=0)",
             value=track,
             tolerance=wheel.track_mm,
+            known_transitional=True,
         ))
 
         # Wheels share the same Z placement (ground clearance consistency)
@@ -1106,6 +1126,16 @@ class BodyWheelsGenerator:
             passed=z_match,
             details=f"Wheel_Left Z=[{wl_bbox.ZMin:.2f},{wl_bbox.ZMax:.2f}], "
                     f"Wheel_Right Z=[{wr_bbox.ZMin:.2f},{wr_bbox.ZMax:.2f}]",
+            # Issue #54: NOT marked known_transitional, despite the module
+            # docstring's "Redesign follow-up" paragraph listing "wheel-Z-
+            # match" among the expected failures. A headless run against the
+            # current hole-mount offsets (WHEEL_ON_PLATE_CLEARANCE_OFFSET_MM /
+            # WHEEL_RIGHT_HOLE_OFFSET_MM) shows both wheels landing at an
+            # identical Z band -- this check passes reliably now. The
+            # redesign moved past this failure since that paragraph was
+            # written; re-add known_transitional=True if a future geometry
+            # tuning pass reintroduces a Z mismatch (and update the module
+            # docstring, which is now stale on this one check too).
         ))
 
         # Ground clearance: chassis bottom above Z=0, wheel bottom at/near Z=0
@@ -1115,6 +1145,7 @@ class BodyWheelsGenerator:
             passed=ground_ok,
             details=f"Base_Link bottom Z={bbox.ZMin:.2f} mm, wheel bottom Z="
                     f"{min(wl_bbox.ZMin, wr_bbox.ZMin):.2f} mm",
+            known_transitional=True,
         ))
 
         # No chassis/wheel interpenetration: chassis Y-range must not
@@ -1130,6 +1161,16 @@ class BodyWheelsGenerator:
             details=f"Base_Link Y=[{chassis_y[0]:.2f},{chassis_y[1]:.2f}], "
                     f"Wheel_Left Y=[{wl_bbox.YMin:.2f},{wl_bbox.YMax:.2f}], "
                     f"Wheel_Right Y=[{wr_bbox.YMin:.2f},{wr_bbox.YMax:.2f}]",
+            # Issue #54: NOT marked known_transitional. The module docstring's
+            # "Redesign follow-up" paragraph (written earlier in the redesign)
+            # describes this as a Y-band-only heuristic expected to fail, but
+            # a headless run against the current Base_Link/wheel placement
+            # constants shows it passing reliably (Base_Link's Y span no
+            # longer overlaps either wheel's Y span) -- the redesign moved
+            # past this particular failure since that paragraph was written.
+            # If a future geometry change makes this fail again, mark it
+            # known_transitional=True at that point (and update the module
+            # docstring's paragraph, which is now stale on this one check).
         ))
 
         # Pendulum sits above the chassis: PlateStack's global bottom Z
@@ -1155,6 +1196,7 @@ class BodyWheelsGenerator:
             details=f"PlateStack global bottom Z={pendulum_bottom_z:.2f} mm vs "
                     f"Base_Link top Z={bbox.ZMax:.2f} mm" if pendulum_bottom_z is not None
                     else "Could not locate PlateStack plates for comparison",
+            known_transitional=True,
         ))
 
         # Triangle budget (new primitives only -- see module docstring)
@@ -1288,6 +1330,9 @@ class BodyWheelsGenerator:
                 },
                 "validations": [v.to_dict() for v in self.validations],
                 "all_validations_passed": all(v.passed for v in self.validations),
+                "all_required_validations_passed": all(
+                    v.passed for v in self.validations if not v.known_transitional
+                ),
             }
             with open(output_path, "w") as f:
                 json.dump(metadata, f, indent=2)
@@ -1367,7 +1412,12 @@ class BodyWheelsGenerator:
         print("-" * 70)
         self.validate()
         for v in self.validations:
-            status = "✓" if v.passed else "✗"
+            if v.passed:
+                status = "✓"
+            elif v.known_transitional:
+                status = "⚠(known)"
+            else:
+                status = "✗"
             print(f"  {status} {v.check_name}: {v.details}")
         print()
 
