@@ -1,7 +1,7 @@
 {
   "phase": 2,
   "title": "Servo Motor Position Calculation",
-  "timestamp": "1725009600.0",
+  "timestamp": "1789006297.886788",
   "placement": {
     "x": -150.1217,
     "y": -141.9987,
@@ -34,37 +34,42 @@
     "verified_date": "2026-09-02",
     "verified_via": "live FreeCAD MCP inspection",
     "target_document": "plates_servo_assembled.FCStd",
-    "note": "Superseded the old edge26/edge34 (Middle_Plate.Shape.Edges[25]/[33]) index-based derivation. BRep edge indices are not stable after topology edits, and the old derivation produced a stale pitch=90 deg convention that does not match the live document's identity rotation. The live document models the servo as two independently-placed Mesh::Feature objects (visual + collision-proxy) under App::Part \"STS3032_Mount\"; both were synced to this identical placement this session, so visual_placement and collision_placement are recorded separately above even though they currently hold the same values.",
-    "target_hole_center_xy": [32.9933, 25.7719],
-    "target_hole_z_span_mm": [2.75, 5.25],
+    "note": "Superseded the old Edge26/Edge34 (Shape.Edges[25]/[33]) index-based derivation \u2014 BRep edge indices are not stable after topology edits.",
+    "target_hole_center_xy": [
+      32.9933,
+      25.7719
+    ],
+    "target_hole_z_span_mm": [
+      2.75,
+      5.25
+    ],
     "fit_tolerance_mm": "~0.03-0.04"
   },
   "clearances": {
     "top_plate": 7.85,
     "bottom_plate": 4.85,
-    "middle_plate_clearance": 5.85
+    "middle_plate_clearance": 7.85
   },
-  "clearance_note": "The top_plate/bottom_plate figures above (and the matching entries in validations[]) are from this Phase 2 script's coarse Z-height-only formula (see schema_note); it does not account for each plate's individual rotation, so bottom_plate was misreported as failing the 5.0mm nominal minimum here. Phase 3 (03_link_servo_to_assembly.py) was corrected in issue #22 to measure real 3D shape distance (Part.Shape.distToShape against a servo bounding-box proxy) instead: the real measured clearance is ~17.1mm to Bottom_Plate and ~6.43mm to Top_Plate, both comfortably passing the 5.0mm minimum. This Phase 2 JSON is left as originally generated for traceability; see servo_link_config.json for the corrected Phase 3 values.",
   "validations": [
     {
       "check": "Clearance to Top_Plate",
       "passed": true,
-      "details": "Clearance: 7.85mm (minimum: 5.0mm)",
+      "details": "Clearance: 7.85 mm (minimum: 5.0 mm)",
       "value": 7.85,
       "tolerance": 5.0
     },
     {
       "check": "Clearance to Bottom_Plate",
       "passed": false,
-      "details": "Clearance: 4.85mm (minimum: 5.0mm) -- coarse Z-only check, see clearance_note",
+      "details": "Clearance: 4.85 mm (minimum: 5.0 mm)",
       "value": 4.85,
       "tolerance": 5.0
     },
     {
       "check": "Clearance from Middle_Plate",
       "passed": true,
-      "details": "Servo below plate surface: 5.85mm",
-      "value": 5.85
+      "details": "Servo below plate surface: 7.85 mm",
+      "value": 7.85
     }
   ],
   "all_validations_passed": false,
@@ -73,7 +78,7 @@
       "center_to_center": 44.72,
       "width": 10.0,
       "thickness": 2.5,
-      "z_position": 4.0
+      "z_position": 6.0
     },
     "servo": {
       "body_length": 32.0,
@@ -87,6 +92,5 @@
       "alignment_tolerance_mm": 1.0,
       "clearance_min_mm": 5.0
     }
-  },
-  "schema_note": "pitch/z_offset no longer have one consistent meaning: Top_Plate, Middle_Plate and Bottom_Plate each sit at their own independently Z-axis-rotated placement and Z height (6mm / 4mm / 3mm) rather than a uniform parallel stack. For this mount point the servo uses an identity rotation and an explicit (x, y, z), not an offset applied along a shared plate normal."
+  }
 }
