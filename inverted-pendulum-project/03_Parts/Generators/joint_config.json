@@ -1,0 +1,100 @@
+{
+  "phase": 8,
+  "title": "Stage 2: Assembly Joint Configuration",
+  "generated": "2026-09-10T13:47:39.491084",
+  "source_document": "robot_body_wheels.FCStd",
+  "output_document": "robot_assembly.FCStd",
+  "assembly_container": "Assembly",
+  "links": {
+    "Base_Link_Link": {
+      "linked_object": "Base_Link"
+    },
+    "Wheel_Left_Link": {
+      "linked_object": "Wheel_Left"
+    },
+    "Wheel_Right_Link": {
+      "linked_object": "Wheel_Right"
+    },
+    "Pendulum_Link_Link": {
+      "linked_object": "Pendulum_Link"
+    },
+    "Pendulum_Link_Right_Link": {
+      "linked_object": "Pendulum_Link_Right"
+    }
+  },
+  "joints": {
+    "wheel_left_joint": {
+      "name": "wheel_left_joint",
+      "type": "Revolute",
+      "reference1": "Wheel_Left_Link",
+      "reference2": "Base_Link_Link",
+      "origin_mm": {
+        "x": 15.0007,
+        "y": -28.5258,
+        "z": 54.0095
+      },
+      "axis": "global Y (0,1,0)",
+      "enable_angle_min": false,
+      "enable_angle_max": false
+    },
+    "wheel_right_joint": {
+      "name": "wheel_right_joint",
+      "type": "Revolute",
+      "reference1": "Wheel_Right_Link",
+      "reference2": "Base_Link_Link",
+      "origin_mm": {
+        "x": 15.0007,
+        "y": 67.0258,
+        "z": 54.0095
+      },
+      "axis": "global Y (0,1,0)",
+      "enable_angle_min": false,
+      "enable_angle_max": false
+    },
+    "pendulum_pivot_joint": {
+      "name": "pendulum_pivot_joint",
+      "type": "Revolute",
+      "reference1": "Pendulum_Link_Link",
+      "reference2": "Base_Link_Link",
+      "origin_mm": {
+        "x": -8.0014,
+        "y": -18.2758,
+        "z": 70.75
+      },
+      "axis": "global Y (0,1,0)",
+      "enable_angle_min": false,
+      "enable_angle_max": false
+    },
+    "pendulum_pivot_right_joint": {
+      "name": "pendulum_pivot_right_joint",
+      "type": "Revolute",
+      "reference1": "Pendulum_Link_Right_Link",
+      "reference2": "Base_Link_Link",
+      "origin_mm": {
+        "x": -8.0014,
+        "y": 62.2758,
+        "z": 71.25
+      },
+      "axis": "global Y (0,1,0)",
+      "enable_angle_min": false,
+      "enable_angle_max": false
+    }
+  },
+  "validations": [
+    {
+      "check": "joint_count",
+      "passed": true,
+      "details": "4 joints created (expected 4)"
+    },
+    {
+      "check": "joint_type",
+      "passed": true,
+      "details": "All joints use JointType=Revolute (no distinct 'continuous' type exists)"
+    },
+    {
+      "check": "axis_consistency",
+      "passed": true,
+      "details": "All joints share global Y -- wheel axle and pendulum swing must be parallel"
+    }
+  ]
+}
