@@ -1,0 +1,238 @@
+{
+  "phase": 7,
+  "title": "Stage 1: Body + Wheel Geometry",
+  "timestamp": "2026-09-09T16:47:28.125371",
+  "issue": 9,
+  "source_document": "plates_servo_assembled.FCStd",
+  "output_document": "robot_body_wheels.FCStd",
+  "robot_parameters_source": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/02_Design_Inputs/robot_parameters.yaml",
+  "links": {
+    "Base_Link": {
+      "name": "Base_Link",
+      "kind": "primitive_plate",
+      "dimensions_mm": {
+        "length_mm": 40.0,
+        "width_mm": 80.0,
+        "thickness_mm": 2.5
+      },
+      "placement": {
+        "position": {
+          "x": 15.4,
+          "y": 19.0,
+          "z": 77.9
+        },
+        "rotation_ypr_deg": {
+          "yaw": 0.0,
+          "pitch": 0.0,
+          "roll": 0.0
+        }
+      },
+      "bounding_box_mm": {
+        "x_min": -4.6,
+        "x_max": 35.4,
+        "y_min": -21.0,
+        "y_max": 59.0,
+        "z_min": 87.9,
+        "z_max": 90.4
+      },
+      "volume_mm3": 8000.0,
+      "target_mass_kg": 0.25,
+      "triangle_count": 12,
+      "notes": "Redesigned as a flat plate (was a solid chassis.length_mm=120.0mm x chassis.height_mm=40.0mm box) -- length is now BASE_LINK_LENGTH_MM and thickness is now BASE_LINK_PLATE_THICKNESS_MM, not robot_parameters.yaml's chassis.length_mm/chassis.height_mm. Repositioned near Bottom_Plate's top (Z=90.40mm, Bottom_Plate top + -0.631mm), X=15.4mm, Y=19.0mm (human-tuned, fixed) -- instead of CHASSIS_GROUND_CLEARANCE_MM above the ground plane."
+    },
+    "Wheel_Left": {
+      "name": "Wheel_Left",
+      "kind": "primitive_cylinder",
+      "dimensions_mm": {
+        "diameter_mm": 30.0,
+        "radius_mm": 15.0,
+        "width_mm": 6.0
+      },
+      "placement": {
+        "position": {
+          "x": 15.0007,
+          "y": -28.5258,
+          "z": 54.0095
+        },
+        "rotation_ypr_deg": {
+          "yaw": 0.0,
+          "pitch": 0.0,
+          "roll": 0.0
+        }
+      },
+      "bounding_box_mm": {
+        "x_min": -15.0,
+        "x_max": 15.0,
+        "y_min": -3.0,
+        "y_max": 3.0,
+        "z_min": -15.0,
+        "z_max": 15.0
+      },
+      "volume_mm3": 4241.1501,
+      "target_mass_kg": 0.03,
+      "triangle_count": 100,
+      "notes": "Re-mounted on Bottom_Plate's Edge27 hole (hole_center=(15.001, -22.526, 54.009)), offset (0.000, -6.000, 0.000)"
+    },
+    "Wheel_Right": {
+      "name": "Wheel_Right",
+      "kind": "primitive_cylinder",
+      "dimensions_mm": {
+        "diameter_mm": 30.0,
+        "radius_mm": 15.0,
+        "width_mm": 6.0
+      },
+      "placement": {
+        "position": {
+          "x": 15.0007,
+          "y": 67.0258,
+          "z": 54.0095
+        },
+        "rotation_ypr_deg": {
+          "yaw": 0.0,
+          "pitch": 0.0,
+          "roll": 0.0
+        }
+      },
+      "bounding_box_mm": {
+        "x_min": -15.0,
+        "x_max": 15.0,
+        "y_min": -3.0,
+        "y_max": 3.0,
+        "z_min": -15.0,
+        "z_max": 15.0
+      },
+      "volume_mm3": 4241.1501,
+      "target_mass_kg": 0.03,
+      "triangle_count": 100,
+      "notes": "Re-mounted on Bottom_Plate_Right's Edge27 hole (hole_center=(15.001, 58.026, 54.509)), offset (0.000, 9.000, -0.500)"
+    },
+    "Pendulum_Link": {
+      "name": "Pendulum_Link",
+      "kind": "reused_subassembly",
+      "dimensions_mm": {
+        "arm_length_mm": 160.0,
+        "pivot_height_mm": 60.0
+      },
+      "placement": {
+        "position": {
+          "x": -8.0014,
+          "y": -18.2758,
+          "z": 70.75
+        },
+        "rotation_ypr_deg": {
+          "yaw": 0.0,
+          "pitch": 0.0,
+          "roll": 90.0
+        }
+      },
+      "bounding_box_mm": {
+        "x_min": -29.9919,
+        "x_max": 29.9919,
+        "y_min": -25.5258,
+        "y_max": -20.0258,
+        "z_min": 49.0095,
+        "z_max": 129.0421
+      },
+      "volume_mm3": 3863.4369,
+      "target_mass_kg": 0.12,
+      "notes": "Copied (not linked) from plates_servo_assembled.FCStd's PlateStack + STS3032_Mount groups -- see module docstring for the link-vs-copy rationale. Bounding box and volume above cover the copied PlateStack plates only (Part::Feature shapes); the copied STS3032_Mount servo meshes retain their original relative placement from the source document (see reused_pendulum_mesh_facet_counts in geometry_stats for their facet counts) and are not included in this link's volume/bbox figures since Mesh::Feature geometry isn't uniformly watertight/volumetric."
+    },
+    "Pendulum_Link_Right": {
+      "name": "Pendulum_Link_Right",
+      "kind": "human_tuned_subassembly",
+      "dimensions_mm": {
+        "arm_length_mm": 160.0,
+        "pivot_height_mm": 60.0
+      },
+      "placement": {
+        "position": {
+          "x": -8.0014,
+          "y": 62.2758,
+          "z": 71.25
+        },
+        "rotation_ypr_deg": {
+          "yaw": 0.0,
+          "pitch": 0.0,
+          "roll": 90.0
+        }
+      },
+      "bounding_box_mm": {
+        "x_min": -29.9919,
+        "x_max": 29.9919,
+        "y_min": 58.0258,
+        "y_max": 63.5258,
+        "z_min": 49.5095,
+        "z_max": 129.5421
+      },
+      "volume_mm3": 3863.4369,
+      "target_mass_kg": 0.12,
+      "notes": "NOT a geometric mirror of Pendulum_Link -- see build_pendulum_link_right()'s docstring. target_mass_kg reuses Pendulum_Link's own robot_parameters.yaml mapping (no separate 'Pendulum_Link_Right' entry exists yet)."
+    }
+  },
+  "geometry_stats": {
+    "new_primitive_triangle_count": 212,
+    "new_primitive_triangle_budget": 5000,
+    "new_primitive_triangle_budget_ok": true,
+    "reused_pendulum_mesh_facet_counts": {
+      "feetech_STS3032_visual_1_0mm": 38608,
+      "feetech_STS3032_collision_proxy": 188,
+      "feetech_STS3032_visual_1_0mm_Right": 38608,
+      "feetech_STS3032_collision_proxy_Right": 188
+    },
+    "reused_pendulum_mesh_note": "Inherited from Issue #3 (plates_servo_assembled.FCStd), not new Stage 1 geometry. Excluded from the <5000-triangle budget check above: per Issue #9 Decision #10, the servo's simulation <collision> geometry is emitted as URDF primitives (box + cylinder) in Stage 4, not this mesh -- this high-fidelity mesh is a visual-only asset.",
+    "total_volume_mm3": 54166.5456,
+    "total_volume_note": "Sum of Base_Link + Wheel_Left + Wheel_Right + copied PlateStack plate volumes + (where watertight) copied STS3032_Mount mesh volumes. For Stage 3's future sanity check (Issue #9 Decision #12) against Phase 4's export_metadata.json geometry_stats.volume_mm3 figure (22708.46 mm^3 for plates+servo only, no wheels/chassis) -- NOT expected to match exactly once wheel/chassis volume is included; informational only."
+  },
+  "validations": [
+    {
+      "check": "Required object names present",
+      "passed": true,
+      "details": "Base_Link, Wheel_Left, Wheel_Right, Pendulum_Link, Pendulum_Link_Right all found"
+    },
+    {
+      "check": "Base_Link plate dimensions",
+      "passed": true,
+      "details": "BBox 40.00x80.00x2.50 mm vs expected 40.0x80.0x2.5 mm"
+    },
+    {
+      "check": "Wheel_Left dimensions match robot_parameters.yaml",
+      "passed": false,
+      "details": "BBox X(dia)=30.00 mm, Y(width)=6.00 mm vs expected dia=70.0 mm, width=15.0 mm"
+    },
+    {
+      "check": "Wheel track width and symmetry",
+      "passed": false,
+      "details": "track=95.55 mm (expected 110.0 mm), centers=(-28.53, 67.03) mm (symmetric about Y=0)",
+      "value": 95.5516,
+      "tolerance": 110.0
+    },
+    {
+      "check": "Wheels share identical Z placement",
+      "passed": true,
+      "details": "Wheel_Left Z=[39.01,69.01], Wheel_Right Z=[39.01,69.01]"
+    },
+    {
+      "check": "Ground clearance (chassis above Z=0, wheels resting on Z=0)",
+      "passed": false,
+      "details": "Base_Link bottom Z=87.90 mm, wheel bottom Z=39.01 mm"
+    },
+    {
+      "check": "No Base_Link / wheel interpenetration",
+      "passed": true,
+      "details": "Base_Link Y=[-21.00,59.00], Wheel_Left Y=[-31.53,-25.53], Wheel_Right Y=[64.03,70.03]"
+    },
+    {
+      "check": "Pendulum_Link positioned above Base_Link",
+      "passed": false,
+      "details": "PlateStack global bottom Z=49.01 mm vs Base_Link top Z=90.40 mm"
+    },
+    {
+      "check": "New primitive geometry under triangle budget",
+      "passed": true,
+      "details": "212 triangles (budget: <5000)",
+      "value": 212,
+      "tolerance": 5000
+    }
+  ],
+  "all_validations_passed": false
+}
