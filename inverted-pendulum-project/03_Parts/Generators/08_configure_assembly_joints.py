@@ -20,9 +20,11 @@ Object/document structure created, in the SAME document as the source
 fragility):
   - Assembly            (Assembly::AssemblyObject, new container)
   - Base_Link_Link, Wheel_Left_Link, Wheel_Right_Link, Pendulum_Link_Link
-    (App::Link, each wrapping the matching Stage 1 object with an identity
-    Placement -- the Stage 1 objects already carry their own absolute
-    placement, so the link itself adds no additional transform)
+    (App::Link, each wrapping the matching Stage 1 object with its Placement
+    COPIED from the source object -- App::Link.Placement does NOT auto-compose
+    with LinkedObject.Placement, it is the sole world transform, so it must be
+    set explicitly to the source's own Placement or the link renders
+    collapsed at the origin)
   - Joints group (Assembly::JointGroup, auto-created by
     UtilsAssembly.getJointGroup())
     - wheel_left_joint, wheel_right_joint, pendulum_pivot_joint,
@@ -170,7 +172,11 @@ class JointConfigurator:
                 src = self.doc.getObject(name)
                 link = self.doc.addObject("App::Link", name + "_Link")
                 link.LinkedObject = src
-                link.Placement = App.Placement()  # identity; src's absolute placement already applies
+                link.Placement = src.Placement  # App::Link.Placement does NOT auto-compose with
+                # LinkedObject.Placement (unlike Part::Feature) -- it is the SOLE world transform,
+                # so it must be copied from src here, not left as identity, or the link renders
+                # collapsed at the origin instead of its real assembled position (confirmed via
+                # live GUI bounding-box query, Issue #61 follow-up).
                 link.Label = name + "_Link"
                 self.assembly.addObject(link)
                 self.links[name] = link
