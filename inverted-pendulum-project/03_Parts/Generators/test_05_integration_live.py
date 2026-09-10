@@ -93,6 +93,12 @@ class LiveIntegrationTests:
         self.test_performance(doc)
         print()
 
+        # Test 7: extract_assembly_shape() shape filter regression (issue #55)
+        print("Test 7: extract_assembly_shape() rejects unexpected shapes (issue #55)")
+        print("-" * 70)
+        self.test_export_shape_filter_regression()
+        print()
+
         # Cleanup
         if doc:
             App.closeDocument(doc.Name)
@@ -327,6 +333,90 @@ class LiveIntegrationTests:
 
         except Exception as e:
             print(f"✗ Error measuring performance: {e}")
+
+    def test_export_shape_filter_regression(self) -> None:
+        """Test: extract_assembly_shape() rejects unexpected shape objects.
+
+        Regression test for issue #55: leftover prototype/scratch clutter
+        objects (e.g. Top_Plate001, mirroring what was actually found in
+        plates_servo_assembled.FCStd) sharing the document with the expected
+        plates must make extract_assembly_shape() fail loudly instead of
+        silently folding them into the merged compound.
+
+        Deliberately independent of plates_servo_assembled.FCStd's current
+        clutter state -- uses synthetic in-memory documents only, so this
+        test stays meaningful regardless of whether that file's clutter is
+        ever cleaned up (out of scope for this fix).
+        """
+        try:
+            # Dynamically import AssemblyExporter, using the same
+            # importlib.util pattern already established in
+            # test_06_phase6_tooling.py.
+            from importlib.util import spec_from_file_location, module_from_spec
+
+            spec = spec_from_file_location(
+                "export_assembly_merged",
+                str(self.script_dir / "04_export_assembly_merged.py")
+            )
+            export_module = module_from_spec(spec)
+            spec.loader.exec_module(export_module)
+
+            AssemblyExporter = export_module.AssemblyExporter
+
+            # Case 1 ("good"): exactly the expected three plates.
+            doc_good = App.newDocument("Issue55RegressionGood")
+            try:
+                for name in ("Top_Plate", "Middle_Plate", "Bottom_Plate"):
+                    obj = doc_good.addObject("Part::Feature", name)
+                    obj.Shape = Part.makeBox(10, 10, 10)
+                doc_good.recompute()
+
+                exporter_good = AssemblyExporter()
+                exporter_good.doc = doc_good
+                result_good = exporter_good.extract_assembly_shape()
+
+                passed_good = result_good is True
+                self.results.append({
+                    "name": "extract_assembly_shape accepts exactly 3 plates",
+                    "passed": passed_good,
+                })
+                status = "✓" if passed_good else "✗"
+                print(f"  {status} extract_assembly_shape accepts exactly 3 "
+                      f"plates: returned {result_good}")
+            finally:
+                App.closeDocument(doc_good.Name)
+
+            # Case 2 ("bad", mirrors the real issue): expected plates plus
+            # an unexpected leftover clutter object.
+            doc_bad = App.newDocument("Issue55RegressionBad")
+            try:
+                for name in ("Top_Plate", "Middle_Plate", "Bottom_Plate",
+                             "Top_Plate001"):
+                    obj = doc_bad.addObject("Part::Feature", name)
+                    obj.Shape = Part.makeBox(10, 10, 10)
+                doc_bad.recompute()
+
+                exporter_bad = AssemblyExporter()
+                exporter_bad.doc = doc_bad
+                result_bad = exporter_bad.extract_assembly_shape()
+
+                passed_bad = result_bad is False
+                self.results.append({
+                    "name": "extract_assembly_shape rejects unexpected Top_Plate001",
+                    "passed": passed_bad,
+                })
+                status = "✓" if passed_bad else "✗"
+                print(f"  {status} extract_assembly_shape rejects unexpected "
+                      f"Top_Plate001: returned {result_bad}")
+            finally:
+                App.closeDocument(doc_bad.Name)
+
+        except Exception as e:
+            print(f"✗ Error running issue #55 shape filter regression test: {e}")
+            self.results.append({
+                "name": "extract_assembly_shape issue #55 regression",
+                "passed": False,
+            })
 
     def _print_summary(self) -> None:
         """Print test summary"""

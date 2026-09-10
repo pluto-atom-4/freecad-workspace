@@ -133,6 +133,21 @@ class AssemblyExporter:
     # Servo placement tolerance (from Phase 3)
     SERVO_POSITION_TOLERANCE = 0.01  # mm
 
+    # Exact Part::Feature object Names expected to contribute plate
+    # geometry to the merged export. Anything else with a non-empty
+    # .Shape (e.g. leftover *_Right prototype duplicates like
+    # Top_Plate001/Middle_Plate001/Bottom_Plate001, left behind by
+    # live-bridge scratch work on 07_create_body_and_wheels.py's
+    # build_pendulum_link_right() -- see issue #55) is unexpected clutter
+    # that must fail extraction loudly instead of being silently folded
+    # into the compound. Servo geometry is loaded separately from the
+    # external STEP file by load_servo_geometry(), not from this
+    # document's Mesh::Feature servo meshes (which don't have .Shape
+    # anyway). Matches the plate-name convention already used by
+    # test_05_integration.py's required_plates and by
+    # 07_create_body_and_wheels.py's getObject("PlateStack") lookups.
+    EXPECTED_PLATE_NAMES = {"Top_Plate", "Middle_Plate", "Bottom_Plate"}
+
     # Expected servo placement, as a fallback if servo_placement.json can't
     # be read. Verified live-document placement (2026-09-02, via live
     # FreeCAD MCP inspection, ~0.03-0.04mm fit to Middle_Plate hole B).
@@ -217,12 +232,20 @@ class AssemblyExporter:
             return False
 
     def extract_assembly_shape(self) -> bool:
-        """Extract merged shape from all objects in assembly"""
+        """Extract merged shape from all objects in assembly.
+
+        Only objects whose Name is in EXPECTED_PLATE_NAMES may contribute
+        geometry to the merged compound -- see issue #55. Any other object
+        with a non-empty .Shape (leftover prototype/scratch clutter, e.g.
+        Top_Plate001) is unexpected and fails extraction loudly instead of
+        being silently folded into the export.
+        """
         try:
             if not self.doc:
                 return False
 
             shapes_to_merge = []
+            unexpected_objects = []
 
             # Collect all shape objects from document
             for obj in self.doc.Objects:
@@ -233,6 +256,10 @@ class AssemblyExporter:
 
                     shape = obj.Shape
                     if shape and shape.Vertexes:  # Check if shape has geometry
+                        if obj.Name not in self.EXPECTED_PLATE_NAMES:
+                            unexpected_objects.append(obj.Name)
+                            continue
+
                         shapes_to_merge.append((obj.Name, shape))
                         print(f"  ✓ Extracted {obj.Name} ({len(shape.Faces)} faces)")
 
@@ -240,8 +267,28 @@ class AssemblyExporter:
                     # Skip objects that can't be converted
                     continue
 
-            if not shapes_to_merge:
-                print(f"ERROR: No valid shapes found in assembly")
+            if unexpected_objects:
+                print(f"ERROR: Unexpected shape object(s) found in assembly: "
+                      f"{sorted(unexpected_objects)}")
+                print(f"  Expected only: {sorted(self.EXPECTED_PLATE_NAMES)}")
+                print(f"  Hint (see issue #55): this usually means leftover "
+                      f"prototype/scratch objects (e.g. from live-bridge "
+                      f"experimentation) were never cleaned up from the "
+                      f"source .FCStd. If this geometry is legitimately new, "
+                      f"extend EXPECTED_PLATE_NAMES instead of ignoring this "
+                      f"error.")
+                return False
+
+            if len(shapes_to_merge) != len(self.EXPECTED_PLATE_NAMES):
+                found_names = sorted(name for name, _ in shapes_to_merge)
+                missing_names = sorted(
+                    self.EXPECTED_PLATE_NAMES - {name for name, _ in shapes_to_merge}
+                )
+                print(f"ERROR: Expected {len(self.EXPECTED_PLATE_NAMES)} plate "
+                      f"shape(s) but found {len(shapes_to_merge)}")
+                print(f"  Found: {found_names}")
+                print(f"  Expected: {sorted(self.EXPECTED_PLATE_NAMES)}")
+                print(f"  Missing: {missing_names}")
                 return False
 
             print(f"\n✓ Found {len(shapes_to_merge)} shape(s) to merge")
