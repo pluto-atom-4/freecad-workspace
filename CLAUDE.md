@@ -54,6 +54,14 @@ positional or `--python` script argument** — a script's `if __name__ == "__mai
 silently never fires, exits 0 having done nothing (verified empirically, not documented
 upstream). Working invocation: `"$FREECAD_BIN" -c "exec(open('script.py').read())"`.
 
+**`runpy.run_path('script.py', run_name='__main__')` (an alternative workaround to the above
+when a script's own top-level code — not just its `__main__` guard — needs to run under
+`freecadcmd`) sets `__file__` to whatever path string is passed in, unresolved** — pass a bare
+relative filename and `Path(__file__).parent` resolves to `.`, silently breaking any
+`script_dir.parent`-style sibling-directory lookup (observed: `03_link_servo_to_assembly.py`'s
+`resolve_mechanical_dir()` wrote broken relative mesh paths into `servo_link_config.json`
+instead of the correct absolute path). Always pass an absolute path to `run_path()`.
+
 ## MCP Client Configuration
 
 `.mcp.json` (project root) configures the `freecad` MCP server. PyPI package usage:
