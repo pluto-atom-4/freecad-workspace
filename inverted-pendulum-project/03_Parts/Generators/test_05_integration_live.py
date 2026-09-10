@@ -99,6 +99,12 @@ class LiveIntegrationTests:
         self.test_export_shape_filter_regression()
         print()
 
+        # Test 8: Middle_Plate z_position regression (issue #56)
+        print("Test 8: Middle_Plate z_position matches live document (issue #56)")
+        print("-" * 70)
+        self.test_middle_plate_z_position_regression()
+        print()
+
         # Cleanup
         if doc:
             App.closeDocument(doc.Name)
@@ -417,6 +423,103 @@ class LiveIntegrationTests:
                 "name": "extract_assembly_shape issue #55 regression",
                 "passed": False,
             })
+
+    def test_middle_plate_z_position_regression(self) -> None:
+        """Test: MIDDLE_PLATE_SPECS["z_position"] matches the live document.
+
+        Regression test for issue #56: 02_position_servo.py and
+        03_link_servo_to_assembly.py each hardcode Middle_Plate's Z position
+        as MIDDLE_PLATE_SPECS["z_position"] rather than reading it from the
+        document. That constant previously drifted to a stale 4.0 after
+        Middle_Plate was manually moved to Z=6.0 in
+        plates_servo_assembled.FCStd, silently corrupting the reported
+        "servo below Middle_Plate" clearance in servo_placement.json /
+        servo_link_config.json without failing any pass/fail check.
+
+        This opens the real assembly document, reads Middle_Plate's live Z,
+        and asserts both scripts' hardcoded constants still match it —
+        catching this exact class of drift the next time it recurs, without
+        requiring the scripts themselves to read the value live (explicitly
+        out of scope per issue #56).
+        """
+        doc = None
+        try:
+            from importlib.util import spec_from_file_location, module_from_spec
+
+            def load_module(filename: str, module_name: str):
+                spec = spec_from_file_location(
+                    module_name, str(self.script_dir / filename)
+                )
+                module = module_from_spec(spec)
+                spec.loader.exec_module(module)
+                return module
+
+            position_module = load_module(
+                "02_position_servo.py", "position_servo_regression"
+            )
+            link_module = load_module(
+                "03_link_servo_to_assembly.py", "link_servo_regression"
+            )
+
+            doc_path = self.script_dir / "plates_servo_assembled.FCStd"
+            if not doc_path.exists():
+                print(f"✗ Assembly file not found: {doc_path}")
+                self.results.append({
+                    "name": "Middle_Plate z_position matches live document (issue #56)",
+                    "passed": False,
+                })
+                return
+
+            doc = App.openDocument(str(doc_path))
+
+            middle_plate = None
+            for obj in doc.Objects:
+                if obj.Name == "Middle_Plate":
+                    middle_plate = obj
+                    break
+
+            if middle_plate is None:
+                print("✗ Middle_Plate not found in document")
+                self.results.append({
+                    "name": "Middle_Plate z_position matches live document (issue #56)",
+                    "passed": False,
+                })
+                return
+
+            live_z = middle_plate.Placement.Base.z
+
+            calc_z = position_module.ServoPositionCalculator.MIDDLE_PLATE_SPECS["z_position"]
+            link_z = link_module.ServoLinkManager.MIDDLE_PLATE_SPECS["z_position"]
+
+            calc_passed = abs(live_z - calc_z) < 1e-6
+            link_passed = abs(live_z - link_z) < 1e-6
+
+            self.results.append({
+                "name": "02_position_servo.py MIDDLE_PLATE_SPECS.z_position matches live Middle_Plate.Placement.Position.z (issue #56)",
+                "passed": calc_passed,
+            })
+            self.results.append({
+                "name": "03_link_servo_to_assembly.py MIDDLE_PLATE_SPECS.z_position matches live Middle_Plate.Placement.Position.z (issue #56)",
+                "passed": link_passed,
+            })
+
+            status = "✓" if calc_passed else "✗"
+            print(f"  {status} 02_position_servo.py z_position={calc_z} vs live={live_z}")
+            status = "✓" if link_passed else "✗"
+            print(f"  {status} 03_link_servo_to_assembly.py z_position={link_z} vs live={live_z}")
+
+        except Exception as e:
+            print(f"✗ Error running issue #56 Middle_Plate z_position regression test: {e}")
+            self.results.append({
+                "name": "Middle_Plate z_position issue #56 regression",
+                "passed": False,
+            })
+        finally:
+            if doc is not None:
+                try:
+                    App.closeDocument(doc.Name)
+                except Exception:
+                    pass
 
     def _print_summary(self) -> None:
         """Print test summary"""

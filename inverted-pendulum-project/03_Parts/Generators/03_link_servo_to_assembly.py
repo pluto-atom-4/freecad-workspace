@@ -110,10 +110,11 @@ class ServoLinkManager:
         "shaft_offset_y": 14.0,     # mm from center (rear of servo)
     }
 
-    # Plate specifications (live document values, verified 2026-09-02)
+    # Plate specifications (live document values, verified 2026-09-02;
+    # Middle_Plate z_position corrected 2026-09-09 — see issue #56)
     MIDDLE_PLATE_SPECS = {
         "thickness": 2.5,           # mm
-        "z_position": 4.0,          # mm (Middle_Plate.Placement.Position.z)
+        "z_position": 6.0,          # mm (Middle_Plate.Placement.Position.z; corrected 2026-09-09, issue #56)
     }
     TOP_PLATE_Z = 6.0                # mm (Top_Plate.Placement.Position.z)
     BOTTOM_PLATE_Z = 3.0             # mm (Bottom_Plate.Placement.Position.z)

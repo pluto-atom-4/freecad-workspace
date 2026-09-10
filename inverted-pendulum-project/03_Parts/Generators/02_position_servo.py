@@ -21,7 +21,7 @@ script no longer depends on fragile edge indexing.
 JSON schema note: `pitch`/`z_offset` no longer have one consistent meaning
 across the assembly. Top_Plate, Middle_Plate and Bottom_Plate each sit at
 their own independently Z-axis-rotated placement and their own Z height
-(6mm / 4mm / 3mm respectively) rather than a uniform parallel stack, so a
+(6mm / 6mm / 3mm respectively) rather than a uniform parallel stack, so a
 single scalar "z_offset below the plate" or "pitch to point the shaft down"
 cannot describe all three relationships at once. For the current (and only)
 mount point — Middle_Plate hole cluster B — both are effectively 0: the
@@ -94,12 +94,13 @@ class ValidationResult:
 class ServoPositionCalculator:
     """Provide the verified servo motor placement for Middle_Plate hole cluster B"""
 
-    # Middle_Plate specifications (live document values, verified 2026-09-02)
+    # Middle_Plate specifications (live document values, verified 2026-09-02;
+    # z_position corrected 2026-09-09 — was stale at 4.0, see issue #56)
     MIDDLE_PLATE_SPECS = {
         "center_to_center": 44.72,  # mm
         "width": 10.0,              # mm
         "thickness": 2.5,           # mm
-        "z_position": 4.0,          # mm (Middle_Plate.Placement.Position.z in the live document)
+        "z_position": 6.0,          # mm (Middle_Plate.Placement.Position.z in the live document; corrected 2026-09-09, issue #56)
     }
 
     # Servo motor specifications (Feetech STS3032)

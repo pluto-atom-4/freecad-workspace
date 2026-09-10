@@ -4,11 +4,11 @@
   "servo_meshes": [
     {
       "name": "feetech_STS3032_visual_1_0mm",
-      "file": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/03_Parts/Mechanical/feetech-STS3032-visual-1.0mm.stl"
+      "file": "Mechanical/feetech-STS3032-visual-1.0mm.stl"
     },
     {
       "name": "feetech_STS3032_collision_proxy",
-      "file": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/03_Parts/Mechanical/feetech-STS3032-collision-proxy.stl"
+      "file": "Mechanical/feetech-STS3032-collision-proxy.stl"
     }
   ],
   "placement": {
@@ -77,8 +77,8 @@
     {
       "check": "Servo below Middle_Plate",
       "passed": true,
-      "details": "Offset: 5.85 mm",
-      "value": 5.85
+      "details": "Offset: 7.85 mm",
+      "value": 7.85
     }
   ],
   "all_validations_passed": true,
@@ -94,7 +94,7 @@
     },
     "middle_plate": {
       "thickness": 2.5,
-      "z_position": 4.0
+      "z_position": 6.0
     },
     "tolerances": {
       "placement_tolerance_mm": 1.0,
