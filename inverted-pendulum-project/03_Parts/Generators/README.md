@@ -122,9 +122,43 @@ freecadcmd --python 04_export_assembly_merged.py
 
 ---
 
-## Robot Assembly (Issue #9 Stages 1-3)
+## Robot Assembly (Issue #9 Stages 1-5 + URDF Export Stages 4-5)
 
-Complete workflow for creating a two-wheel self-balancing robot assembly from Stage 0's design parameters, configuring joints, and computing mass properties.
+Complete workflow for creating a two-wheel self-balancing robot assembly from Stage 0's design parameters, configuring joints, computing mass properties, and exporting to URDF format for simulation.
+
+### Phase 7-11 Overview (URDF Export Pipeline)
+
+| Phase | Script | Output | Execution Mode | Status |
+|-------|--------|--------|-----------------|--------|
+| 7 | `07_create_body_and_wheels.py` | `robot_body_wheels.FCStd`, `07_body_wheels_metadata.json` | `freecadcmd -c` | ✅ |
+| 8 | `08_configure_assembly_joints.py` | `robot_assembly.FCStd`, `08_assembly_joints_metadata.json` | **FreeCAD MCP bridge** (not plain freecadcmd) | ⚠️ |
+| 9 | `09_compute_mass_properties.py` | `09_mass_properties.json` | `freecadcmd -c` | ✅ |
+| 10 | `10_export_urdf.py` | `06_Exports/urdf/robot.urdf`, `06_Exports/urdf/meshes/`, `10_urdf_export_metadata.json` | `python3` | ✅ |
+| 11 | `11_validate_inertia.py` | `11_inertia_validation_report.json` | `python3` | ✅ |
+
+**Run phases 7, 9-11 end-to-end:** `./run_urdf_export.sh`  
+**Run Phase 8 separately:** Requires FreeCAD MCP bridge (see Phase 8 section below for details)
+
+### Joint & Link Naming Convention (for Webots/Simulator Import)
+
+**Links (5 total):**
+
+| Link Name | Type | Mass (kg) | Notes |
+|-----------|------|-----------|-------|
+| `Base_Link` | URDF root (no incoming joint) | 0.25 | Flat chassis plate (40×80×2.5 mm) |
+| `Wheel_Left` | Cylinder | 0.03 | Left wheel (∅30 mm × 6 mm) |
+| `Wheel_Right` | Cylinder | 0.03 | Right wheel (∅30 mm × 6 mm) |
+| `Pendulum_Link` | Composite (plates + servo) | ~0.175 | 3-plate stack + servo left instance |
+| `Pendulum_Link_Right` | Composite (plates + servo) | ~0.175 | 3-plate stack + servo right instance |
+
+**Joints (4 total, all revolute, axis = [0 1 0]):**
+
+| Joint Name | Type | Parent→Child | Axis | Limits (rad) | Notes |
+|------------|------|-------------|------|--------------|-------|
+| `wheel_left_joint` | revolute | `Base_Link` → `Wheel_Left` | [0, 1, 0] | [-∞, ∞] | Free rotation |
+| `wheel_right_joint` | revolute | `Base_Link` → `Wheel_Right` | [0, 1, 0] | [-∞, ∞] | Free rotation |
+| `pendulum_pivot_joint` | revolute | `Base_Link` → `Pendulum_Link` | [0, 1, 0] | [-∞, ∞] | Pivot axis (left servo) |
+| `pendulum_pivot_right_joint` | revolute | `Base_Link` → `Pendulum_Link_Right` | [0, 1, 0] | [-∞, ∞] | Pivot axis (right servo) |
 
 ### Stage 1: Body + Wheel Geometry (Issue #9)
 
@@ -162,13 +196,25 @@ echo "exec(open('07_create_body_and_wheels.py').read())" | freecadcmd -c
 
 Adds Assembly workbench joints (fixed + revolute) to configure the robot's kinematic structure.
 
+⚠️ **KNOWN LIMITATION:** Phase 8 **CANNOT RUN in plain headless `freecadcmd`** due to a FreeCAD 1.1.3 bug where Assembly::JointGroup/Joint creation segfaults when `JointObject` module is imported. See the script's docstring (lines 76-93) for full details.
+
 **Requirements:**
 - `robot_body_wheels.FCStd` (output from Stage 1)
 - `robot_parameters.yaml` (design parameters)
+- FreeCAD MCP bridge (if running this script directly; see below)
 
-**Usage:**
+**Usage (via FreeCAD MCP bridge, not plain freecadcmd):**
+
+If you have the FreeCAD MCP bridge running (see root `CLAUDE.md`), use its `execute_python` tool:
+```python
+# In the bridge's Python console or via execute_python:
+exec(compile(open('08_configure_assembly_joints.py').read(), 
+             '08_configure_assembly_joints.py', 'exec'),
+     {'__name__': '__main__', '__file__': '08_configure_assembly_joints.py'})
+```
+
+Or run the accompanying pytest test (pure Python, no FreeCAD required):
 ```bash
-echo "exec(open('08_configure_assembly_joints.py').read())" | freecadcmd -c
 python3 -m pytest -q test_08_configure_assembly_joints.py
 ```
 
@@ -371,6 +417,8 @@ freecadcmd --python test_05_integration_live.py
 
 ## Quick Workflow
 
+### Phases 1-4: Servo Integration (Mechanical Assembly)
+
 Run all phases sequentially:
 
 ```bash
@@ -390,71 +438,30 @@ freecadcmd --python 04_export_assembly_merged.py
 python3 test_05_integration.py
 ```
 
-**Total Time:** ~60-120 seconds
+**Time:** ~60-120 seconds
+
+### Phases 7-11: URDF Export Pipeline (Robot Assembly + Simulation)
+
+Run the complete URDF export pipeline in one command:
+
+```bash
+# Run all phases (7-11) end-to-end
+./run_urdf_export.sh
+```
+
+Or run phases individually:
+
+```bash
+echo "exec(open('07_create_body_and_wheels.py').read())" | freecadcmd -c
+echo "exec(open('08_configure_assembly_joints.py').read())" | freecadcmd -c
+echo "exec(open('09_compute_mass_properties.py').read())" | freecadcmd -c
+python3 10_export_urdf.py
+python3 11_validate_inertia.py
+```
+
+**Time:** ~60-120 seconds (depends on FreeCAD startup)
 
 ---
-
-## Robot Body + Wheel Geometry (Issue #9, Stage 1)
-
-Stage 1 of Issue #9's "FreeCAD Mechanical Model with URDF Export" plan.
-Builds the two-wheel robot chassis and wheels, and reuses the existing
-3-plate pendulum linkage + servo (Issue #3's `plates_servo_assembled.FCStd`)
-as a `Pendulum_Link` subassembly. Reads all dimensions from Stage 0's
-`../../02_Design_Inputs/robot_parameters.yaml` (via `robot_parameters.py`)
-rather than hardcoding them.
-
-**Scope:** geometry only. Joint constraints (Stage 2), mass/inertia in SI
-units (Stage 3), and URDF export (Stage 4) are separate, not-yet-implemented
-stages -- see Issue #9's consolidated plan comment.
-
-**Script:** `07_create_body_and_wheels.py`
-
-**Requirements:**
-- Headless FreeCAD binary (`freecadcmd`), resolved via `FREECAD_BIN` (see
-  Environment section below)
-- `plates_servo_assembled.FCStd` in this directory (source for the reused
-  pendulum linkage; not modified)
-- `../../02_Design_Inputs/robot_parameters.yaml` (read via
-  `robot_parameters.py`)
-
-**Usage:**
-```bash
-FREECAD_BIN=~/.local/opt/freecad-1.1.3/usr/bin/freecadcmd
-"$FREECAD_BIN" -c "exec(open('07_create_body_and_wheels.py').read())"
-```
-Note: unlike Phases 1-5's documented `freecadcmd --python script.py` form,
-this build of `freecadcmd` (1.1.3) does not set `__name__ == "__main__"`
-for a plain positional script argument, so a script's
-`if __name__ == "__main__":` guard never fires that way (verified
-empirically). The `-c "exec(open(...).read())"` form (already used as the
-Phase 1 fallback above) is what actually runs the script end-to-end.
-
-**Output:**
-- `robot_body_wheels.FCStd` -- new, self-contained document (does not modify
-  `plates_servo_assembled.FCStd`), containing:
-  - `Base_Link` (`Part::Feature`, flat plate, 40x80x2.5mm -- redesigned
-    from an earlier 120x80x40mm solid box; see the module docstring and
-    root `CLAUDE.md`/`DESIGN.md` for why)
-  - `Wheel_Left` / `Wheel_Right` (`Part::Feature`, cylinders, dia 30mm x
-    6mm wide) -- each mounted on its own `Pendulum_Link`/`Pendulum_Link_Right`
-    `Bottom_Plate`'s real mounting hole, not on a body-centerline formula
-  - `Pendulum_Link` (`App::Part`), containing copies of `PlateStack`
-    (`Top_Plate`/`Middle_Plate`/`Bottom_Plate`) and `STS3032_Mount`
-    (servo visual + collision-proxy meshes), tilted so its plates stand
-    parallel to the wheel discs, positioned `pivot_height_mm` above
-    `Base_Link`'s top
-  - `Pendulum_Link_Right` (`App::Part`), a second copy built from literal,
-    human-tuned constants (not a geometric mirror of `Pendulum_Link`) --
-    see `build_pendulum_link_right()`
-  - Object names are exact and case-sensitive -- Stage 2's joint config and
-    Stage 4's URDF export consume them verbatim.
-- `07_body_wheels_metadata.json` -- per-link dimensions/placement/volume,
-  new-primitive triangle count (budget: <5000, per Issue #9's acceptance
-  criteria), reused-mesh facet counts (reported separately, not counted
-  against the budget -- see the JSON's own `reused_pendulum_mesh_note`),
-  and validation results.
-
-**Time:** ~10-20 seconds
 
 ## Legacy Scripts
 
@@ -486,19 +493,55 @@ mamba run -n pendulum-tools python3 simple_bracket.py
 
 ---
 
+## Known Issues & TODOs
+
+### Issue #9 Decision #8: Hardcoded Servo STL Source Path
+
+**Status:** ⏳ TODO (not blocking current pipeline, but impacts fresh-clone reproducibility)
+
+The `01_convert_servo_stl_to_step_via_freecad.py` script hardcodes the vendor STL source path:
+```python
+DOCUMENTS_DIR = Path.home() / "Documents"
+STL_SOURCE = DOCUMENTS_DIR / "feetech-STS3032_20190118_ASM.stl"
+```
+
+This assumes the vendor's original STL file is manually placed at `~/Documents/` on a specific machine and is not documented or automated. **Breaks fresh-clone reproducibility** — a new developer cloning this repo cannot regenerate the servo STEP file without first obtaining the STL separately and placing it at the hardcoded path.
+
+**Follow-up (Issue #9 comment):** Not blocking the current pipeline (derived files already exist in the repo), but should eventually:
+1. Accept the source path as a CLI argument or environment variable, or
+2. Add a documented setup step (e.g., `SERVO_STL_PATH=~/path/to/file.stl python3 01_convert_servo_stl_to_step.py`)
+
+---
+
 ## Directory Structure
 
 ```
 Generators/
+├── run_generator.sh                          # Phase 1-4 generator wrapper
+├── run_export.sh                             # Phase 5 export wrapper (legacy)
+├── run_urdf_export.sh                        # Phase 7-11 URDF export pipeline
 ├── 01_convert_servo_stl_to_step.py
 ├── 01_convert_servo_stl_to_step_via_freecad.py
+├── 01_convert_servo_stl_to_step.sh
 ├── 02_position_servo.py
 ├── 03_link_servo_to_assembly.py
 ├── 04_export_assembly_merged.py
 ├── test_05_integration.py
 ├── test_05_integration_live.py
-├── 07_create_body_and_wheels.py
+├── 06_cadquery_parametric_brackets.py        # Phase 6a: CadQuery-based brackets
+├── 06_trimesh_merge_for_stl.py              # Phase 6b: Trimesh merging
+├── 06_trimesh_mesh_validator.py             # Phase 6b: Mesh validation
+├── test_06_phase6_tooling.py
+├── 07_create_body_and_wheels.py              # Phase 7: Body + wheels (FreeCAD)
 ├── test_07_body_wheels_geometry.py
+├── 08_configure_assembly_joints.py           # Phase 8: Assembly joints (FreeCAD)
+├── test_08_configure_assembly_joints.py
+├── 09_compute_mass_properties.py             # Phase 9: Mass properties (FreeCAD)
+├── test_09_compute_mass_properties.py
+├── 10_export_urdf.py                         # Phase 10: URDF export (pure Python)
+├── test_10_export_urdf.py
+├── 11_validate_inertia.py                    # Phase 11: Inertia validation (pure Python)
+├── test_11_validate_inertia.py
 ├── robot_body_wheels.FCStd
 ├── 07_body_wheels_metadata.json
 ├── plates_assembled.FCStd

@@ -106,6 +106,23 @@ mamba run -n pendulum-tools python 03_Parts/Generators/test_06_phase6_tooling.py
 
 See `03_Parts/Generators/README.md` and `03_Parts/Generators/README_PHASE6.md` for details.
 
+### Phases 7-11: Complete URDF Export Pipeline (Robot Assembly + Simulation)
+
+Generate the complete URDF robot model in one command:
+
+```bash
+cd 03_Parts/Generators
+./run_urdf_export.sh
+```
+
+This runs all phases (7-11) end-to-end, producing:
+- `robot_assembly.FCStd` (FreeCAD model with joints)
+- `06_Exports/urdf/robot.urdf` (URDF for simulators like Webots, Gazebo)
+- `06_Exports/urdf/meshes/` (visual mesh assets)
+- `11_inertia_validation_report.json` (hardware validation data)
+
+See `03_Parts/Generators/README.md` for detailed phase-by-phase documentation.
+
 ### Export Simulation Results to FreeCAD
 
 ```python
@@ -140,11 +157,18 @@ inverted-pendulum-project/
 ├── 01_Documentation/
 │   └── MCP_TOOLS_REFERENCE.md         # Deprecated MCP tool catalog (see note in file)
 ├── 02_Design_Inputs/                  # Design specifications & parameters
+│   ├── robot_parameters.yaml           # Robot dimensions/masses (used by Phases 7-11)
+│   ├── prototype_measurements.schema.json  # (optional) Hardware measurement schema
+│   └── prototype_measurements.example.json # (optional) Example measurement data
 ├── 03_Parts/                          # FreeCAD part files (.FCStd, .step)
-│   └── Generators/                    # Phase 1-6 generator scripts
+│   └── Generators/                    # Phase 1-11 generator scripts (see README.md in this dir)
 ├── 04_Assemblies/                     # Assembly definitions
 ├── 05_Drafts_Context/                 # Preliminary designs & concepts
-└── 06_Exports/                        # Generated exports (STL, STEP, etc.)
+└── 06_Exports/                        # Generated exports
+    ├── Mechanical/                    # STEP & merged STL files (Phases 1-4)
+    └── urdf/                          # URDF robot model + meshes (Phase 10)
+        ├── robot.urdf                 # URDF robot model (robot description format)
+        └── meshes/                    # Visual mesh assets for URDF
 ```
 
 ## Architecture note: FreeCAD vs CadQuery/OCP process boundary
