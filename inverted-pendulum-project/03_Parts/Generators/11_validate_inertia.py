@@ -81,13 +81,15 @@ def load_calculated_inertia_from_urdf(urdf_path: Path) -> Dict[str, Dict[str, An
         if inertial_elem is None:
             continue
 
-        # Extract mass
+        # Extract mass. .get(..., default) guards against a <mass> element
+        # present without a value attribute -- a malformed URDF should read as
+        # 0/identity here, not crash float(None)/None.split() (issue #92 review).
         mass_elem = inertial_elem.find('mass')
-        mass_kg = float(mass_elem.get('value')) if mass_elem is not None else None
+        mass_kg = float(mass_elem.get('value', '0')) if mass_elem is not None else None
 
         # Extract center of mass (origin xyz in meters)
         origin_elem = inertial_elem.find('origin')
-        com_str = origin_elem.get('xyz') if origin_elem is not None else "0 0 0"
+        com_str = origin_elem.get('xyz', '0 0 0') if origin_elem is not None else "0 0 0"
         com_m = [float(x) for x in com_str.split()]
         com_mm = [x * 1000.0 for x in com_m]  # Convert meters to mm
 
