@@ -147,6 +147,21 @@ def test_all_validations_passed():
         )
 
 
+def test_ground_joint_grounds_base_link_link():
+    config = _load_joint_config()
+    assert config["ground_joint"]["object_grounded"] == "Base_Link_Link"
+
+
+def test_ground_joint_type_marker():
+    config = _load_joint_config()
+    assert config["ground_joint"]["type"] == "ObjectToGround"
+
+
+def test_joints_dict_still_exactly_four():
+    config = _load_joint_config()
+    assert len(config["joints"]) == 4
+
+
 def test_live_read_regression_geometry_change_updates_origin():
     """Regression test proving live-read of link placements works.
 
