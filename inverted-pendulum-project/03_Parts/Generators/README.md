@@ -131,7 +131,7 @@ Complete workflow for creating a two-wheel self-balancing robot assembly from St
 | Phase | Script | Output | Execution Mode | Status |
 |-------|--------|--------|-----------------|--------|
 | 7 | `07_create_body_and_wheels.py` | `robot_body_wheels.FCStd`, `07_body_wheels_metadata.json` | `freecadcmd -c` | ✅ |
-| 8 | `08_configure_assembly_joints.py` | `robot_assembly.FCStd`, `08_assembly_joints_metadata.json` | **FreeCAD MCP bridge** (not plain freecadcmd) | ⚠️ |
+| 8 | `08_configure_assembly_joints.py` | `robot_assembly.FCStd`, `joint_config.json` | **FreeCAD MCP bridge** (not plain freecadcmd) | ⚠️ |
 | 9 | `09_compute_mass_properties.py` | `09_mass_properties.json` | `freecadcmd -c` | ✅ |
 | 10 | `10_export_urdf.py` | `06_Exports/urdf/robot.urdf`, `06_Exports/urdf/meshes/`, `10_urdf_export_metadata.json` | `python3` | ✅ |
 | 11 | `11_validate_inertia.py` | `11_inertia_validation_report.json` | `python3` | ✅ |
@@ -220,7 +220,7 @@ python3 -m pytest -q test_08_configure_assembly_joints.py
 
 **Output:**
 - `robot_assembly.FCStd` (new document with joints configured: wheel rotations, pendulum pivot, servo rotations)
-- `08_assembly_joints_metadata.json` (joint configuration details, validation results)
+- `joint_config.json` (joint configuration details, validation results)
 - Console: Joint summary, validation results
 
 **Time:** ~10-20 seconds
