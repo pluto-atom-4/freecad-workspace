@@ -78,6 +78,11 @@ def load_calculated_inertia_from_urdf(urdf_path: Path) -> Dict[str, Dict[str, An
         link_name = link_elem.get('name')
         inertial_elem = link_elem.find('inertial')
 
+        if link_name is None:
+            # A <link> with no name attribute is malformed; skip rather than
+            # storing under a None key, which later crashes sorted() (str vs
+            # None comparison) at report/print time (issue #92 review).
+            continue
         if inertial_elem is None:
             continue
 
