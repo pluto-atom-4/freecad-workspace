@@ -1,0 +1,100 @@
+[
+  {
+    "filename": "feetech-STS3032-visual-1.0mm.stl",
+    "status": "SUCCESS",
+    "baseline": {
+      "vertices": 18974,
+      "faces": 38608,
+      "bbox": {
+        "min": [
+          161.29124450683594,
+          161.77584838867188,
+          -22.75
+        ],
+        "max": [
+          193.29124450683594,
+          173.77584838867188,
+          9.149999618530273
+        ]
+      },
+      "self_int_faces": 725
+    },
+    "final": {
+      "vertices": 18973,
+      "faces": 37556,
+      "bbox": {
+        "min": [
+          161.29124450683594,
+          161.77584838867188,
+          -22.75
+        ],
+        "max": [
+          193.29124450683594,
+          173.77584838867188,
+          9.149999618530273
+        ]
+      },
+      "self_int_faces": 159
+    },
+    "deltas": {
+      "vertices": -1,
+      "faces": -1052,
+      "bbox_per_axis_mm": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "max_bbox_delta_mm": 0.0
+    },
+    "self_int_reduction": 566
+  },
+  {
+    "filename": "feetech-STS3032-collision-proxy.stl",
+    "status": "SUCCESS",
+    "baseline": {
+      "vertices": 98,
+      "faces": 188,
+      "bbox": {
+        "min": [
+          161.29124450683594,
+          161.77584838867188,
+          -22.75
+        ],
+        "max": [
+          193.29124450683594,
+          173.77584838867188,
+          9.149999618530273
+        ]
+      },
+      "self_int_faces": 92
+    },
+    "final": {
+      "vertices": 98,
+      "faces": 98,
+      "bbox": {
+        "min": [
+          161.29124450683594,
+          161.77584838867188,
+          -22.75
+        ],
+        "max": [
+          193.29124450683594,
+          173.77584838867188,
+          9.149999618530273
+        ]
+      },
+      "self_int_faces": 0
+    },
+    "deltas": {
+      "vertices": 0,
+      "faces": -90,
+      "bbox_per_axis_mm": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "max_bbox_delta_mm": 0.0
+    },
+    "self_int_reduction": 92
+  }
+]

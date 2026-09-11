@@ -1,7 +1,7 @@
 {
   "phase": 7,
   "title": "Stage 1: Body + Wheel Geometry",
-  "timestamp": "2026-09-09T17:46:31.692438",
+  "timestamp": "2026-09-10T20:42:13.211950",
   "issue": 9,
   "source_document": "plates_servo_assembled.FCStd",
   "output_document": "robot_body_wheels.FCStd",
@@ -174,13 +174,13 @@
     "new_primitive_triangle_budget": 5000,
     "new_primitive_triangle_budget_ok": true,
     "reused_pendulum_mesh_facet_counts": {
-      "feetech_STS3032_visual_1_0mm": 38608,
-      "feetech_STS3032_collision_proxy": 188,
-      "feetech_STS3032_visual_1_0mm_Right": 38608,
-      "feetech_STS3032_collision_proxy_Right": 188
+      "feetech_STS3032_visual_1_0mm": 37556,
+      "feetech_STS3032_collision_proxy": 98,
+      "feetech_STS3032_visual_1_0mm_Right": 37556,
+      "feetech_STS3032_collision_proxy_Right": 98
     },
     "reused_pendulum_mesh_note": "Inherited from Issue #3 (plates_servo_assembled.FCStd), not new Stage 1 geometry. Excluded from the <5000-triangle budget check above: per Issue #9 Decision #10, the servo's simulation <collision> geometry is emitted as URDF primitives (box + cylinder) in Stage 4, not this mesh -- this high-fidelity mesh is a visual-only asset.",
-    "total_volume_mm3": 54166.5456,
+    "total_volume_mm3": 48899.4692,
     "total_volume_note": "Sum of Base_Link + Wheel_Left + Wheel_Right + copied PlateStack plate volumes + (where watertight) copied STS3032_Mount mesh volumes. For Stage 3's future sanity check (Issue #9 Decision #12) against Phase 4's export_metadata.json geometry_stats.volume_mm3 figure (22708.46 mm^3 for plates+servo only, no wheels/chassis) -- NOT expected to match exactly once wheel/chassis volume is included; informational only."
   },
   "validations": [

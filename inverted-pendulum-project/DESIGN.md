@@ -37,9 +37,10 @@ export FREECAD_BIN=~/.local/bin/freecadcmd1.1   # headless binary for phases 2-4
 python3 03_Parts/Generators/01_convert_servo_stl_to_step.py
 
 # Phases 2-4, 7 (run inside FreeCAD's own interpreter)
-"$FREECAD_BIN" -c "exec(open('03_Parts/Generators/02_position_servo.py').read())"
-# ...same -c "exec(...)" form for 03_/04_/07_ -- see root CLAUDE.md's "FreeCAD Live Bridge"
-# section for why the plain positional/--python form silently no-ops in this environment.
+echo "exec(open('03_Parts/Generators/02_position_servo.py').read())" | "$FREECAD_BIN" -c
+# ...same stdin-pipe form for 03_/04_/07_ -- see root CLAUDE.md's "Common Development
+# Commands" section for why the plain positional/--python form silently no-ops in this
+# environment, and why `-c "exec(...)"` as an argument (not piped) also silently no-ops.
 ```
 
 ## Key Design Decisions
@@ -65,6 +66,7 @@ python3 03_Parts/Generators/01_convert_servo_stl_to_step.py
 | A `Mesh::Feature`'s own `Placement` is ignored when nested in an `App::Part` | Composing it manually (as for `Part::Feature`) puts the mesh far from where it actually renders | Only the parent container's `getGlobalPlacement()` applied to the raw `.Mesh` data matches the render — see root `CLAUDE.md` |
 | `Mesh.transform()` with a reflection matrix can silently produce wrongly-offset geometry | A true mirror of a servo mesh landed with one coordinate shifted by an unexplained, large offset | Mirror via raw point data instead (negate a coordinate, reverse facet winding, rebuild the mesh) — see root `CLAUDE.md` |
 | `distToShape() == 0` doesn't distinguish touching from overlapping | A "0mm clearance" collision check can be a false alarm or a false pass | Use `shape_a.common(shape_b).Volume` for a definitive check |
+| `03_link_servo_to_assembly.py`'s `create_servo_body()` reuses `STS3032_Mount`'s mesh children **by name** if they already exist in `plates_servo_assembled.FCStd` — it never re-reads the source `.stl` on a rerun once those objects exist (`Mesh.Mesh(str(stl_path))` only runs on first creation, see the script's own docstring/`else` branch) | Repairing/replacing the source STL (issue #76) and rerunning Phase 3 silently keeps the OLD cached mesh data — every downstream stage (7, 8) then propagates the stale mesh, with no error or warning | Before rerunning Phase 3 after changing a servo STL, delete the existing `feetech_STS3032_visual_1_0mm`/`feetech_STS3032_collision_proxy` objects from `plates_servo_assembled.FCStd` first (headless script, `doc.removeObject(name)` + `doc.save()`), then rerun 03→07→08. Verify by checking imported vs. reused in Phase 3's console output ("Imported ..." vs "✓ Reusing existing mesh: ...") and comparing `Mesh.CountFacets` against the source STL's known post-repair count. |
 
 ## Related Work
 
