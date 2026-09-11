@@ -49,6 +49,7 @@
       "properties": {
         "mass_kg": {
           "type": ["number", "null"],
+          "minimum": 0,
           "description": "Mass in kilograms (null if unmeasured)"
         },
         "com_mm": {
@@ -66,15 +67,18 @@
           "properties": {
             "ixx": {
               "type": "number",
-              "description": "Principal moment about X axis"
+              "minimum": 0,
+              "description": "Principal moment about X axis (always non-negative)"
             },
             "iyy": {
               "type": "number",
-              "description": "Principal moment about Y axis"
+              "minimum": 0,
+              "description": "Principal moment about Y axis (always non-negative)"
             },
             "izz": {
               "type": "number",
-              "description": "Principal moment about Z axis"
+              "minimum": 0,
+              "description": "Principal moment about Z axis (always non-negative)"
             },
             "ixy": {
               "type": "number",
