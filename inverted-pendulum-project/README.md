@@ -161,11 +161,11 @@ inverted-pendulum-project/
 │   ├── prototype_measurements.schema.json  # (optional) Hardware measurement schema
 │   └── prototype_measurements.example.json # (optional) Example measurement data
 ├── 03_Parts/                          # FreeCAD part files (.FCStd, .step)
+│   ├── Mechanical/                    # Servo STEP/STL assets (Phases 1-4)
 │   └── Generators/                    # Phase 1-11 generator scripts (see README.md in this dir)
 ├── 04_Assemblies/                     # Assembly definitions
 ├── 05_Drafts_Context/                 # Preliminary designs & concepts
 └── 06_Exports/                        # Generated exports
-    ├── Mechanical/                    # STEP & merged STL files (Phases 1-4)
     └── urdf/                          # URDF robot model + meshes (Phase 10)
         ├── robot.urdf                 # URDF robot model (robot description format)
         └── meshes/                    # Visual mesh assets for URDF
