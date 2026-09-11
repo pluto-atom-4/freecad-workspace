@@ -353,12 +353,14 @@ def test_collision_primitives_documented():
 
 
 def test_servo_collision_primitives_in_urdf():
-    """Servo collision box and cylinder have correct dimensions in URDF.
+    """Servo collision box and cylinder have correct dimensions and origins in URDF.
 
     Pendulum_Link and Pendulum_Link_Right each must have a servo box with
     32x12x28mm and a servo cylinder with r=4.65mm, h=16.15mm (after mm->m conversion).
+    The right servo's collision elements should have rpy reflecting the 180° roll.
     """
     root = load_urdf()
+    metadata = load_metadata()
 
     # Expected dimensions (mm -> m conversion)
     servo_box_length_m = 32.0 / 1000.0
@@ -367,7 +369,27 @@ def test_servo_collision_primitives_in_urdf():
     servo_cyl_radius_m = 4.65 / 1000.0
     servo_cyl_height_m = 16.15 / 1000.0
 
-    for link_name in ['Pendulum_Link', 'Pendulum_Link_Right']:
+    # Expected origins from metadata (mm -> m)
+    left_servo_box_origin = metadata['collision_primitives']['left_servo_box_origin_mm']
+    left_servo_box_origin_m = [x / 1000.0 for x in left_servo_box_origin]
+    left_servo_cyl_origin = metadata['collision_primitives']['left_servo_cylinder_origin_mm']
+    left_servo_cyl_origin_m = [x / 1000.0 for x in left_servo_cyl_origin]
+    right_servo_box_origin = metadata['collision_primitives']['right_servo_box_origin_mm']
+    right_servo_box_origin_m = [x / 1000.0 for x in right_servo_box_origin]
+    right_servo_cyl_origin = metadata['collision_primitives']['right_servo_cylinder_origin_mm']
+    right_servo_cyl_origin_m = [x / 1000.0 for x in right_servo_cyl_origin]
+
+    # Expected rpy values
+    left_servo_rpy = [0.0, 0.0, 0.0]
+    right_servo_rpy = metadata['collision_primitives']['right_servo_box_rpy_rad']
+
+    tolerance = 0.0001  # 0.1 micron tolerance in meters
+    rpy_tolerance = 0.0001  # radians
+
+    for link_name, expected_box_origin_m, expected_cyl_origin_m, expected_rpy in [
+        ('Pendulum_Link', left_servo_box_origin_m, left_servo_cyl_origin_m, left_servo_rpy),
+        ('Pendulum_Link_Right', right_servo_box_origin_m, right_servo_cyl_origin_m, right_servo_rpy),
+    ]:
         link = root.find(f".//link[@name='{link_name}']")
         assert link is not None
 
@@ -381,6 +403,27 @@ def test_servo_collision_primitives_in_urdf():
 
         # Collision 1: servo box
         servo_box_collision = collisions[1]
+        servo_box_origin = servo_box_collision.find('origin')
+        assert servo_box_origin is not None, f"{link_name} servo box should have origin element"
+
+        # Check servo box xyz origin
+        servo_box_xyz_str = servo_box_origin.get('xyz')
+        assert servo_box_xyz_str is not None, f"{link_name} servo box origin missing xyz"
+        servo_box_xyz = [float(x) for x in servo_box_xyz_str.split()]
+        for i in range(3):
+            assert abs(servo_box_xyz[i] - expected_box_origin_m[i]) < tolerance, (
+                f"{link_name} servo box origin[{i}] {servo_box_xyz[i]:.6f}m != {expected_box_origin_m[i]:.6f}m"
+            )
+
+        # Check servo box rpy
+        servo_box_rpy_str = servo_box_origin.get('rpy')
+        assert servo_box_rpy_str is not None, f"{link_name} servo box origin missing rpy"
+        servo_box_rpy = [float(x) for x in servo_box_rpy_str.split()]
+        for i in range(3):
+            assert abs(servo_box_rpy[i] - expected_rpy[i]) < rpy_tolerance, (
+                f"{link_name} servo box rpy[{i}] {servo_box_rpy[i]:.6f} != {expected_rpy[i]:.6f}"
+            )
+
         servo_box_geom = servo_box_collision.find('geometry/box')
         assert servo_box_geom is not None, f"{link_name} collision 1 should be a box (servo)"
 
@@ -391,7 +434,6 @@ def test_servo_collision_primitives_in_urdf():
         assert len(box_dims) == 3, f"Servo box size should have 3 dimensions, got {len(box_dims)}"
 
         # Check dimensions (with small tolerance for floating point)
-        tolerance = 0.0001  # 0.1 micron tolerance in meters
         assert abs(box_dims[0] - servo_box_length_m) < tolerance, (
             f"{link_name} servo box length {box_dims[0]:.6f}m != {servo_box_length_m:.6f}m"
         )
@@ -404,6 +446,27 @@ def test_servo_collision_primitives_in_urdf():
 
         # Collision 2: servo cylinder
         servo_cyl_collision = collisions[2]
+        servo_cyl_origin = servo_cyl_collision.find('origin')
+        assert servo_cyl_origin is not None, f"{link_name} servo cylinder should have origin element"
+
+        # Check servo cylinder xyz origin
+        servo_cyl_xyz_str = servo_cyl_origin.get('xyz')
+        assert servo_cyl_xyz_str is not None, f"{link_name} servo cylinder origin missing xyz"
+        servo_cyl_xyz = [float(x) for x in servo_cyl_xyz_str.split()]
+        for i in range(3):
+            assert abs(servo_cyl_xyz[i] - expected_cyl_origin_m[i]) < tolerance, (
+                f"{link_name} servo cylinder origin[{i}] {servo_cyl_xyz[i]:.6f}m != {expected_cyl_origin_m[i]:.6f}m"
+            )
+
+        # Check servo cylinder rpy
+        servo_cyl_rpy_str = servo_cyl_origin.get('rpy')
+        assert servo_cyl_rpy_str is not None, f"{link_name} servo cylinder origin missing rpy"
+        servo_cyl_rpy = [float(x) for x in servo_cyl_rpy_str.split()]
+        for i in range(3):
+            assert abs(servo_cyl_rpy[i] - expected_rpy[i]) < rpy_tolerance, (
+                f"{link_name} servo cylinder rpy[{i}] {servo_cyl_rpy[i]:.6f} != {expected_rpy[i]:.6f}"
+            )
+
         servo_cyl_geom = servo_cyl_collision.find('geometry/cylinder')
         assert servo_cyl_geom is not None, f"{link_name} collision 2 should be a cylinder (servo shaft)"
 

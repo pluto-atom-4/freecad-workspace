@@ -413,7 +413,8 @@ def build_urdf_link(
         if geom_dict.get('origin'):
             origin = ET.SubElement(visual, 'origin')
             origin.set('xyz', ' '.join(f'{x/1000.0:.6f}' for x in geom_dict['origin']))
-            origin.set('rpy', '0 0 0')
+            rpy_value = geom_dict.get('rpy', '0 0 0')
+            origin.set('rpy', rpy_value)
 
         geometry = ET.SubElement(visual, 'geometry')
 
@@ -445,7 +446,8 @@ def build_urdf_link(
         if geom_dict.get('origin'):
             origin = ET.SubElement(collision, 'origin')
             origin.set('xyz', ' '.join(f'{x/1000.0:.6f}' for x in geom_dict['origin']))
-            origin.set('rpy', '0 0 0')
+            rpy_value = geom_dict.get('rpy', '0 0 0')
+            origin.set('rpy', rpy_value)
 
         geometry = ET.SubElement(collision, 'geometry')
 
@@ -781,6 +783,13 @@ def main():
         servo_r_mount_pos = [-1.0, 51.0, 6.0]
         servo_r_mount_rot = [0.0, 0.0, 180.0]  # yaw, pitch, roll in degrees
         servo_r_com_rotated = apply_rotation_to_vector(servo_r_com, *servo_r_mount_rot)
+
+        # Convert mount rotation to URDF rpy (radians, roll-pitch-yaw order)
+        servo_r_rpy = ' '.join(f'{math.radians(servo_r_mount_rot[2]):.6f}'
+                               f' {math.radians(servo_r_mount_rot[1]):.6f}'
+                               f' {math.radians(servo_r_mount_rot[0]):.6f}'.split())
+        # Rotate SERVO_CYL_OFFSET by mount rotation for right servo
+        servo_r_cyl_offset_rotated = apply_rotation_to_vector(SERVO_CYL_OFFSET, *servo_r_mount_rot)
         servo_r_com_assembly = [
             servo_r_mount_pos[0] + servo_r_com_rotated[0],
             servo_r_mount_pos[1] + servo_r_com_rotated[1],
@@ -825,6 +834,7 @@ def main():
                     'type': 'mesh',
                     'filename': 'package://inverted_pendulum_robot/meshes/feetech-STS3032-visual.stl',
                     'origin': servo_r_com_assembly,
+                    'rpy': servo_r_rpy,
                 }
             ],
             collision_geometry=[
@@ -845,16 +855,18 @@ def main():
                         'height': SERVO_COLLISION_BOX_HEIGHT,
                     },
                     'origin': servo_r_com_assembly,
+                    'rpy': servo_r_rpy,
                 },
-                {  # Servo cylinder (shaft)
+                {  # Servo cylinder (shaft) — use rotated offset
                     'type': 'cylinder',
                     'radius_mm': SERVO_COLLISION_CYLINDER_RADIUS,
                     'height_mm': SERVO_COLLISION_CYLINDER_HEIGHT,
                     'origin': [
-                        servo_r_com_assembly[0],
-                        servo_r_com_assembly[1] + SERVO_CYL_OFFSET[1],
-                        servo_r_com_assembly[2] + SERVO_CYL_OFFSET[2],
+                        servo_r_com_assembly[0] + servo_r_cyl_offset_rotated[0],
+                        servo_r_com_assembly[1] + servo_r_cyl_offset_rotated[1],
+                        servo_r_com_assembly[2] + servo_r_cyl_offset_rotated[2],
                     ],
+                    'rpy': servo_r_rpy,
                 },
             ]
         )
@@ -876,8 +888,16 @@ def main():
             parent = ref2.rsplit('_Link', 1)[0] if ref2.endswith('_Link') else ref2
             child = ref1.rsplit('_Link', 1)[0] if ref1.endswith('_Link') else ref1
 
-            # Axis from config (assuming Y global)
-            axis = [0, 1, 0]
+            # Parse axis from config (format: "global Y (0,1,0)" or similar)
+            axis_str = joint_data.get('axis', 'global Y (0,1,0)')
+            # Extract the (x,y,z) tuple from the string
+            try:
+                axis_part = axis_str[axis_str.find('(') + 1:axis_str.find(')')]
+                axis = [float(x.strip()) for x in axis_part.split(',')]
+            except (ValueError, IndexError):
+                # Fallback to default
+                axis = [0, 1, 0]
+                print(f"   WARNING: Could not parse axis for {joint_name}, using [0, 1, 0]")
 
             joint_elem = build_urdf_joint(
                 joint_name,
@@ -925,7 +945,31 @@ def main():
                 'servo_cylinder': {
                     'radius_mm': SERVO_COLLISION_CYLINDER_RADIUS,
                     'height_mm': SERVO_COLLISION_CYLINDER_HEIGHT,
-                }
+                },
+                'left_servo_box_origin_mm': servo_l_com_assembly,
+                'left_servo_box_rpy_rad': [0.0, 0.0, 0.0],
+                'left_servo_cylinder_origin_mm': [
+                    servo_l_com_assembly[0],
+                    servo_l_com_assembly[1] + SERVO_CYL_OFFSET[1],
+                    servo_l_com_assembly[2] + SERVO_CYL_OFFSET[2],
+                ],
+                'left_servo_cylinder_rpy_rad': [0.0, 0.0, 0.0],
+                'right_servo_box_origin_mm': servo_r_com_assembly,
+                'right_servo_box_rpy_rad': [
+                    math.radians(servo_r_mount_rot[2]),
+                    math.radians(servo_r_mount_rot[1]),
+                    math.radians(servo_r_mount_rot[0]),
+                ],
+                'right_servo_cylinder_origin_mm': [
+                    servo_r_com_assembly[0] + servo_r_cyl_offset_rotated[0],
+                    servo_r_com_assembly[1] + servo_r_cyl_offset_rotated[1],
+                    servo_r_com_assembly[2] + servo_r_cyl_offset_rotated[2],
+                ],
+                'right_servo_cylinder_rpy_rad': [
+                    math.radians(servo_r_mount_rot[2]),
+                    math.radians(servo_r_mount_rot[1]),
+                    math.radians(servo_r_mount_rot[0]),
+                ]
             },
             'visual_mesh': {
                 'source_file': str(VISUAL_MESH_SOURCE),

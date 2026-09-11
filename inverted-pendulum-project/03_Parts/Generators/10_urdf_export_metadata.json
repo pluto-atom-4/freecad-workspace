@@ -1,7 +1,7 @@
 {
   "issue": 84,
   "phase": 10,
-  "timestamp": "2026-09-11T11:33:41.792615",
+  "timestamp": "2026-09-11T12:07:03.645298",
   "robot_name": "inverted_pendulum_robot",
   "input_documents": {
     "robot_parameters_yaml": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/02_Design_Inputs/robot_parameters.yaml",
@@ -22,7 +22,47 @@
     "servo_cylinder": {
       "radius_mm": 4.65,
       "height_mm": 16.15
-    }
+    },
+    "left_servo_box_origin_mm": [
+      31.489199999999997,
+      25.7701,
+      -2.8066
+    ],
+    "left_servo_box_rpy_rad": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "left_servo_cylinder_origin_mm": [
+      31.489199999999997,
+      39.7701,
+      5.1934000000000005
+    ],
+    "left_servo_cylinder_rpy_rad": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "right_servo_box_origin_mm": [
+      31.489199999999997,
+      25.2299,
+      8.806600000000003
+    ],
+    "right_servo_box_rpy_rad": [
+      3.141592653589793,
+      0.0,
+      0.0
+    ],
+    "right_servo_cylinder_origin_mm": [
+      31.489199999999997,
+      11.229899999999999,
+      0.8066000000000049
+    ],
+    "right_servo_cylinder_rpy_rad": [
+      3.141592653589793,
+      0.0,
+      0.0
+    ]
   },
   "visual_mesh": {
     "source_file": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/03_Parts/Mechanical/feetech-STS3032-visual-1.0mm.stl",
