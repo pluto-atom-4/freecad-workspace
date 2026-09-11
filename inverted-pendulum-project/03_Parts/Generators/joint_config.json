@@ -1,7 +1,7 @@
 {
   "phase": 8,
   "title": "Stage 2: Assembly Joint Configuration",
-  "generated": "2026-09-10T20:42:19.090660",
+  "generated": "2026-09-11T08:20:52.093897",
   "source_document": "robot_body_wheels.FCStd",
   "output_document": "robot_assembly.FCStd",
   "assembly_container": "Assembly",
@@ -29,9 +29,9 @@
       "reference1": "Wheel_Left_Link",
       "reference2": "Base_Link_Link",
       "origin_mm": {
-        "x": 15.0007,
-        "y": -28.5258,
-        "z": 54.0095
+        "x": 15.000724910886674,
+        "y": -28.525805414515084,
+        "z": 54.00949436685289
       },
       "axis": "global Y (0,1,0)",
       "enable_angle_min": false,
@@ -43,9 +43,9 @@
       "reference1": "Wheel_Right_Link",
       "reference2": "Base_Link_Link",
       "origin_mm": {
-        "x": 15.0007,
-        "y": 67.0258,
-        "z": 54.0095
+        "x": 15.000724910886674,
+        "y": 67.02580541451508,
+        "z": 54.00949436685289
       },
       "axis": "global Y (0,1,0)",
       "enable_angle_min": false,
@@ -57,8 +57,8 @@
       "reference1": "Pendulum_Link_Link",
       "reference2": "Base_Link_Link",
       "origin_mm": {
-        "x": -8.0014,
-        "y": -18.2758,
+        "x": -8.001391551290586,
+        "y": -18.27580541451508,
         "z": 70.75
       },
       "axis": "global Y (0,1,0)",
@@ -71,8 +71,8 @@
       "reference1": "Pendulum_Link_Right_Link",
       "reference2": "Base_Link_Link",
       "origin_mm": {
-        "x": -8.0014,
-        "y": 62.2758,
+        "x": -8.001391551290586,
+        "y": 62.27580541451508,
         "z": 71.25
       },
       "axis": "global Y (0,1,0)",

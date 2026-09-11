@@ -122,17 +122,18 @@ CONFIG_FILENAME = "joint_config.json"
 
 LINK_SOURCE_NAMES = ["Base_Link", "Wheel_Left", "Wheel_Right", "Pendulum_Link", "Pendulum_Link_Right"]
 
-# All 4 joints rotate about global Y -- see docstring for how each origin/
-# axis was derived (wheel axle axis vs. the Pendulum_Link/_Right tilt
-# probe). Pendulum_Link_Right's own Placement (Yaw-Pitch-Roll=0,0,90,
-# Pos=(-8.0014, 62.2758, 71.25)) was probed the same way as Pendulum_Link
-# and maps local Z -> global (0,-1,~0), the same axis line -- so
+# All 4 joints rotate about global Y. Joint origins are read live from
+# the Stage 1 document's link placements (self.doc.getObject(moving_key).Placement.Base),
+# not hardcoded. Axis conventions remain unchanged: wheel axle axis vs.
+# Pendulum_Link/_Right tilt probe. Pendulum_Link_Right's own Placement
+# (Yaw-Pitch-Roll=0,0,90, Pos=(-8.0014, 62.2758, 71.25)) maps local Z ->
+# global (0,-1,~0), the same axis line as Pendulum_Link -- so
 # pendulum_pivot_right_joint reuses the identical axis convention.
 JOINT_SPECS = [
-    ("wheel_left_joint", "Wheel_Left", (15.0007, -28.5258, 54.0095)),
-    ("wheel_right_joint", "Wheel_Right", (15.0007, 67.0258, 54.0095)),
-    ("pendulum_pivot_joint", "Pendulum_Link", (-8.0014, -18.2758, 70.75)),
-    ("pendulum_pivot_right_joint", "Pendulum_Link_Right", (-8.0014, 62.2758, 71.25)),
+    ("wheel_left_joint", "Wheel_Left"),
+    ("wheel_right_joint", "Wheel_Right"),
+    ("pendulum_pivot_joint", "Pendulum_Link"),
+    ("pendulum_pivot_right_joint", "Pendulum_Link_Right"),
 ]
 
 
@@ -221,7 +222,14 @@ class JointConfigurator:
             # convention for all 4 joints here) -- see docstring.
             axis_rotation = App.Rotation(App.Vector(0, 0, 1), 90)
 
-            for joint_name, moving_key, origin in JOINT_SPECS:
+            for joint_name, moving_key in JOINT_SPECS:
+                # Derive joint origin live from the Stage 1 document's link placement
+                link_obj = self.doc.getObject(moving_key)
+                if link_obj is None:
+                    raise RuntimeError(f"Link object {moving_key} not found in document")
+                origin_vec = link_obj.Placement.Base
+                origin = (origin_vec.x, origin_vec.y, origin_vec.z)
+
                 j = joint_group.newObject("App::FeaturePython", joint_name)
                 JointObject.Joint(j, 1)  # 1 = "Revolute"
                 j.Label = joint_name
