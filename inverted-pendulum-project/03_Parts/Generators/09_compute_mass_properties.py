@@ -156,21 +156,22 @@ def compute_mesh_inertia_tensor(mesh, com: list, mass_kg: float) -> Dict[str, fl
     dy = bbox.YLength
     dz = bbox.ZLength
 
-    # Moment of inertia for a uniform rectangular solid (box):
-    # Ixx = (1/12) * m * (dy^2 + dz^2)
-    # (similar for Iyy, Izz)
-    # Off-diagonal terms are zero for a box aligned with axes (approximation)
-
-    # For a uniform density box, inertia ~ m * size^2
-    # Since mesh is more complex, use conservative estimate with mesh volume
+    # Moment of inertia for a uniform density solid ellipsoid inscribed in the
+    # bounding box (semi-axes a=dx/2, b=dy/2, c=dz/2):
+    #   Ixx = (1/5) * m * (b^2 + c^2), and cyclic for Iyy, Izz.
+    # BoundBox.XLength/YLength/ZLength are FULL lengths, not semi-axes -- must
+    # halve before squaring, else the result is 4x too large (semi-axis^2 =
+    # (full/2)^2 = full^2/4, so the full-length form is (m/20)*(dy^2+dz^2)).
+    # PLACEHOLDER pending Issue #8's hardware measurement spike.
+    # Off-diagonal terms are zero for an axis-aligned ellipsoid (approximation).
     mesh_volume = mesh.Volume
     if mesh_volume <= 0:
         mesh_volume = dx * dy * dz  # Fallback to bounding box volume
 
     # Compute principal moments (assuming uniform density ellipsoid inscribed in bbox)
-    ixx = (mass_kg / 5.0) * (dy**2 + dz**2)  # Simplified ellipsoid formula
-    iyy = (mass_kg / 5.0) * (dx**2 + dz**2)
-    izz = (mass_kg / 5.0) * (dx**2 + dy**2)
+    ixx = (mass_kg / 20.0) * (dy**2 + dz**2)  # Simplified ellipsoid formula
+    iyy = (mass_kg / 20.0) * (dx**2 + dz**2)
+    izz = (mass_kg / 20.0) * (dx**2 + dy**2)
 
     # Off-diagonal terms (cross products) are small for axis-aligned geometry
     ixy = 0.0
