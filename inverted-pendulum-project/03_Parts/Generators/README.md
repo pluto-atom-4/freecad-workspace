@@ -248,9 +248,10 @@ python3 -m pytest -q test_09_compute_mass_properties.py
 - Console: Geometry summary (volumes, CoM, inertia tensor), validation results
 
 **Key Design Decisions:**
-- Uses FreeCAD `Mesh.MatrixOfInertia()` (mesh-native), NOT STEP round-trip (60% volume loss + fragmentation per FINDINGS.md sec.3)
+- Volume and center-of-mass from mesh-native API (Mesh.Mesh.Volume, .CenterOfGravity), NOT STEP round-trip (60% volume loss + fragmentation per FINDINGS.md sec.3)
+- Inertia tensor computed using bounding-box-inscribed ellipsoid approximation (I_xx=(m/20)*(dy²+dz²) cyclic, fed by mesh.BoundBox), NOT `Mesh.MatrixOfInertia` (which doesn't exist as an API on Mesh.Mesh)
 - Mass comes from `robot_parameters.yaml`'s `servo.target_mass_kg` (datasheet value ~0.055 kg), not from density×volume
-- Inertia tensor scaled to match real mass (computed for unit density, then scaled proportionally)
+- Inertia tensor approximation scaled to match real mass
 - Includes validation: both servos present, volumes nonzero, left/right symmetry, mass match, provisional geometric sanity check (±30% of estimated bounding box)
 
 **Tests:**

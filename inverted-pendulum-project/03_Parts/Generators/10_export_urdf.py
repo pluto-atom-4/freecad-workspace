@@ -151,6 +151,38 @@ def compute_bbox_ellipsoid_inertia(mass_kg: float, dx: float, dy: float, dz: flo
     }
 
 
+def compute_box_inertia(mass_kg: float, dx: float, dy: float, dz: float) -> Dict[str, float]:
+    """Exact solid rectangular-cuboid moment of inertia.
+
+    For a uniform-density rectangular box where dx, dy, dz are FULL edge lengths
+    (not semi-axes), compute the principal moments of inertia about the center of mass.
+    This is the standard formula: Ixx = (m/12)*(dy^2+dz^2), cyclic for Iyy/Izz.
+
+    Use this for Base_Link, which is a plain Part.makeBox with no cuts/holes.
+    For bodies that approximate ellipsoids (e.g., servo meshes), use
+    compute_bbox_ellipsoid_inertia() instead.
+
+    Args:
+        mass_kg: total mass in kg
+        dx, dy, dz: box full lengths in mm
+
+    Returns:
+        dict with ixx, iyy, izz, ixy, ixz, iyz in kg·mm²
+    """
+    ixx = (mass_kg / 12.0) * (dy**2 + dz**2)
+    iyy = (mass_kg / 12.0) * (dx**2 + dz**2)
+    izz = (mass_kg / 12.0) * (dx**2 + dy**2)
+
+    return {
+        'ixx': ixx,
+        'iyy': iyy,
+        'izz': izz,
+        'ixy': 0.0,
+        'ixz': 0.0,
+        'iyz': 0.0,
+    }
+
+
 def apply_rotation_to_vector(vector_mm: List[float], yaw_deg: float, pitch_deg: float, roll_deg: float) -> List[float]:
     """Apply YPR rotation to a 3D vector.
 
@@ -557,7 +589,7 @@ def main():
                      base_bbox['y_max'] - base_bbox['y_min'],
                      base_bbox['z_max'] - base_bbox['z_min']]
         base_mass = body_wheels['links']['Base_Link']['target_mass_kg']
-        base_inertia = compute_bbox_ellipsoid_inertia(base_mass, *base_dims)
+        base_inertia = compute_box_inertia(base_mass, *base_dims)
 
         # Base_Link: no incoming joint, root frame
         base_link = build_urdf_link(
