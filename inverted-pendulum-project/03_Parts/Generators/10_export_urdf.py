@@ -33,9 +33,8 @@ Output:
     - 03_Parts/Generators/10_urdf_export_metadata.json (validation + export log)
 
 Usage:
-    # Run via freecadcmd stdin-pipe (does NOT require FreeCAD API, but script is
-    # structured to support future integration if needed).
-    echo "exec(open('10_export_urdf.py').read())" | freecadcmd -c
+    # Pure Python, no FreeCAD required.
+    python3 10_export_urdf.py
 """
 
 import sys
