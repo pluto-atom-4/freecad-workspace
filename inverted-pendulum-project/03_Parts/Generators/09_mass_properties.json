@@ -1,0 +1,65 @@
+{
+  "issue": 85,
+  "timestamp": "2026-09-11T10:51:22.763898",
+  "input_document": "robot_assembly.FCStd",
+  "servo_left": {
+    "volume_mm3": 11308.1406,
+    "mass_kg": 0.055,
+    "center_of_mass_mm": [
+      32.4892,
+      25.7701,
+      -2.8066
+    ],
+    "inertia_kg_mm2": {
+      "ixx": 3.194427,
+      "iyy": 5.614427,
+      "izz": 3.212,
+      "ixy": 0.0,
+      "ixz": 0.0,
+      "iyz": 0.0
+    },
+    "visual_mesh_volume_mm3": 1037.007
+  },
+  "servo_right": {
+    "volume_mm3": 11308.1406,
+    "mass_kg": 0.055,
+    "center_of_mass_mm": [
+      32.4892,
+      25.7701,
+      -2.8066
+    ],
+    "inertia_kg_mm2": {
+      "ixx": 3.194427,
+      "iyy": 5.614427,
+      "izz": 3.212,
+      "ixy": 0.0,
+      "ixz": 0.0,
+      "iyz": 0.0
+    },
+    "visual_mesh_volume_mm3": 1037.007
+  },
+  "validations": [
+    {
+      "name": "servo_left_volume_nonzero",
+      "passed": true
+    },
+    {
+      "name": "servo_right_volume_nonzero",
+      "passed": true
+    },
+    {
+      "name": "servo_left_right_volume_symmetry",
+      "passed": true,
+      "diff_percent": 0.0
+    },
+    {
+      "name": "servo_left_mass_matches_target",
+      "passed": true
+    },
+    {
+      "name": "servo_right_mass_matches_target",
+      "passed": true
+    }
+  ],
+  "notes": "All mass properties (volume, CoM, inertia) from collision-proxy mesh (clean geometry, Issue #76). Visual mesh volume logged for reference only (self-intersecting, unreliable). Mass from datasheet."
+}

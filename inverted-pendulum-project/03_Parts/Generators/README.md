@@ -122,7 +122,105 @@ freecadcmd --python 04_export_assembly_merged.py
 
 ---
 
-## Testing & Validation (Phase 5)
+## Robot Assembly (Issue #9 Stages 1-3)
+
+Complete workflow for creating a two-wheel self-balancing robot assembly from Stage 0's design parameters, configuring joints, and computing mass properties.
+
+### Stage 1: Body + Wheel Geometry (Issue #9)
+
+**Script:** `07_create_body_and_wheels.py`
+
+Creates chassis (`Base_Link`), wheels (`Wheel_Left`, `Wheel_Right`), and reuses the existing 3-plate + servo linkage from Phase 3's `plates_servo_assembled.FCStd` as a `Pendulum_Link` subassembly.
+
+**Requirements:**
+- `plates_servo_assembled.FCStd` (output from Phase 3, must exist and be up-to-date)
+- `robot_parameters.yaml` (Stage 0 design inputs)
+
+**Usage:**
+```bash
+echo "exec(open('07_create_body_and_wheels.py').read())" | freecadcmd -c
+```
+
+**Output:**
+- `robot_body_wheels.FCStd` (new document: Base_Link, Wheel_Left/Right, Pendulum_Link, Pendulum_Link_Right)
+- `07_body_wheels_metadata.json` (per-link dimensions, placement, volume, triangle counts, validation results)
+- Console: Geometry summary (box/cylinder/subassembly info)
+
+**Key Design Decisions:**
+- Copies (not links) the servo mesh objects into the new document for self-contained Stage 2+ input
+- Chassis is a flat plate (not solid box), positioned as a deck plate near the pivot/servo level
+- Pendulum_Link tilts 90° so its plates stand parallel to the wheel discs
+- Pendulum_Link_Right built from human-tuned literal constants (not a geometric mirror, due to Mesh.transform() bugs)
+
+**Time:** ~15-30 seconds
+
+**Status:** 🔄 Redesign in progress (PR #52, `feat/issue-9-stage1-body-wheels`); see DESIGN.md for known transitional failures.
+
+### Stage 2: Assembly Joints (Issue #9)
+
+**Script:** `08_configure_assembly_joints.py` + `test_08_configure_assembly_joints.py`
+
+Adds Assembly workbench joints (fixed + revolute) to configure the robot's kinematic structure.
+
+**Requirements:**
+- `robot_body_wheels.FCStd` (output from Stage 1)
+- `robot_parameters.yaml` (design parameters)
+
+**Usage:**
+```bash
+echo "exec(open('08_configure_assembly_joints.py').read())" | freecadcmd -c
+python3 -m pytest -q test_08_configure_assembly_joints.py
+```
+
+**Output:**
+- `robot_assembly.FCStd` (new document with joints configured: wheel rotations, pendulum pivot, servo rotations)
+- `08_assembly_joints_metadata.json` (joint configuration details, validation results)
+- Console: Joint summary, validation results
+
+**Time:** ~10-20 seconds
+
+**Status:** 🔄 (see Issue #63 fix in PR #66 for Visibility recursion on App::Link)
+
+### Stage 3: Servo Mass Properties (Issue #85)
+
+**Script:** `09_compute_mass_properties.py` + `test_09_compute_mass_properties.py`
+
+Computes mass properties for the two servo instances (left and right) embedded in the Pendulum_Link subassembly, using **mesh-native API** (never STEP round-trip, which loses fidelity catastrophically per FINDINGS.md).
+
+**Requirements:**
+- `robot_assembly.FCStd` (output from Stage 2)
+- `robot_parameters.yaml` (including new `servo:` section with `target_mass_kg`)
+
+**Usage:**
+```bash
+echo "exec(open('09_compute_mass_properties.py').read())" | freecadcmd -c
+python3 -m pytest -q test_09_compute_mass_properties.py
+```
+
+**Output:**
+- `09_mass_properties.json` (per-servo: volume_mm3, collision_proxy_volume_mm3, mass_kg, center_of_mass_mm, inertia_kg_mm2, validations)
+- Console: Geometry summary (volumes, CoM, inertia tensor), validation results
+
+**Key Design Decisions:**
+- Uses FreeCAD `Mesh.MatrixOfInertia()` (mesh-native), NOT STEP round-trip (60% volume loss + fragmentation per FINDINGS.md sec.3)
+- Mass comes from `robot_parameters.yaml`'s `servo.target_mass_kg` (datasheet value ~0.055 kg), not from density×volume
+- Inertia tensor scaled to match real mass (computed for unit density, then scaled proportionally)
+- Includes validation: both servos present, volumes nonzero, left/right symmetry, mass match, provisional geometric sanity check (±30% of estimated bounding box)
+
+**Tests:**
+- Both servos present in JSON
+- Volumes nonzero and symmetric (left/right within 5%)
+- Masses match datasheet target
+- Inertia tensor structure valid (6 components: ixx, iyy, izz, ixy, ixz, iyz)
+- Provisional geometric sanity check (±30% tolerance, pending Issue #8's hardware spike)
+
+**Time:** ~5-10 seconds
+
+**Status:** 🔄 (Issue #85 implementation)
+
+---
+
+## Testing & Validation (Phase 5, Legacy)
 
 ### Unit Tests (No FreeCAD Required)
 

@@ -78,10 +78,28 @@ pendulum:
   target_mass_kg: 0.12
 
 # ----------------------------------------------------------------------------
+# Servo — Feetech STS3032 servo motor. TWO instances in the assembly:
+# Pendulum_Link/STS3032_Mount (left) and Pendulum_Link_Right/STS3032_Mount_Right
+# (right), but the same physical part, so a single target mass applies to both.
+# target_mass_kg is from the servo's datasheet, not a density × volume
+# calculation (which would be unreliable per FINDINGS.md's STEP round-trip loss).
+# Datasheet spec: ~0.055 kg (9g servo, literature value common across datasheets).
+# See Issue #85 / 09_compute_mass_properties.py.
+# ----------------------------------------------------------------------------
+servo:
+  material: Aluminum_alloy_with_plastic_gears
+  density_kg_m3: 1500.0  # placeholder; not used (mass comes from datasheet)
+  target_mass_kg: 0.055  # Feetech STS3032 datasheet value
+  status: PLACEHOLDER
+
+# ----------------------------------------------------------------------------
 # Maps the link names Stage 1+ will create in FreeCAD / emit into the URDF
 # (see Issue #9 Stage 1 and Stage 4) to the component sections above, so a
 # single lookup gives geometry/material/density/mass for any link without
 # hardcoding the mapping again downstream.
+# Note: servo instances (left and right) do not appear here because they are
+# nested children of Pendulum_Link, not top-level links; see Issue #85 /
+# 09_compute_mass_properties.py for servo mass/inertia computation.
 # ----------------------------------------------------------------------------
 links:
   Base_Link: chassis
