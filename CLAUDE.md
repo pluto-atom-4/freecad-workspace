@@ -52,7 +52,14 @@ mamba run -n pendulum-tools python3 -m pytest -q
 **`freecadcmd` 1.1.3 in this environment does not set `__name__ == "__main__"` for a plain
 positional or `--python` script argument** — a script's `if __name__ == "__main__":` guard
 silently never fires, exits 0 having done nothing (verified empirically, not documented
-upstream). Working invocation: `"$FREECAD_BIN" -c "exec(open('script.py').read())"`.
+upstream). **`-c` is `--console` (a boolean flag, not `python -c CODE`)** — passing
+`-c "exec(open('script.py').read())"` silently swallows the code string as an ignored
+positional file argument and runs nothing (verified empirically 2026-09-10: no script output,
+not even a bare `print()`, while exit code stays 0). Working invocation: pipe the code to
+`-c`'s stdin REPL instead, where `__name__` is `"__main__"`:
+```
+echo "exec(open('script.py').read())" | "$FREECAD_BIN" -c
+```
 
 **`runpy.run_path('script.py', run_name='__main__')` (an alternative workaround to the above
 when a script's own top-level code — not just its `__main__` guard — needs to run under

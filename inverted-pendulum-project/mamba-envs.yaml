@@ -5,7 +5,7 @@
 #
 # Used for ALL numeric/CAD-authoring work: pendulum simulation (numpy/scipy),
 # visualization (matplotlib), parametric CAD generation (cadquery, which pulls
-# in OCP transitively), and mesh processing/repair (trimesh).
+# in OCP transitively), and mesh processing/repair (trimesh, pymeshlab).
 #
 # FreeCAD itself is NOT installed into this environment and must NEVER be
 # imported here. FreeCAD bundles its own OpenCASCADE build; OCP (via cadquery)
@@ -26,6 +26,9 @@ environments:
       - python=3.11
       - cadquery          # pulls in OCP transitively — do not pin/list OCP explicitly
       - trimesh
+      - pymeshlab         # Issue #76: trimesh.repair() can't fix self-intersections/
+                          # non-manifolds (proven insufficient in-session) — PyMeshLab
+                          # has explicit self-intersection removal + non-manifold repair
       - numpy>=1.24
       - scipy>=1.10
       - matplotlib>=3.7
@@ -50,13 +53,14 @@ environments:
       - docutils        # transitive dep of rospkg/catkin-pkg (reST parsing)
     description: >
       All phases (1-6): simulation, servo positioning, assembly linking,
-      parametric CadQuery bracket generation, trimesh mesh validation/repair.
+      parametric CadQuery bracket generation, trimesh/pymeshlab mesh
+      validation/repair.
       Issue #9 Stage 0: PyYAML for the robot_parameters.yaml design-input
       loader. FreeCAD is invoked externally via subprocess (freecadcmd),
       never imported into this environment.
     setup_command: |
       mamba create -n pendulum-tools -c conda-forge python=3.11 \
-        cadquery trimesh numpy scipy matplotlib pyyaml -y
+        cadquery trimesh pymeshlab numpy scipy matplotlib pyyaml -y
 
 # FreeCAD (external, invoked via subprocess only)
 #
@@ -84,7 +88,7 @@ usage: |
   mamba list
 
   # Verify imports
-  mamba run -n pendulum-tools python -c "import cadquery, trimesh, numpy, scipy, matplotlib, yaml; print('OK')"
+  mamba run -n pendulum-tools python -c "import cadquery, trimesh, pymeshlab, numpy, scipy, matplotlib, yaml; print('OK')"
 
   # Remove environment
   mamba env remove -n pendulum-tools -y
