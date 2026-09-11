@@ -229,6 +229,25 @@ WHEEL_ON_PLATE_HOLE_EDGE = "Edge27"
 # mesh (e.g. X shifted by an unexplained, consistent ~300mm on the 188-facet
 # collision proxy) -- a bug in that approach, not in this one; a rotation
 # doesn't hit it.
+# Redesign follow-up (Issue #77): Pendulum_Link's STS3032_Mount (Left) --
+# human-tuned live via the bridge (same process as Right's constants),
+# converged through several iterations, each checked against real render
+# output (not just Placement math -- Mesh::Feature-in-App::Part composed
+# with a rotation confirmed unreliable via Mesh.transform()+BoundBox on
+# this specific mesh, see CLAUDE.md; verification instead used a manual
+# per-point transform of Mesh.Points, and ultimately live-bridge
+# screenshots the human confirmed directly). Ends up near identity
+# (unlike Right's, which needs a real offset + 180 deg flip) -- Left's
+# STS3032_Mount was already close to correctly placed geometrically;
+# earlier "overlaps/floats" symptoms during this session's live-bridge
+# debugging were partly an artifact of ad-hoc visibility toggling on the
+# Assembly's App::Link objects getting saved to disk, not anything wrong
+# with 08_configure_assembly_joints.py itself (its own
+# build_assembly_and_links() already sets Link visibility=True by
+# design).
+PENDULUM_LINK_STS_MOUNT_POSITION_MM = (-1.0, 0.0, 0.0)
+PENDULUM_LINK_STS_MOUNT_TILT_DEG = 0.0
+
 PENDULUM_LINK_RIGHT_TOP_PLATE_Z_MM = 0.0
 PENDULUM_LINK_RIGHT_MIDDLE_PLATE_Z_MM = 0.0
 PENDULUM_LINK_RIGHT_STS_MOUNT_POSITION_MM = (-1.0, 51.0, 6.0)
@@ -603,6 +622,14 @@ class BodyWheelsGenerator:
                 facets = new_obj.Mesh.CountFacets
                 self.reused_mesh_facet_counts[child.Name] = facets
                 print(f"  ✓ Copied {child.Name} into STS3032_Mount ({facets} facets)")
+
+            # Human-tuned live (Issue #77): STS3032_Mount's own Placement,
+            # not copied from source (which is identity) -- see this
+            # constant's derivation comment above.
+            sts_mount.Placement = Placement(
+                Vector(*PENDULUM_LINK_STS_MOUNT_POSITION_MM),
+                Rotation(Vector(1, 0, 0), PENDULUM_LINK_STS_MOUNT_TILT_DEG),
+            )
 
             if not plate_children:
                 print("ERROR: No plate objects copied from PlateStack")
