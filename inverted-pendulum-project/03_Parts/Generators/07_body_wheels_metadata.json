@@ -1,7 +1,7 @@
 {
   "phase": 7,
   "title": "Stage 1: Body + Wheel Geometry",
-  "timestamp": "2026-09-11T08:20:37.568223",
+  "timestamp": "2026-09-11T16:43:31.577092",
   "issue": 9,
   "source_document": "plates_servo_assembled.FCStd",
   "output_document": "robot_body_wheels.FCStd",
@@ -135,6 +135,59 @@
       },
       "volume_mm3": 3863.4369,
       "target_mass_kg": 0.12,
+      "plate_shapes": [
+        {
+          "name": "Top_Plate",
+          "volume_mm3": 1348.17477,
+          "center_of_mass_mm": {
+            "x": -1.98,
+            "y": 33.3,
+            "z": 6.0
+          },
+          "inertia_unit_density_kg_mm2": {
+            "ixx": 224628.2955447443,
+            "iyy": 131949.52445958043,
+            "izz": 355173.4712851323,
+            "ixy": -159501.21122654586,
+            "ixz": 8.52651282912121e-14,
+            "iyz": -8.526512829121198e-14
+          }
+        },
+        {
+          "name": "Middle_Plate",
+          "volume_mm3": 1216.17477,
+          "center_of_mass_mm": {
+            "x": 13.0,
+            "y": 15.76,
+            "z": 6.0
+          },
+          "inertia_unit_density_kg_mm2": {
+            "ixx": 60087.965889519604,
+            "iyy": 206682.8608986989,
+            "izz": 265503.97806902614,
+            "ixy": -97978.72032559961,
+            "ixz": 2.5579538487363607e-13,
+            "iyz": 9.947598300641404e-14
+          }
+        },
+        {
+          "name": "Bottom_Plate",
+          "volume_mm3": 1299.087385,
+          "center_of_mass_mm": {
+            "x": 3.3877,
+            "y": -2.0136,
+            "z": 3.0
+          },
+          "inertia_unit_density_kg_mm2": {
+            "ixx": 128977.7448554093,
+            "iyy": 219435.82503851102,
+            "izz": 347060.3538676575,
+            "ixy": 155679.3771161953,
+            "ixz": -7.428813355319493e-14,
+            "iyz": 1.83628118864995e-13
+          }
+        }
+      ],
       "notes": "Copied (not linked) from plates_servo_assembled.FCStd's PlateStack + STS3032_Mount groups -- see module docstring for the link-vs-copy rationale. Bounding box and volume above cover the copied PlateStack plates only (Part::Feature shapes); the copied STS3032_Mount servo meshes retain their original relative placement from the source document (see reused_pendulum_mesh_facet_counts in geometry_stats for their facet counts) and are not included in this link's volume/bbox figures since Mesh::Feature geometry isn't uniformly watertight/volumetric."
     },
     "Pendulum_Link_Right": {
@@ -166,6 +219,59 @@
       },
       "volume_mm3": 3863.4369,
       "target_mass_kg": 0.12,
+      "plate_shapes": [
+        {
+          "name": "Top_Plate_Right",
+          "volume_mm3": 1348.17477,
+          "center_of_mass_mm": {
+            "x": -1.98,
+            "y": 33.3,
+            "z": -0.0
+          },
+          "inertia_unit_density_kg_mm2": {
+            "ixx": 224628.2955447443,
+            "iyy": 131949.52445958043,
+            "izz": 355173.4712851323,
+            "ixy": -159501.21122654586,
+            "ixz": -2.8421709430403938e-14,
+            "iyz": -2.55795384873636e-13
+          }
+        },
+        {
+          "name": "Middle_Plate_Right",
+          "volume_mm3": 1216.17477,
+          "center_of_mass_mm": {
+            "x": 13.0,
+            "y": 15.76,
+            "z": 0.0
+          },
+          "inertia_unit_density_kg_mm2": {
+            "ixx": 60087.965889519604,
+            "iyy": 206682.8608986989,
+            "izz": 265503.97806902614,
+            "ixy": -97978.72032559961,
+            "ixz": -2.8421709430404004e-14,
+            "iyz": 4.566433137579927e-30
+          }
+        },
+        {
+          "name": "Bottom_Plate_Right",
+          "volume_mm3": 1299.087385,
+          "center_of_mass_mm": {
+            "x": 3.3877,
+            "y": -2.0136,
+            "z": 3.0
+          },
+          "inertia_unit_density_kg_mm2": {
+            "ixx": 128977.7448554093,
+            "iyy": 219435.82503851102,
+            "izz": 347060.3538676575,
+            "ixy": 155679.3771161953,
+            "ixz": -7.428813355319493e-14,
+            "iyz": 1.83628118864995e-13
+          }
+        }
+      ],
       "notes": "NOT a geometric mirror of Pendulum_Link -- see build_pendulum_link_right()'s docstring. target_mass_kg reuses Pendulum_Link's own robot_parameters.yaml mapping (no separate 'Pendulum_Link_Right' entry exists yet)."
     }
   },
