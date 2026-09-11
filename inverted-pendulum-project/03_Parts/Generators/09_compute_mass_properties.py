@@ -64,12 +64,6 @@ except ImportError:
     sys.exit(1)
 
 try:
-    import yaml
-except ImportError:
-    print("ERROR: PyYAML not available. Install with: pip install pyyaml")
-    sys.exit(1)
-
-try:
     import numpy as np
 except ImportError:
     print("ERROR: NumPy not available. Install with: pip install numpy")
@@ -86,24 +80,11 @@ except NameError:
 
 # robot_parameters.yaml lives in a sibling directory (02_Design_Inputs)
 _DESIGN_INPUTS_DIR = SCRIPT_DIR.parent.parent / "02_Design_Inputs"
+sys.path.insert(0, str(_DESIGN_INPUTS_DIR))
+from robot_parameters import load_robot_parameters, RobotParametersError  # noqa: E402
 
 INPUT_DOC_FILENAME = "robot_assembly.FCStd"
 OUTPUT_METADATA_FILENAME = "09_mass_properties.json"
-
-
-def load_robot_parameters_yaml() -> Dict[str, Any]:
-    """Load robot_parameters.yaml and return the parsed YAML dict."""
-    params_file = _DESIGN_INPUTS_DIR / "robot_parameters.yaml"
-    if not params_file.exists():
-        raise FileNotFoundError(f"robot_parameters.yaml not found at {params_file}")
-
-    with open(params_file, 'r') as f:
-        params = yaml.safe_load(f)
-
-    if not params:
-        raise ValueError("robot_parameters.yaml is empty or invalid YAML")
-
-    return params
 
 
 def get_nested_object(doc, path: str) -> Optional[Any]:
@@ -259,12 +240,8 @@ def main():
     try:
         # Load robot parameters
         print("\n1. Loading robot_parameters.yaml...")
-        params = load_robot_parameters_yaml()
-        servo_params = params.get('servo', {})
-        target_mass_kg = servo_params.get('target_mass_kg')
-
-        if target_mass_kg is None:
-            raise ValueError("servo.target_mass_kg not found in robot_parameters.yaml")
+        params = load_robot_parameters()
+        target_mass_kg = params.servo.target_mass_kg
 
         print(f"   ✓ Servo target mass: {target_mass_kg} kg")
 

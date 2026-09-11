@@ -149,14 +149,32 @@ class PendulumSpec(ComponentSpec):
 
 
 @dataclass
+class ServoSpec(ComponentSpec):
+    """Servo motor (Feetech STS3032) specification.
+    Two instances in the assembly: left and right of Pendulum_Link.
+    Per Issue #85, target_mass_kg is from the servo datasheet, not density × volume."""
+
+    status: str
+
+    def validate(self, name: str = "servo") -> None:
+        super().validate(name)
+        if self.status not in VALID_STATUSES:
+            raise RobotParametersError(
+                f"{name}.status must be one of {sorted(VALID_STATUSES)}, got {self.status!r}"
+            )
+
+
+@dataclass
 class RobotParameters:
     """Top-level, validated view of `robot_parameters.yaml`."""
 
     schema_version: int
     status: str
+    robot_name: str
     chassis: ChassisSpec
     wheel: WheelSpec
     pendulum: PendulumSpec
+    servo: ServoSpec
     links: Dict[str, str] = field(default_factory=dict)
 
     @property
@@ -173,9 +191,11 @@ class RobotParameters:
             raise RobotParametersError(
                 f"status must be one of {sorted(VALID_STATUSES)}, got {self.status!r}"
             )
+        _require_nonempty_str(self.robot_name, "robot_name")
         self.chassis.validate("chassis")
         self.wheel.validate("wheel")
         self.pendulum.validate("pendulum")
+        self.servo.validate("servo")
 
         if not self.links:
             raise RobotParametersError("links: must define at least one link mapping")
@@ -235,11 +255,12 @@ def load_robot_parameters(path: Optional[Union[str, Path]] = None) -> RobotParam
     if not isinstance(raw, dict):
         raise RobotParametersError(f"{yaml_path}: top level must be a mapping")
 
-    _require_keys(raw, ("schema_version", "status", "chassis", "wheel", "pendulum"), str(yaml_path))
+    _require_keys(raw, ("schema_version", "status", "robot_name", "chassis", "wheel", "pendulum", "servo"), str(yaml_path))
 
     chassis = _parse_component(raw["chassis"], "chassis", ChassisSpec, yaml_path)
     wheel = _parse_component(raw["wheel"], "wheel", WheelSpec, yaml_path)
     pendulum = _parse_component(raw["pendulum"], "pendulum", PendulumSpec, yaml_path)
+    servo = _parse_component(raw["servo"], "servo", ServoSpec, yaml_path)
 
     links_raw = raw.get("links", {})
     if not isinstance(links_raw, dict):
@@ -248,9 +269,11 @@ def load_robot_parameters(path: Optional[Union[str, Path]] = None) -> RobotParam
     params = RobotParameters(
         schema_version=raw["schema_version"],
         status=raw["status"],
+        robot_name=raw["robot_name"],
         chassis=chassis,
         wheel=wheel,
         pendulum=pendulum,
+        servo=servo,
         links=dict(links_raw),
     )
     params.validate()
