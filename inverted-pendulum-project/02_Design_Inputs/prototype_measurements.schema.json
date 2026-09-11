@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Prototype Measurements",
+  "description": "Real physical-prototype measurements for Stage 5 (issue #91) to validate calculated URDF inertia against. Not produced by any current pipeline stage -- future hardware-measurement work (relates to issue #8's <2% inertia error success criterion) would populate a real 02_Design_Inputs/prototype_measurements.json matching this schema. Any field may be null (unmeasured) -- Stage 5 skips comparisons for null fields.",
+  "type": "object",
+  "properties": {
+    "issue": {
+      "type": ["integer", "null"],
+      "description": "GitHub issue number (e.g., 91)"
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "ISO 8601 timestamp when measurements were taken"
+    },
+    "measurement_method": {
+      "type": ["string", "null"],
+      "description": "How/what equipment measured these values (e.g., 'scale + accelerometer', null if unmeasured)"
+    },
+    "links": {
+      "type": "object",
+      "description": "Per-link measurements",
+      "properties": {
+        "servo": {
+          "$ref": "#/definitions/link_measurement",
+          "description": "Single servo (for quick standalone validation)"
+        },
+        "Base_Link": {
+          "$ref": "#/definitions/link_measurement"
+        },
+        "Wheel_Left": {
+          "$ref": "#/definitions/link_measurement"
+        },
+        "Wheel_Right": {
+          "$ref": "#/definitions/link_measurement"
+        },
+        "Pendulum_Link": {
+          "$ref": "#/definitions/link_measurement"
+        },
+        "Pendulum_Link_Right": {
+          "$ref": "#/definitions/link_measurement"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "link_measurement": {
+      "type": "object",
+      "description": "Mass and inertia measurements for a single link (all fields optional/nullable)",
+      "properties": {
+        "mass_kg": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Mass in kilograms (null if unmeasured)"
+        },
+        "com_mm": {
+          "type": ["array", "null"],
+          "description": "Center of mass [x, y, z] in millimeters (null if unmeasured)",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "inertia_kg_mm2": {
+          "type": ["object", "null"],
+          "description": "Moment of inertia tensor in kg·mm² (null if unmeasured)",
+          "properties": {
+            "ixx": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Principal moment about X axis (always non-negative)"
+            },
+            "iyy": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Principal moment about Y axis (always non-negative)"
+            },
+            "izz": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Principal moment about Z axis (always non-negative)"
+            },
+            "ixy": {
+              "type": "number",
+              "description": "Off-diagonal XY product of inertia"
+            },
+            "ixz": {
+              "type": "number",
+              "description": "Off-diagonal XZ product of inertia"
+            },
+            "iyz": {
+              "type": "number",
+              "description": "Off-diagonal YZ product of inertia"
+            }
+          },
+          "required": ["ixx", "iyy", "izz", "ixy", "ixz", "iyz"]
+        }
+      }
+    }
+  }
+}

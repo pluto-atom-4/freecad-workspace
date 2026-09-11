@@ -272,6 +272,48 @@ python3 -m pytest -q test_10_export_urdf.py
 
 **Status:** ✅ (Issue #84 complete)
 
+### Stage 5: Validate URDF Inertia (Issue #91)
+
+**Script:** `11_validate_inertia.py` + `test_11_validate_inertia.py`
+
+Compares calculated inertia properties (from `robot.urdf`, Stage 4 output) against real prototype measurements when available. Designed for hardware validation work (Issue #8's <2% inertia-error success criterion). Script is pure Python (no FreeCAD required).
+
+**Requirements:**
+- `06_Exports/urdf/robot.urdf` (output from Stage 4)
+- `02_Design_Inputs/prototype_measurements.json` (optional, future hardware data)
+  - See `02_Design_Inputs/prototype_measurements.schema.json` for expected JSON shape
+  - See `02_Design_Inputs/prototype_measurements.example.json` for example data (fake values)
+
+**Usage:**
+```bash
+python3 11_validate_inertia.py
+python3 -m pytest -q test_11_validate_inertia.py
+```
+
+**Output:**
+- `11_inertia_validation_report.json` — detailed per-link comparisons (if measurements present), overall pass/fail status, tolerance info
+- Console: Summary table showing per-link comparison results and percent differences
+
+**Key Design Decisions:**
+- **Units:** Parses SI units from URDF (meters, kg·m²) and converts to project-native mm-based units for comparison (×1000 for length, ×1e6 for inertia)
+- **Graceful absence:** Returns exit code 0 if `prototype_measurements.json` doesn't exist (no failure); validation is optional
+- **Tolerance:** Compares mass and diagonal inertia terms (ixx, iyy, izz) at 30% default tolerance; skips off-diagonal terms (ixy, ixz, iyz) as near-zero/noisy
+- **Null handling:** Unmeasured fields in prototype data are skipped, not counted as failures
+
+**Tests:**
+- URDF parsing: all 5 links present, units correct (mm-scale, not meter-scale)
+- Prototype loading: missing file returns None, example file loads correctly
+- Comparisons: within tolerance passes, exceeds tolerance fails, null fields skipped, off-diagonal terms skipped
+- Report structure: correct fields, proper status values
+
+**Exit Code:**
+- 0: validation passed OR no prototype data available (graceful absence)
+- 1: validation failed (measured values exceed tolerance)
+
+**Time:** < 1 second (pure Python, no FreeCAD)
+
+**Status:** ✅ (Issue #91 complete; prototype_measurements.json population pending Issue #8 hardware work)
+
 ---
 
 ## Testing & Validation (Phase 5, Legacy)

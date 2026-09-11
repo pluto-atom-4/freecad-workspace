@@ -1,0 +1,52 @@
+{
+  "_comment": "EXAMPLE ONLY — not real measured data. See prototype_measurements.schema.json. A real 02_Design_Inputs/prototype_measurements.json (same filename, no .example) would be picked up automatically by 11_validate_inertia.py.",
+  "issue": 91,
+  "timestamp": "2026-09-11T12:00:00Z",
+  "measurement_method": "laboratory scale + rotation method (5% uncertainty)",
+  "links": {
+    "servo": {
+      "mass_kg": 0.055,
+      "com_mm": [15.5, 20.0, 2.5],
+      "inertia_kg_mm2": {
+        "ixx": 125,
+        "iyy": 135,
+        "izz": 160,
+        "ixy": 60,
+        "ixz": 0,
+        "iyz": 5
+      }
+    },
+    "Base_Link": {
+      "mass_kg": 0.255,
+      "com_mm": [0.5, -0.2, 0.1],
+      "inertia_kg_mm2": {
+        "ixx": 81,
+        "iyy": 21,
+        "izz": 102,
+        "ixy": 0,
+        "ixz": 0,
+        "iyz": 0
+      }
+    },
+    "Wheel_Left": {
+      "mass_kg": null,
+      "com_mm": null,
+      "inertia_kg_mm2": null
+    },
+    "Wheel_Right": {
+      "mass_kg": null,
+      "com_mm": null,
+      "inertia_kg_mm2": null
+    },
+    "Pendulum_Link": {
+      "mass_kg": null,
+      "com_mm": null,
+      "inertia_kg_mm2": null
+    },
+    "Pendulum_Link_Right": {
+      "mass_kg": null,
+      "com_mm": null,
+      "inertia_kg_mm2": null
+    }
+  }
+}

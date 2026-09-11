@@ -24,6 +24,7 @@ and enable parametric updates without re-linking.
 | 8 — Assembly joints (Issue #9 Stage 2) | `08_configure_assembly_joints.py` + `test_08_configure_assembly_joints.py` | `robot_assembly.FCStd`, `08_assembly_joints_metadata.json` | 🔄 (see Issue #63 fix in PR #66) |
 | 9 — Servo mass properties (Issue #85 Stage 3) | `09_compute_mass_properties.py` + `test_09_compute_mass_properties.py` | `09_mass_properties.json` | ✅ |
 | 10 — URDF export (Issue #84 Stage 4) | `10_export_urdf.py` + `test_10_export_urdf.py` | `06_Exports/urdf/robot.urdf`, `06_Exports/urdf/meshes/feetech-STS3032-visual.stl`, `10_urdf_export_metadata.json` | ✅ |
+| 11 — URDF inertia validation (Issue #91 Stage 5) | `11_validate_inertia.py` + `test_11_validate_inertia.py` | `11_inertia_validation_report.json` | ✅ |
 
 > **Note (issue #22):** Phase 2's `servo_placement.json` clearance check is Z-only and ignores
 > each plate's independent rotation — it originally misreported Bottom_Plate's clearance as
@@ -76,6 +77,7 @@ echo "exec(open('03_Parts/Generators/02_position_servo.py').read())" | "$FREECAD
 | Stage 10: Servo collision geometry split (box + cylinder) derived from fixed constants, not live mesh shape | Servo's collision envelope is two primitives (32×12×28 mm box, 4.65 mm radius × 16.15 mm height cylinder) with fixed positions relative to servo mount — these were determined by analyzing the STEP spec and are re-verified against `collision_proxy_bbox_mm` (live envelope from Stage 3) with 10% tolerance | Primitives are intentionally separate (not a unified convex hull) to keep physics simulation budget tight and allow independent component tuning. If servo hardware changes (e.g., shaft protrusion length), constants must be manually updated — no automatic derivation |
 | Stage 10: Visual mesh tolerance locked at 1.0 mm | Only the 1.0 mm tolerance `.stl` is currently packaged and copied to the URDF export; coarser meshes (5.0 mm, 10 mm) exist in `03_Parts/Mechanical/` but aren't wired into the export pipeline yet | To enable other tolerances, extend `copy_visual_mesh(tolerance_mm)` in `10_export_urdf.py` to accept `--visual-tolerance 5.0` or similar CLI flag, then check for the corresponding `.stl` file before copying |
 | Stage 9/10 (`09_compute_mass_properties.py`, `10_export_urdf.py`) bypass the already-built `02_Design_Inputs/robot_parameters.py` loader — each parses `robot_parameters.yaml` directly with its own local `yaml.safe_load()` call instead of importing the shared loader `07_create_body_and_wheels.py` already uses correctly | Two independent, divergence-prone copies of the same YAML-reading logic; schema/validation changes to the shared loader (e.g. dataclass field renames) silently don't reach Stage 3/4 | Tracked as Issue #88 — refactor both scripts to import and use `robot_parameters.py` like Stage 1 does |
+| Stage 11 (Stage 5, `11_validate_inertia.py`): `prototype_measurements.json` does NOT exist yet | This is a comparison/validation tool designed for future hardware-measurement work (relates to Issue #8's <2% inertia-error success criterion). The script gracefully handles absence (exits 0 with "no_prototype_data" status) and is ready whenever real measurements become available. See `02_Design_Inputs/prototype_measurements.schema.json` + `.example.json` for the expected shape. | No action needed; validation is optional and in-place. Once Issue #8 produces real hardware data, populate `02_Design_Inputs/prototype_measurements.json` (same filename, no `.example`) with real measurements and rerun the pipeline. |
 
 ## Related Work
 
@@ -101,4 +103,4 @@ script as named constants with a note on where they came from — not re-derived
 - `../CLAUDE.md`, `README.md`
 
 ---
-**Last Updated:** 2026-09-11 (Stage 4 URDF export complete, Issue #84)
+**Last Updated:** 2026-09-11 (Stage 5 URDF inertia validation added, Issue #91)
