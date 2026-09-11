@@ -197,7 +197,7 @@ def compute_servo_properties(mesh_obj, target_mass_kg: float, servo_name: str) -
         servo_name: name for logging/error messages (e.g., "servo_left")
 
     Returns:
-        dict with: volume_mm3, mass_kg, center_of_mass_mm, inertia_kg_mm2
+        dict with: volume_mm3, mass_kg, center_of_mass_mm, inertia_kg_mm2, collision_proxy_bbox_mm
     """
     if not hasattr(mesh_obj, 'Mesh'):
         raise ValueError(f"{servo_name}: object does not have .Mesh attribute")
@@ -213,6 +213,20 @@ def compute_servo_properties(mesh_obj, target_mass_kg: float, servo_name: str) -
     com = mesh.CenterOfGravity
     com_mm = [float(com.x), float(com.y), float(com.z)]
 
+    # Bounding box (axis-aligned, in mesh's local frame)
+    bbox = mesh.BoundBox
+    bbox_mm = {
+        'x_length': round(bbox.XLength, 4),
+        'y_length': round(bbox.YLength, 4),
+        'z_length': round(bbox.ZLength, 4),
+        'x_min': round(bbox.XMin, 4),
+        'x_max': round(bbox.XMax, 4),
+        'y_min': round(bbox.YMin, 4),
+        'y_max': round(bbox.YMax, 4),
+        'z_min': round(bbox.ZMin, 4),
+        'z_max': round(bbox.ZMax, 4),
+    }
+
     # Inertia tensor (about the center of mass, in the mesh's local frame)
     # Compute directly from mesh geometry using tetrahedra (origin to facets)
     # This avoids FreeCAD's MatrixOfInertia which may not be available on Mesh objects
@@ -222,6 +236,7 @@ def compute_servo_properties(mesh_obj, target_mass_kg: float, servo_name: str) -
     print(f"    Volume: {volume_mm3:.2f} mm^3")
     print(f"    Center of mass: [{com_mm[0]:.3f}, {com_mm[1]:.3f}, {com_mm[2]:.3f}] mm")
     print(f"    Mass (target, from datasheet): {target_mass_kg:.6f} kg")
+    print(f"    Collision-proxy BoundBox: X({bbox_mm['x_length']:.2f}mm), Y({bbox_mm['y_length']:.2f}mm), Z({bbox_mm['z_length']:.2f}mm)")
     print(f"    Inertia tensor (kg·mm², computed from mesh geometry):")
     print(f"      ixx={inertia_scaled['ixx']:.4f}, iyy={inertia_scaled['iyy']:.4f}, izz={inertia_scaled['izz']:.4f}")
     print(f"      ixy={inertia_scaled['ixy']:.4f}, ixz={inertia_scaled['ixz']:.4f}, iyz={inertia_scaled['iyz']:.4f}")
@@ -231,6 +246,7 @@ def compute_servo_properties(mesh_obj, target_mass_kg: float, servo_name: str) -
         'mass_kg': round(target_mass_kg, 6),
         'center_of_mass_mm': [round(x, 4) for x in com_mm],
         'inertia_kg_mm2': {k: round(v, 6) for k, v in inertia_scaled.items()},
+        'collision_proxy_bbox_mm': bbox_mm,
     }
 
 

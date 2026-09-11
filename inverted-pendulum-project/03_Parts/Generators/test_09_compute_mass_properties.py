@@ -205,3 +205,63 @@ def test_issue_85_metadata():
     assert data.get('issue') == 85, "JSON output missing 'issue: 85' metadata"
     assert 'timestamp' in data, "JSON output missing timestamp"
     assert 'input_document' in data, "JSON output missing input_document"
+
+
+def test_collision_proxy_bbox_present():
+    """Both servo entries have collision_proxy_bbox_mm field (Stage 3 retrofit)."""
+    data = load_json_output()
+
+    for servo_name in ['servo_left', 'servo_right']:
+        assert 'collision_proxy_bbox_mm' in data[servo_name], (
+            f"{servo_name} missing 'collision_proxy_bbox_mm' field"
+        )
+
+        bbox = data[servo_name]['collision_proxy_bbox_mm']
+        required_keys = {'x_length', 'y_length', 'z_length', 'x_min', 'x_max', 'y_min', 'y_max', 'z_min', 'z_max'}
+        assert set(bbox.keys()) == required_keys, (
+            f"{servo_name} collision_proxy_bbox_mm has unexpected keys: {set(bbox.keys())}"
+        )
+
+        # All values should be numeric and non-negative (or x/y/z_min/max can be negative)
+        for key in ['x_length', 'y_length', 'z_length']:
+            assert bbox[key] > 0, (
+                f"{servo_name} collision_proxy_bbox_mm[{key}] should be positive, got {bbox[key]}"
+            )
+
+
+def test_collision_proxy_bbox_sanity():
+    """Collision proxy BoundBox dimensions match servo envelope expectations."""
+    data = load_json_output()
+
+    # From servo_link_config.json's specifications:
+    # body_length=32.0, body_width=12.0, body_height=28.0
+    # Expected envelope: approximately 32x12x32mm (with some tolerance)
+    # BoundBox from live read should be close to these nominal dims.
+
+    expected_x = 32.0  # body_length
+    expected_y = 12.0  # body_width
+    expected_z_nominal = 28.0  # body_height
+    tolerance_percent = 10.0  # ±10% tolerance
+
+    for servo_name in ['servo_left', 'servo_right']:
+        bbox = data[servo_name]['collision_proxy_bbox_mm']
+
+        # X (length) should match
+        x_diff_percent = abs(bbox['x_length'] - expected_x) / expected_x * 100
+        assert x_diff_percent <= tolerance_percent, (
+            f"{servo_name} X length {bbox['x_length']:.2f}mm differs from {expected_x}mm "
+            f"by {x_diff_percent:.1f}% (tolerance: {tolerance_percent}%)"
+        )
+
+        # Y (width) should match exactly
+        y_diff_percent = abs(bbox['y_length'] - expected_y) / expected_y * 100
+        assert y_diff_percent <= tolerance_percent, (
+            f"{servo_name} Y length {bbox['y_length']:.2f}mm differs from {expected_y}mm "
+            f"by {y_diff_percent:.1f}% (tolerance: {tolerance_percent}%)"
+        )
+
+        # Z (height) should be close to body_height or slightly larger (envelope)
+        # Actual collision proxy may include the shaft, so allow up to 35mm
+        assert bbox['z_length'] > 25.0 and bbox['z_length'] <= 35.0, (
+            f"{servo_name} Z length {bbox['z_length']:.2f}mm is outside expected range [25, 35]mm"
+        )
