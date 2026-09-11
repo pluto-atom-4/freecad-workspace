@@ -1,7 +1,7 @@
 {
   "phase": 8,
   "title": "Stage 2: Assembly Joint Configuration",
-  "generated": "2026-09-11T08:20:52.093897",
+  "generated": "2026-09-11T09:11:40.496330",
   "source_document": "robot_body_wheels.FCStd",
   "output_document": "robot_assembly.FCStd",
   "assembly_container": "Assembly",
@@ -80,6 +80,11 @@
       "enable_angle_max": false
     }
   },
+  "ground_joint": {
+    "name": "base_link_ground_joint",
+    "type": "ObjectToGround",
+    "object_grounded": "Base_Link_Link"
+  },
   "validations": [
     {
       "check": "joint_count",
@@ -95,6 +100,16 @@
       "check": "axis_consistency",
       "passed": true,
       "details": "All joints share global Y -- wheel axle and pendulum swing must be parallel"
+    },
+    {
+      "check": "ground_joint_exists",
+      "passed": true,
+      "details": "Ground joint created for Base_Link"
+    },
+    {
+      "check": "ground_joint_references_base_link",
+      "passed": true,
+      "details": "Ground joint ObjectToGround=Base_Link_Link"
     }
   ]
 }

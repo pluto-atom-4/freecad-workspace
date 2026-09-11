@@ -19,7 +19,8 @@ Object/document structure created, in the SAME document as the source
 `07_create_body_and_wheels.py`'s own reasoning for avoiding cross-doc
 fragility):
   - Assembly            (Assembly::AssemblyObject, new container)
-  - Base_Link_Link, Wheel_Left_Link, Wheel_Right_Link, Pendulum_Link_Link
+  - Base_Link_Link, Wheel_Left_Link, Wheel_Right_Link, Pendulum_Link_Link,
+    Pendulum_Link_Right_Link
     (App::Link, each wrapping the matching Stage 1 object with its Placement
     COPIED from the source object -- App::Link.Placement does NOT auto-compose
     with LinkedObject.Placement, it is the sole world transform, so it must be
@@ -30,6 +31,8 @@ fragility):
     - wheel_left_joint, wheel_right_joint, pendulum_pivot_joint,
       pendulum_pivot_right_joint
       (App::FeaturePython + JointObject.Joint proxy, JointType="Revolute")
+    - base_link_ground_joint
+      (App::FeaturePython + JointObject.GroundedJoint proxy, ObjectToGround=Base_Link_Link)
 
 Joint axis: all 4 joints rotate about global Y. Wheels: axis Vector(0,1,0)
 from `build_wheel()` (07_create_body_and_wheels.py:491). Pendulum pivot:
@@ -58,9 +61,10 @@ EnableAngleMin=EnableAngleMax=False (unlimited rotation) -- these already
 default to False (JointObject.py:322-346) but are set explicitly here for
 clarity.
 
-Base_Link is the implicit ground/fixed member (Reference2 on all 4
-joints) -- NOT wrapped in an explicit GroundedJoint/ObjectToGround. A
-follow-up stage can add grounding if the physics solver needs it.
+Base_Link is the explicit ground/fixed member: Reference2 on all 4 revolute
+joints AND wrapped in an explicit GroundedJoint (`base_link_ground_joint`,
+ObjectToGround=Base_Link_Link) to prevent it from moving during assembly
+constraint solving.
 
 pendulum_pivot_right_joint (Pendulum_Link_Right) was added after the
 issue's original 3-joint ask, following human review of the first pass --
@@ -146,6 +150,7 @@ class JointConfigurator:
         self.assembly = None
         self.links: dict = {}
         self.joint_records: list = []
+        self.ground_record: dict = {}
         self.validations: list = []
 
     def load_source_document(self) -> bool:
@@ -275,6 +280,42 @@ class JointConfigurator:
             print(f"ERROR creating joints: {e}")
             return False
 
+    def create_ground_joint(self) -> bool:
+        """Creates a GroundedJoint constraining Base_Link to be fixed.
+
+        GroundedJoint uses a separate proxy class and ObjectToGround property
+        (not the Joint/Reference1/Reference2 pattern of Revolute joints).
+        The object grounded is self.links["Base_Link"] (the App::Link wrapper),
+        labeled "Base_Link_Link".
+        """
+        try:
+            import JointObject
+            import UtilsAssembly
+
+            joint_group = UtilsAssembly.getJointGroup(self.assembly)
+            ground_link = self.links["Base_Link"]
+
+            g = joint_group.newObject("App::FeaturePython", "base_link_ground_joint")
+            JointObject.GroundedJoint(g, ground_link)
+            g.Label = "base_link_ground_joint"
+            if getattr(App, "GuiUp", False):
+                try:
+                    JointObject.ViewProviderGroundedJoint(g.ViewObject)
+                except Exception:
+                    pass
+
+            self.ground_record = {
+                "name": "base_link_ground_joint",
+                "type": "ObjectToGround",
+                "object_grounded": "Base_Link_Link",
+            }
+            self.doc.recompute()
+            print(f"✓ base_link_ground_joint: ObjectToGround={self.ground_record['object_grounded']}")
+            return True
+        except Exception as e:
+            print(f"ERROR creating ground joint: {e}")
+            return False
+
     def validate(self) -> None:
         self.validations = [
             {
@@ -291,6 +332,16 @@ class JointConfigurator:
                 "check": "axis_consistency",
                 "passed": all(r["axis"] == "global Y (0,1,0)" for r in self.joint_records),
                 "details": "All joints share global Y -- wheel axle and pendulum swing must be parallel",
+            },
+            {
+                "check": "ground_joint_exists",
+                "passed": bool(self.ground_record),
+                "details": "Ground joint created for Base_Link",
+            },
+            {
+                "check": "ground_joint_references_base_link",
+                "passed": self.ground_record.get("object_grounded") == "Base_Link_Link",
+                "details": f"Ground joint ObjectToGround={self.ground_record.get('object_grounded', 'MISSING')}",
             },
         ]
         for v in self.validations:
@@ -321,6 +372,7 @@ class JointConfigurator:
                     for name in LINK_SOURCE_NAMES
                 },
                 "joints": {r["name"]: r for r in self.joint_records},
+                "ground_joint": self.ground_record,
                 "validations": self.validations,
             }
             output_path = SCRIPT_DIR / CONFIG_FILENAME
@@ -355,6 +407,11 @@ class JointConfigurator:
 
         print("Creating joints...")
         if not self.create_joints():
+            return False
+        print()
+
+        print("Creating ground joint...")
+        if not self.create_ground_joint():
             return False
         print()
 
