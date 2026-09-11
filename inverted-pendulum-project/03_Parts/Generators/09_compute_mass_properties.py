@@ -81,7 +81,7 @@ except NameError:
 # robot_parameters.yaml lives in a sibling directory (02_Design_Inputs)
 _DESIGN_INPUTS_DIR = SCRIPT_DIR.parent.parent / "02_Design_Inputs"
 sys.path.insert(0, str(_DESIGN_INPUTS_DIR))
-from robot_parameters import load_robot_parameters, RobotParametersError  # noqa: E402
+from robot_parameters import load_robot_parameters  # noqa: E402
 
 INPUT_DOC_FILENAME = "robot_assembly.FCStd"
 OUTPUT_METADATA_FILENAME = "09_mass_properties.json"

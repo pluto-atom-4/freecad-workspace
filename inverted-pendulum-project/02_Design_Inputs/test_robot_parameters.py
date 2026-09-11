@@ -199,6 +199,7 @@ def test_all_target_masses_are_positive_and_small():
         ("chassis", params.chassis),
         ("wheel", params.wheel),
         ("pendulum", params.pendulum),
+        ("servo", params.servo),
     ):
         assert 0.0 < spec.target_mass_kg < 2.0, f"{name}.target_mass_kg out of plausible range"
 
@@ -211,6 +212,7 @@ def test_all_densities_are_positive_and_plausible():
         ("chassis", params.chassis),
         ("wheel", params.wheel),
         ("pendulum", params.pendulum),
+        ("servo", params.servo),
     ):
         assert 100.0 < spec.density_kg_m3 < 10000.0, f"{name}.density_kg_m3 out of plausible range"
 
