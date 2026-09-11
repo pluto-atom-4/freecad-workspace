@@ -1,0 +1,40 @@
+{
+  "issue": 91,
+  "timestamp": "2026-09-11T19:47:03.599070Z",
+  "calculated_source": "robot.urdf (Stage 4 export)",
+  "prototype_file_present": false,
+  "tolerance_percent": 30.0,
+  "comparisons": [
+    {
+      "link_name": "Base_Link",
+      "passed": true,
+      "comparisons": [],
+      "summary": "No measured data"
+    },
+    {
+      "link_name": "Pendulum_Link",
+      "passed": true,
+      "comparisons": [],
+      "summary": "No measured data"
+    },
+    {
+      "link_name": "Pendulum_Link_Right",
+      "passed": true,
+      "comparisons": [],
+      "summary": "No measured data"
+    },
+    {
+      "link_name": "Wheel_Left",
+      "passed": true,
+      "comparisons": [],
+      "summary": "No measured data"
+    },
+    {
+      "link_name": "Wheel_Right",
+      "passed": true,
+      "comparisons": [],
+      "summary": "No measured data"
+    }
+  ],
+  "overall_status": "no_prototype_data"
+}
