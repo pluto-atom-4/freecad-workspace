@@ -7,10 +7,12 @@ subassembly (left: Pendulum_Link/STS3032_Mount/feetech_STS3032_collision_proxy, 
 right: Pendulum_Link_Right/STS3032_Mount_Right/feetech_STS3032_collision_proxy_Right).
 
 Critical design decision: use MESH-NATIVE properties (Mesh.Mesh API: Volume,
-CenterOfGravity, MatrixOfInertia) from the COLLISION-PROXY mesh, NOT the visual mesh.
-Per FINDINGS.md sec.3 (FreeCAD-Webots POC), STEP round-trip loses volume fidelity
-catastrophically (e.g., burger_base: 180K mm^3 → 73K mm^3, 60% loss; shapes fragment
-into 89 invalid solids). Mesh-native API is reliable and fast.
+CenterOfGravity) from the COLLISION-PROXY mesh for volume and CoM. The inertia tensor
+is computed using a bounding-box-inscribed ellipsoid approximation (fed by
+mesh.BoundBox), NOT `Mesh.MatrixOfInertia` (which does not exist as an API on
+Mesh.Mesh). Per FINDINGS.md sec.3 (FreeCAD-Webots POC), STEP round-trip loses volume
+fidelity catastrophically (e.g., burger_base: 180K mm^3 → 73K mm^3, 60% loss; shapes
+fragment into 89 invalid solids). Mesh-native volume/CoM is reliable and fast.
 
 IMPORTANT (Issue #76): The visual mesh (feetech_STS3032_visual_1_0mm) is SELF-INTERSECTING
 and NON-SOLID (confirmed via hasSelfIntersections()==True, isSolid()==False live check).
@@ -25,8 +27,10 @@ Mass (target_mass_kg) comes from robot_parameters.yaml's servo.target_mass_kg
   - Datasheet mass is the authoritative source for the real part
   - Scaling inertia tensor to match real mass is standard practice
 
-Inertia tensor computed as if all volume is at uniform density (mesh.MatrixOfInertia
-output), then scaled to the real target mass.
+Inertia tensor computed using a bounding-box-inscribed ellipsoid approximation
+(using the formula I_xx = (m/20)*(dy^2+dz^2), cyclic for I_yy/I_zz), fed by the
+mesh's BoundBox dimensions. This approximation is then scaled to match the real
+target mass from the datasheet.
 
 Output:
     - 09_mass_properties.json — per-servo: volume_mm3 (collision-proxy-sourced),
