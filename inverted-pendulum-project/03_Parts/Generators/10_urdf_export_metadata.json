@@ -1,0 +1,155 @@
+{
+  "issue": 84,
+  "phase": 10,
+  "timestamp": "2026-09-11T12:07:03.645298",
+  "robot_name": "inverted_pendulum_robot",
+  "input_documents": {
+    "robot_parameters_yaml": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/02_Design_Inputs/robot_parameters.yaml",
+    "mass_properties_json": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/03_Parts/Generators/09_mass_properties.json",
+    "body_wheels_metadata": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/03_Parts/Generators/07_body_wheels_metadata.json",
+    "joint_config": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/03_Parts/Generators/joint_config.json"
+  },
+  "output_files": {
+    "urdf": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/06_Exports/urdf/robot.urdf",
+    "visual_mesh": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/06_Exports/urdf/meshes/feetech-STS3032-visual.stl"
+  },
+  "collision_primitives": {
+    "servo_box": {
+      "length_mm": 32.0,
+      "width_mm": 12.0,
+      "height_mm": 28.0
+    },
+    "servo_cylinder": {
+      "radius_mm": 4.65,
+      "height_mm": 16.15
+    },
+    "left_servo_box_origin_mm": [
+      31.489199999999997,
+      25.7701,
+      -2.8066
+    ],
+    "left_servo_box_rpy_rad": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "left_servo_cylinder_origin_mm": [
+      31.489199999999997,
+      39.7701,
+      5.1934000000000005
+    ],
+    "left_servo_cylinder_rpy_rad": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "right_servo_box_origin_mm": [
+      31.489199999999997,
+      25.2299,
+      8.806600000000003
+    ],
+    "right_servo_box_rpy_rad": [
+      3.141592653589793,
+      0.0,
+      0.0
+    ],
+    "right_servo_cylinder_origin_mm": [
+      31.489199999999997,
+      11.229899999999999,
+      0.8066000000000049
+    ],
+    "right_servo_cylinder_rpy_rad": [
+      3.141592653589793,
+      0.0,
+      0.0
+    ]
+  },
+  "visual_mesh": {
+    "source_file": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/03_Parts/Mechanical/feetech-STS3032-visual-1.0mm.stl",
+    "facet_count": 37556,
+    "tolerance_mm": 1.0
+  },
+  "links": {
+    "Base_Link": {
+      "mass_kg": 0.25,
+      "inertia_kg_mm2": {
+        "ixx": 80.078125,
+        "iyy": 20.078125,
+        "izz": 100.0,
+        "ixy": 0.0,
+        "ixz": 0.0,
+        "iyz": 0.0
+      }
+    },
+    "Wheel_Left": {
+      "mass_kg": 0.03,
+      "inertia_kg_mm2": {
+        "ixx": 1.7775,
+        "iyy": 3.375,
+        "izz": 1.7775,
+        "ixy": 0.0,
+        "ixz": 0.0,
+        "iyz": 0.0
+      }
+    },
+    "Wheel_Right": {
+      "mass_kg": 0.03,
+      "inertia_kg_mm2": {
+        "ixx": 1.7775,
+        "iyy": 3.375,
+        "izz": 1.7775,
+        "ixy": 0.0,
+        "ixz": 0.0,
+        "iyz": 0.0
+      }
+    },
+    "Pendulum_Link": {
+      "plate_mass_kg": 0.12,
+      "servo_mass_kg": 0.055,
+      "combined_mass_kg": 0.175,
+      "combined_com_mm": [
+        15.37889142857143,
+        20.63128857142857,
+        2.20364
+      ],
+      "combined_inertia_kg_mm2": {
+        "ixx": 121.27731866291,
+        "iyy": 130.70403956220002,
+        "izz": 163.79542908039,
+        "ixy": 62.16538521059999,
+        "ixz": -0.5434673795999991,
+        "iyz": 5.8910900537
+      }
+    },
+    "Pendulum_Link_Right": {
+      "plate_mass_kg": 0.12,
+      "servo_mass_kg": 0.055,
+      "combined_mass_kg": 0.175,
+      "combined_com_mm": [
+        15.37889142857143,
+        20.46151142857143,
+        5.853502857142859
+      ],
+      "combined_inertia_kg_mm2": {
+        "ixx": 123.59441366291,
+        "iyy": 134.53639556220003,
+        "izz": 162.28016808039,
+        "ixy": 61.22980958939999,
+        "ixz": 19.569503379600004,
+        "iyz": 22.089470053700005
+      }
+    }
+  },
+  "ground_joint": {
+    "name": "base_link_ground_joint",
+    "type": "ObjectToGround",
+    "object_grounded": "Base_Link_Link"
+  },
+  "validations": [
+    {
+      "check": "collision_primitives_envelope",
+      "passed": true,
+      "details": "Derived primitives fit within live envelope with tolerance"
+    }
+  ]
+}

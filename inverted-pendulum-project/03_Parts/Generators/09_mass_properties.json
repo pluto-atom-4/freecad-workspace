@@ -1,6 +1,6 @@
 {
   "issue": 85,
-  "timestamp": "2026-09-11T10:51:22.763898",
+  "timestamp": "2026-09-11T11:26:10.721397",
   "input_document": "robot_assembly.FCStd",
   "servo_left": {
     "volume_mm3": 11308.1406,
@@ -17,6 +17,17 @@
       "ixy": 0.0,
       "ixz": 0.0,
       "iyz": 0.0
+    },
+    "collision_proxy_bbox_mm": {
+      "x_length": 32.0,
+      "y_length": 12.0,
+      "z_length": 31.9,
+      "x_min": 11.1695,
+      "x_max": 43.1695,
+      "y_min": 19.7771,
+      "y_max": 31.7771,
+      "z_min": -25.85,
+      "z_max": 6.05
     },
     "visual_mesh_volume_mm3": 1037.007
   },
@@ -35,6 +46,17 @@
       "ixy": 0.0,
       "ixz": 0.0,
       "iyz": 0.0
+    },
+    "collision_proxy_bbox_mm": {
+      "x_length": 32.0,
+      "y_length": 12.0,
+      "z_length": 31.9,
+      "x_min": 11.1695,
+      "x_max": 43.1695,
+      "y_min": 19.7771,
+      "y_max": 31.7771,
+      "z_min": -25.85,
+      "z_max": 6.05
     },
     "visual_mesh_volume_mm3": 1037.007
   },

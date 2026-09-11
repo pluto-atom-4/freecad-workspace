@@ -216,7 +216,61 @@ python3 -m pytest -q test_09_compute_mass_properties.py
 
 **Time:** ~5-10 seconds
 
-**Status:** 🔄 (Issue #85 implementation)
+**Status:** ✅ (Issue #85 complete)
+
+### Stage 4: URDF Export with Collision Primitives (Issue #84)
+
+**Script:** `10_export_urdf.py` + `test_10_export_urdf.py`
+
+Exports the complete robot assembly to URDF format (standardized XML for simulators), using native URDF primitives (box + cylinder) for servo collision geometry and a high-fidelity mesh for visual display.
+
+**Requirements:**
+- `robot_assembly.FCStd` (output from Stage 2)
+- `09_mass_properties.json` (output from Stage 3, containing servo mass/inertia/CoM)
+- `07_body_wheels_metadata.json` (containing link dimensions/masses from Stage 1)
+- `robot_parameters.yaml` (design parameters)
+- `joint_config.json` (joint definitions from Stage 2)
+- Visual mesh file: `../Mechanical/feetech-STS3032-visual-1.0mm.stl`
+
+**Usage:**
+```bash
+echo "exec(open('10_export_urdf.py').read())" | freecadcmd -c
+python3 -m pytest -q test_10_export_urdf.py
+```
+
+**Output:**
+- `06_Exports/urdf/robot.urdf` (URDF XML, ~15-20 KB) containing:
+  - 5 links: `Base_Link`, `Wheel_Left`, `Wheel_Right`, `Pendulum_Link`, `Pendulum_Link_Right`
+  - 4 revolute joints: `wheel_left_joint`, `wheel_right_joint`, `pendulum_pivot_joint`, `pendulum_pivot_right_joint`
+  - Masses and inertia tensors (SI units: kg, kg⋅m²)
+  - Combined inertia for Pendulum_Link/Right (plate stack + servo, computed via parallel-axis theorem)
+- `06_Exports/urdf/meshes/feetech-STS3032-visual.stl` (37,556 facets, copied from input)
+- `10_urdf_export_metadata.json` (export log, collision primitive dimensions, inertia breakdown)
+
+**Key Design Decisions:**
+- **Collision geometry:** Servo represented as two URDF primitives (box + cylinder, NOT mesh) to keep physics simulator budget tight; each Pendulum_Link has 3 collision elements (plate box + servo box + servo cylinder)
+- **Visual geometry:** High-fidelity STL mesh (1.0mm tolerance) for accurate 3D rendering; separately positioned from the plate geometry so both are visible
+- **Inertia:** Combined via parallel-axis theorem, accounting for servo offset relative to plate stack; servo CoM computed by applying STS3032_Mount's Placement (both position and rotation) to the servo's local CoM from Stage 3
+- **Plate CoM:** Approximated as center-of-bounding-box [7.995, 18.276, 4.5] mm (acceptable for ~3% tolerance; could be refined with true centroid computation if hardware measurement requires)
+
+**Tests:**
+- URDF file exists and is well-formed XML
+- All 5 links present with valid names
+- All 4 joints present and type='revolute'
+- Joint parent/child references point to valid links
+- Base_Link is root (no incoming joints)
+- Every link has exactly 1 inertial element
+- Pendulum_Link/Right combined masses correct (~0.175 kg = plate 0.12 + servo 0.055)
+- Pendulum_Link/Right have exactly 2 visual elements (plate box + servo mesh) ✓ NEW
+- Pendulum_Link/Right have exactly 3 collision elements (plate box + servo box + servo cylinder) ✓ NEW
+- Servo collision primitives have correct dimensions (box 32×12×28 mm, cylinder r=4.65 mm × h=16.15 mm) ✓ NEW
+- No mesh elements in collision geometry (collision uses only box/cylinder primitives)
+- Visual mesh file exists and is referenced correctly
+- Metadata documents all collision primitive dimensions and inertia details
+
+**Time:** ~5-10 seconds
+
+**Status:** ✅ (Issue #84 complete)
 
 ---
 
