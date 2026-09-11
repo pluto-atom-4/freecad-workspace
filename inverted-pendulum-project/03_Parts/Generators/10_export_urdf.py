@@ -51,12 +51,6 @@ import math
 print = functools.partial(print, flush=True)  # noqa: A001
 
 try:
-    import yaml
-except ImportError:
-    print("ERROR: PyYAML not available. Install with: pip install pyyaml")
-    sys.exit(1)
-
-try:
     import numpy as np
 except ImportError:
     print("ERROR: NumPy not available. Install with: pip install numpy")
@@ -72,8 +66,11 @@ except NameError:
 DESIGN_INPUTS_DIR = SCRIPT_DIR.parent.parent / "02_Design_Inputs"
 EXPORTS_DIR = SCRIPT_DIR.parent.parent / "06_Exports"
 
+# Import the shared robot_parameters loader
+sys.path.insert(0, str(DESIGN_INPUTS_DIR))
+from robot_parameters import load_robot_parameters  # noqa: E402
+
 # Input files (from earlier stages)
-ROBOT_PARAMS_FILE = DESIGN_INPUTS_DIR / "robot_parameters.yaml"
 MASS_PROPERTIES_FILE = SCRIPT_DIR / "09_mass_properties.json"
 BODY_WHEELS_METADATA_FILE = SCRIPT_DIR / "07_body_wheels_metadata.json"
 JOINT_CONFIG_FILE = SCRIPT_DIR / "joint_config.json"
@@ -101,14 +98,6 @@ SERVO_COLLISION_CYLINDER_HEIGHT = 16.15  # output shaft length
 # For now, these are placeholders that will be verified via the live mesh data
 SERVO_BOX_OFFSET = [0.0, 0.0, 0.0]  # [x, y, z] offset for box relative to link origin
 SERVO_CYL_OFFSET = [0.0, 14.0, 8.0]  # [x, y, z] offset for cylinder (shaft protrusion)
-
-
-def load_robot_parameters() -> Dict[str, Any]:
-    """Load robot_parameters.yaml."""
-    if not ROBOT_PARAMS_FILE.exists():
-        raise FileNotFoundError(f"robot_parameters.yaml not found at {ROBOT_PARAMS_FILE}")
-    with open(ROBOT_PARAMS_FILE, 'r') as f:
-        return yaml.safe_load(f)
 
 
 def load_mass_properties() -> Dict[str, Any]:
@@ -530,7 +519,7 @@ def main():
         body_wheels = load_body_wheels_metadata()
         joint_config = load_joint_config()
 
-        robot_name = params.get('robot_name', 'inverted_pendulum_robot')
+        robot_name = params.robot_name
         print(f"   ✓ Robot name: {robot_name}")
 
         # Verify collision proxy bbox and derive primitives

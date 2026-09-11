@@ -30,6 +30,7 @@ from robot_parameters import (  # noqa: E402
     PendulumSpec,
     RobotParameters,
     RobotParametersError,
+    ServoSpec,
     WheelSpec,
     _parse_component,
     load_robot_parameters,
@@ -77,6 +78,21 @@ def test_status_is_currently_placeholder():
     assert params.status == "PLACEHOLDER"
 
 
+def test_robot_name_is_nonempty_string():
+    """robot_name (used in URDF <robot> tag per Issue #84) must be present."""
+    params = load_robot_parameters()
+    assert isinstance(params.robot_name, str)
+    assert params.robot_name == "inverted_pendulum_robot"
+
+
+def test_servo_is_present_and_validated():
+    """servo field (Issue #85) with material/density/target_mass/status."""
+    params = load_robot_parameters()
+    assert isinstance(params.servo, ServoSpec)
+    assert params.servo.target_mass_kg == 0.055
+    assert params.servo.status == "PLACEHOLDER"
+
+
 # ---------------------------------------------------------------------------
 # Schema / type shape
 # ---------------------------------------------------------------------------
@@ -87,6 +103,7 @@ def test_component_types():
     assert isinstance(params.chassis, ChassisSpec)
     assert isinstance(params.wheel, WheelSpec)
     assert isinstance(params.pendulum, PendulumSpec)
+    assert isinstance(params.servo, ServoSpec)
 
 
 def test_links_reference_known_components():
@@ -182,6 +199,7 @@ def test_all_target_masses_are_positive_and_small():
         ("chassis", params.chassis),
         ("wheel", params.wheel),
         ("pendulum", params.pendulum),
+        ("servo", params.servo),
     ):
         assert 0.0 < spec.target_mass_kg < 2.0, f"{name}.target_mass_kg out of plausible range"
 
@@ -194,6 +212,7 @@ def test_all_densities_are_positive_and_plausible():
         ("chassis", params.chassis),
         ("wheel", params.wheel),
         ("pendulum", params.pendulum),
+        ("servo", params.servo),
     ):
         assert 100.0 < spec.density_kg_m3 < 10000.0, f"{name}.density_kg_m3 out of plausible range"
 
@@ -207,6 +226,7 @@ def _valid_minimal_yaml_dict():
     return {
         "schema_version": SCHEMA_VERSION,
         "status": "PLACEHOLDER",
+        "robot_name": "test_robot",
         "chassis": {
             "length_mm": 100.0,
             "width_mm": 70.0,
@@ -229,6 +249,12 @@ def _valid_minimal_yaml_dict():
             "material": "Aluminum_6061",
             "density_kg_m3": 2700.0,
             "target_mass_kg": 0.1,
+        },
+        "servo": {
+            "material": "Aluminum_alloy_with_plastic_gears",
+            "density_kg_m3": 1500.0,
+            "target_mass_kg": 0.055,
+            "status": "PLACEHOLDER",
         },
         "links": {
             "Base_Link": "chassis",
@@ -295,7 +321,7 @@ def test_invalid_yaml_syntax_raises(tmp_path):
         load_robot_parameters(yaml_path)
 
 
-@pytest.mark.parametrize("missing_key", ["schema_version", "status", "chassis", "wheel", "pendulum"])
+@pytest.mark.parametrize("missing_key", ["schema_version", "status", "robot_name", "chassis", "wheel", "pendulum", "servo"])
 def test_missing_top_level_key_raises(tmp_path, missing_key):
     data = _valid_minimal_yaml_dict()
     del data[missing_key]
@@ -317,6 +343,18 @@ def test_missing_chassis_key_raises(tmp_path, missing_key):
         load_robot_parameters(yaml_path)
 
 
+@pytest.mark.parametrize("missing_key", ["material", "density_kg_m3", "target_mass_kg", "status"])
+def test_missing_servo_key_raises(tmp_path, missing_key):
+    """servo must have all required fields: material, density, mass, status (Issue #85)."""
+    data = _valid_minimal_yaml_dict()
+    del data["servo"][missing_key]
+    yaml_path = tmp_path / "robot_parameters.yaml"
+    yaml_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    with pytest.raises(RobotParametersError):
+        load_robot_parameters(yaml_path)
+
+
 def test_unknown_schema_version_raises(tmp_path):
     data = _valid_minimal_yaml_dict()
     data["schema_version"] = SCHEMA_VERSION + 999
@@ -330,6 +368,28 @@ def test_unknown_schema_version_raises(tmp_path):
 def test_unknown_status_raises(tmp_path):
     data = _valid_minimal_yaml_dict()
     data["status"] = "TOTALLY_MADE_UP"
+    yaml_path = tmp_path / "robot_parameters.yaml"
+    yaml_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    with pytest.raises(RobotParametersError):
+        load_robot_parameters(yaml_path)
+
+
+def test_empty_robot_name_raises(tmp_path):
+    """robot_name must be a non-empty string (Issue #84)."""
+    data = _valid_minimal_yaml_dict()
+    data["robot_name"] = "   "
+    yaml_path = tmp_path / "robot_parameters.yaml"
+    yaml_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    with pytest.raises(RobotParametersError):
+        load_robot_parameters(yaml_path)
+
+
+def test_unknown_servo_status_raises(tmp_path):
+    """servo.status must be one of VALID_STATUSES (Issue #85)."""
+    data = _valid_minimal_yaml_dict()
+    data["servo"]["status"] = "INVALID_STATUS"
     yaml_path = tmp_path / "robot_parameters.yaml"
     yaml_path.write_text(yaml.safe_dump(data), encoding="utf-8")
 
