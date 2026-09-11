@@ -75,7 +75,20 @@ if [ ! -f "robot_assembly.FCStd" ]; then
 fi
 
 echo "=== Phase 9: Mass properties ==="
-echo "exec(open('09_compute_mass_properties.py').read())" | "$FREECAD_BIN" -c
+# Same freecadcmd -c REPL-drop behavior as Phase 7 -- timeout to force exit,
+# check output file rather than trust the exit code (issue #94 review).
+timeout 120 bash -c "echo \"exec(open('09_compute_mass_properties.py').read())\" | '$FREECAD_BIN' -c" 2>&1 || {
+    EXIT_CODE=$?
+    if [ $EXIT_CODE -ne 124 ] && [ $EXIT_CODE -ne 1 ]; then
+        echo "ERROR: Unexpected exit code $EXIT_CODE"
+        exit $EXIT_CODE
+    fi
+}
+if [ ! -f "09_mass_properties.json" ]; then
+    echo "ERROR: Phase 9 output file not created"
+    exit 1
+fi
+echo "✓ Phase 9 complete - output file created"
 
 echo "=== Phase 10: URDF export ==="
 python3 10_export_urdf.py
