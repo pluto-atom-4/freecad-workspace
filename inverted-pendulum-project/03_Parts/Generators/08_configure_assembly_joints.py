@@ -226,8 +226,13 @@ class JointConfigurator:
                 JointObject.Joint(j, 1)  # 1 = "Revolute"
                 j.Label = joint_name
 
-                j.Reference1 = (self.links[moving_key], [""])
-                j.Reference2 = (self.links["Base_Link"], [""])
+                # Whole-object reference: subelement list MUST be [] (empty
+                # list), not [""] -- a 1-element list with an empty string
+                # makes FreeCAD's Assembly resolver try to index a named
+                # subelement and fail with "list index out of range" on
+                # every recompute (see issue #73).
+                j.Reference1 = (self.links[moving_key], [])
+                j.Reference2 = (self.links["Base_Link"], [])
                 j.Detach1 = True
                 j.Detach2 = True
 
@@ -371,9 +376,15 @@ def main() -> int:
 
 if __name__ == "__main__":
     try:
-        sys.exit(main())
+        _rc = main()
     except Exception as e:
         print(f"FATAL ERROR: {e}")
         import traceback
         traceback.print_exc()
-        sys.exit(1)
+        _rc = 1
+    # Under the live GUI bridge (App.GuiUp=True) sys.exit() tears down the
+    # whole FreeCAD process, not just this script -- killing the bridge
+    # connection right after a successful save. Only exit the process for a
+    # real standalone run; let the bridge's exec() just return under GUI.
+    if not getattr(App, "GuiUp", False):
+        sys.exit(_rc)
