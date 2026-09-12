@@ -6,14 +6,24 @@ its structure. Follows the pattern of test_08_/test_09_*.py.
 """
 
 import json
+import sys
+import importlib.util
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import pytest
 
+# Add script dir to path to import combine_plate_stack
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+# Import 10_export_urdf using importlib (module name starts with digit)
+_spec = importlib.util.spec_from_file_location("export_urdf_10", SCRIPT_DIR / "10_export_urdf.py")
+_export_urdf = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_export_urdf)
+
 
 # Locate the URDF and metadata outputs
-SCRIPT_DIR = Path(__file__).resolve().parent
 EXPORTS_DIR = SCRIPT_DIR.parent.parent / "06_Exports"
 URDF_FILE = EXPORTS_DIR / "urdf" / "robot.urdf"
 URDF_MESHES_DIR = EXPORTS_DIR / "urdf" / "meshes"
@@ -554,4 +564,185 @@ def test_validations_passed():
     for validation in validations:
         assert validation['passed'], (
             f"Validation '{validation['check']}' failed: {validation.get('details', '')}"
+        )
+
+
+# ============================================================================
+# Unit tests for combine_plate_stack() (Issue #96)
+# ============================================================================
+# These tests directly exercise combine_plate_stack() with hand-computable
+# expected values, catching regressions in density scaling and inertia math.
+
+
+def test_combine_plate_stack_single_plate():
+    """Single plate at origin CoM simplifies to identity case.
+
+    When only one plate exists with CoM at (0, 0, 0), the combined result
+    should equal the plate's mass (= target mass), CoM at origin, and inertia
+    scaled by density = (target_mass / volume).
+
+    Verified manually:
+      - mass = target_mass (by definition, single plate)
+      - combined_com = [0, 0, 0] (plate's CoM)
+      - inertia = unit_density_tensor * (target_mass / volume)
+    """
+    combine_plate_stack = _export_urdf.combine_plate_stack
+
+    # Single synthetic plate: 100 mm³ volume, CoM at origin, unit-density inertia
+    target_mass = 0.05  # kg
+    plate_volume = 100.0  # mm³
+    unit_inertia = {
+        'ixx': 500.0,
+        'iyy': 600.0,
+        'izz': 700.0,
+        'ixy': 0.0,
+        'ixz': 0.0,
+        'iyz': 0.0,
+    }
+
+    plate_shapes = [
+        {
+            'volume_mm3': plate_volume,
+            'center_of_mass_mm': {'x': 0.0, 'y': 0.0, 'z': 0.0},
+            'inertia_unit_density_kg_mm2': unit_inertia,
+        }
+    ]
+
+    mass, com, inertia = combine_plate_stack(plate_shapes, target_mass)
+
+    # Mass should equal target (single plate distributes all target mass to itself)
+    assert abs(mass - target_mass) < 1e-9, (
+        f"Single-plate mass {mass} != target {target_mass}"
+    )
+
+    # CoM should be at origin (plate CoM is at origin)
+    assert abs(com[0]) < 1e-9 and abs(com[1]) < 1e-9 and abs(com[2]) < 1e-9, (
+        f"CoM {com} should be near [0, 0, 0]"
+    )
+
+    # Inertia should be unit_inertia * (mass / volume)
+    # At origin, parallel-axis shift is zero (d=0)
+    expected_density = target_mass / plate_volume
+    for key in unit_inertia:
+        expected_val = unit_inertia[key] * expected_density
+        assert abs(inertia[key] - expected_val) < 1e-6, (
+            f"Inertia {key}: {inertia[key]} != {expected_val}"
+        )
+
+
+def test_combine_plate_stack_two_plates_volume_weighting():
+    """Two plates with 2:1 volume ratio, distinct CoMs, verify mass split and combined CoM.
+
+    Plate A: 200 mm³, CoM at (10, 0, 0)
+    Plate B: 100 mm³, CoM at (-10, 0, 0)
+    Total volume: 300 mm³, target mass: 0.3 kg
+
+    Expected:
+      - Plate A mass = 0.3 * (200/300) = 0.2 kg
+      - Plate B mass = 0.3 * (100/300) = 0.1 kg
+      - Combined CoM = (0.2*10 + 0.1*(-10)) / 0.3 = (2 - 1) / 0.3 = 1/0.3 ≈ 3.333 mm
+      - Combined mass = 0.3 kg (sum preservation)
+    """
+    combine_plate_stack = _export_urdf.combine_plate_stack
+
+    target_mass = 0.3  # kg
+
+    # Plate A: 200 mm³, CoM at (10, 0, 0)
+    # Simple uniform inertia for testing
+    plate_a_volume = 200.0
+    plate_a_com = {'x': 10.0, 'y': 0.0, 'z': 0.0}
+    plate_a_inertia = {
+        'ixx': 100.0,
+        'iyy': 100.0,
+        'izz': 100.0,
+        'ixy': 0.0,
+        'ixz': 0.0,
+        'iyz': 0.0,
+    }
+
+    # Plate B: 100 mm³, CoM at (-10, 0, 0)
+    plate_b_volume = 100.0
+    plate_b_com = {'x': -10.0, 'y': 0.0, 'z': 0.0}
+    plate_b_inertia = {
+        'ixx': 50.0,
+        'iyy': 50.0,
+        'izz': 50.0,
+        'ixy': 0.0,
+        'ixz': 0.0,
+        'iyz': 0.0,
+    }
+
+    plate_shapes = [
+        {
+            'volume_mm3': plate_a_volume,
+            'center_of_mass_mm': plate_a_com,
+            'inertia_unit_density_kg_mm2': plate_a_inertia,
+        },
+        {
+            'volume_mm3': plate_b_volume,
+            'center_of_mass_mm': plate_b_com,
+            'inertia_unit_density_kg_mm2': plate_b_inertia,
+        }
+    ]
+
+    mass, com, inertia = combine_plate_stack(plate_shapes, target_mass)
+
+    # Verify combined mass
+    assert abs(mass - target_mass) < 1e-9, (
+        f"Combined mass {mass} != target {target_mass}"
+    )
+
+    # Verify combined CoM (mass-weighted average)
+    # Expected: x = (0.2*10 + 0.1*(-10)) / 0.3 = 10/3 ≈ 3.333 mm
+    expected_com_x = (0.2 * 10.0 + 0.1 * (-10.0)) / 0.3
+    assert abs(com[0] - expected_com_x) < 1e-6, (
+        f"CoM X {com[0]} != expected {expected_com_x}"
+    )
+    assert abs(com[1]) < 1e-9, f"CoM Y {com[1]} should be ~0"
+    assert abs(com[2]) < 1e-9, f"CoM Z {com[2]} should be ~0"
+
+
+def test_combine_plate_stack_matches_real_data():
+    """Load real plate_shapes from 07_body_wheels_metadata.json and verify sanity.
+
+    Verifies the function handles real data without error and produces
+    a combined mass equal to the target_mass_kg.
+    """
+    combine_plate_stack = _export_urdf.combine_plate_stack
+
+    # Load real fixture data
+    metadata_path = SCRIPT_DIR / "07_body_wheels_metadata.json"
+    if not metadata_path.exists():
+        pytest.skip(f"Real data fixture not found: {metadata_path}")
+
+    with open(metadata_path, 'r') as f:
+        body_wheels_metadata = json.load(f)
+
+    # Extract Pendulum_Link data
+    pend_link_data = body_wheels_metadata['links']['Pendulum_Link']
+    plate_shapes = pend_link_data.get('plate_shapes')
+
+    if not plate_shapes:
+        pytest.skip("Pendulum_Link plate_shapes not found in fixture")
+
+    target_mass_kg = pend_link_data['target_mass_kg']
+
+    # Call the function with real data
+    mass, com, inertia = combine_plate_stack(plate_shapes, target_mass_kg)
+
+    # Verify combined mass equals target (within floating-point tolerance)
+    assert abs(mass - target_mass_kg) < 1e-9, (
+        f"Real-data combined mass {mass} != target {target_mass_kg}"
+    )
+
+    # Verify all inertia components exist and are finite
+    for key in ['ixx', 'iyy', 'izz', 'ixy', 'ixz', 'iyz']:
+        assert key in inertia, f"Missing inertia component: {key}"
+        assert isinstance(inertia[key], (int, float)), f"{key} not a number"
+        assert not (inertia[key] != inertia[key]), f"{key} is NaN"  # NaN check
+
+    # Verify diagonal components are positive
+    for key in ['ixx', 'iyy', 'izz']:
+        assert inertia[key] > 0, (
+            f"Diagonal inertia {key}={inertia[key]} should be positive"
         )
