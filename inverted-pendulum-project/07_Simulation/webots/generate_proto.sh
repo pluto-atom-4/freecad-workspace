@@ -91,14 +91,30 @@ JOINT_COUNT=$(echo "$URDF2WEBOTS_OUTPUT" | grep -oE "[0-9]+ joints" | grep -oE "
 LINK_COUNT="${LINK_COUNT:-0}"
 JOINT_COUNT="${JOINT_COUNT:-0}"
 
-if [ "$LINK_COUNT" -ne 0 ] && [ "$LINK_COUNT" -ne 5 ]; then
-    echo "WARNING: urdf2webots reported $LINK_COUNT links, expected 5." >&2
-    echo "The source robot.urdf may have changed. Please verify." >&2
+if [ "$LINK_COUNT" -eq 0 ]; then
+    echo "FATAL: Failed to parse link count from urdf2webots output." >&2
+    echo "urdf2webots output:" >&2
+    echo "$URDF2WEBOTS_OUTPUT" >&2
+    exit 1
 fi
 
-if [ "$JOINT_COUNT" -ne 0 ] && [ "$JOINT_COUNT" -ne 4 ]; then
-    echo "WARNING: urdf2webots reported $JOINT_COUNT joints, expected 4." >&2
-    echo "The source robot.urdf may have changed. Please verify." >&2
+if [ "$JOINT_COUNT" -eq 0 ]; then
+    echo "FATAL: Failed to parse joint count from urdf2webots output." >&2
+    echo "urdf2webots output:" >&2
+    echo "$URDF2WEBOTS_OUTPUT" >&2
+    exit 1
+fi
+
+if [ "$LINK_COUNT" -ne 5 ]; then
+    echo "FATAL: urdf2webots reported $LINK_COUNT links, expected 5." >&2
+    echo "The source robot.urdf may have changed. Rebuild with 10_export_urdf.py." >&2
+    exit 1
+fi
+
+if [ "$JOINT_COUNT" -ne 4 ]; then
+    echo "FATAL: urdf2webots reported $JOINT_COUNT joints, expected 4." >&2
+    echo "The source robot.urdf may have changed. Rebuild with 10_export_urdf.py." >&2
+    exit 1
 fi
 
 echo ""
