@@ -867,6 +867,7 @@ def main():
                     'type': 'mesh',
                     'filename': 'package://inverted_pendulum_robot/meshes/feetech-STS3032-visual.stl',
                     'origin': servo_l_com_assembly,
+                    'scale': [0.001, 0.001, 0.001],
                 }
             ],
             collision_geometry=[
@@ -982,6 +983,7 @@ def main():
                     'filename': 'package://inverted_pendulum_robot/meshes/feetech-STS3032-visual.stl',
                     'origin': servo_r_com_assembly,
                     'rpy': servo_r_rpy,
+                    'scale': [0.001, 0.001, 0.001],
                 }
             ],
             collision_geometry=[

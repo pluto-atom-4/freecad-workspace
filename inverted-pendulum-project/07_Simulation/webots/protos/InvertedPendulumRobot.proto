@@ -1,0 +1,331 @@
+#VRML_SIM R2025a utf8
+# license: Apache License 2.0
+# license url: http://www.apache.org/licenses/LICENSE-2.0
+# This is a proto file for Webots for the InvertedPendulumRobot
+# Extracted from: /home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/07_Simulation/webots/.generated/robot_webots.urdf
+
+PROTO InvertedPendulumRobot [
+  field  SFVec3f     translation     0 0 0
+  field  SFRotation  rotation        0 0 1 0
+  field  SFString    name            "InvertedPendulumRobot"  # Is `Robot.name`.
+  field  SFString    controller      "void"                   # Is `Robot.controller`.
+  field  MFString    controllerArgs  []                       # Is `Robot.controllerArgs`.
+  field  SFString    customData      ""                       # Is `Robot.customData`.
+  field  SFBool      supervisor      FALSE                    # Is `Robot.supervisor`.
+  field  SFBool      synchronization TRUE                     # Is `Robot.synchronization`.
+  field  SFBool      selfCollision   FALSE                    # Is `Robot.selfCollision`.
+]
+{
+  Robot {
+    translation IS translation
+    rotation IS rotation
+    controller IS controller
+    controllerArgs IS controllerArgs
+    customData IS customData
+    supervisor IS supervisor
+    synchronization IS synchronization
+    selfCollision IS selfCollision
+    children [
+      Shape {
+        appearance PBRAppearance {
+          baseColor 0.500000 0.500000 0.500000
+          roughness 1.000000
+          metalness 0
+        }
+        geometry Box {
+           size 0.040000 0.080000 0.002500
+        }
+      }
+      HingeJoint {
+        jointParameters HingeJointParameters {
+          axis 0.000000 1.000000 0.000000
+          anchor 0.015001 -0.028526 0.054009
+        }
+        device [
+          RotationalMotor {
+            name "wheel_left_joint"
+            maxVelocity 1.0
+            maxTorque 1.0
+          }
+          PositionSensor {
+            name "wheel_left_joint_sensor"
+          }
+        ]
+        endPoint Solid {
+          translation 0.015001 -0.028526 0.054009
+          children [
+            Shape {
+              appearance PBRAppearance {
+                baseColor 0.500000 0.500000 0.500000
+                roughness 1.000000
+                metalness 0
+              }
+              geometry Cylinder {
+                radius 0.015
+                height 0.006
+              }
+            }
+          ]
+          name "Wheel_Left"
+          boundingObject Cylinder {
+            radius 0.015
+            height 0.006
+          }
+          physics Physics {
+            density -1
+            mass 0.030000
+            centerOfMass [ 0.000000 0.000000 0.000000 ]
+            inertiaMatrix [
+              2.000000e-06 3.000000e-06 2.000000e-06
+              0.000000e+00 0.000000e+00 0.000000e+00
+            ]
+          }
+        }
+      }
+      HingeJoint {
+        jointParameters HingeJointParameters {
+          axis 0.000000 1.000000 0.000000
+          anchor 0.015001 0.067026 0.054009
+        }
+        device [
+          RotationalMotor {
+            name "wheel_right_joint"
+            maxVelocity 1.0
+            maxTorque 1.0
+          }
+          PositionSensor {
+            name "wheel_right_joint_sensor"
+          }
+        ]
+        endPoint Solid {
+          translation 0.015001 0.067026 0.054009
+          children [
+            Shape {
+              appearance PBRAppearance {
+                baseColor 0.500000 0.500000 0.500000
+                roughness 1.000000
+                metalness 0
+              }
+              geometry Cylinder {
+                radius 0.015
+                height 0.006
+              }
+            }
+          ]
+          name "Wheel_Right"
+          boundingObject Cylinder {
+            radius 0.015
+            height 0.006
+          }
+          physics Physics {
+            density -1
+            mass 0.030000
+            centerOfMass [ 0.000000 0.000000 0.000000 ]
+            inertiaMatrix [
+              2.000000e-06 3.000000e-06 2.000000e-06
+              0.000000e+00 0.000000e+00 0.000000e+00
+            ]
+          }
+        }
+      }
+      HingeJoint {
+        jointParameters HingeJointParameters {
+          axis 0.000000 1.000000 0.000000
+          anchor -0.008001 -0.018276 0.070750
+        }
+        device [
+          RotationalMotor {
+            name "pendulum_pivot_joint"
+            maxVelocity 1.0
+            maxTorque 1.0
+          }
+          PositionSensor {
+            name "pendulum_pivot_joint_sensor"
+          }
+        ]
+        endPoint Solid {
+          translation -0.008001 -0.018276 0.070750
+          children [
+            Pose {
+              translation 0.004540 0.015904 0.004991
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                    baseColor 0.500000 0.500000 0.500000
+                    roughness 1.000000
+                    metalness 0
+                  }
+                  geometry Box {
+                     size 0.059984 0.005500 0.080033
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.031489 0.025770 -0.002807
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                    baseColor 0.500000 0.500000 0.500000
+                    roughness 1.000000
+                    metalness 0
+                  }
+                  geometry DEF feetech-STS3032-visual Mesh {
+                    url "../../../06_Exports/urdf/meshes/feetech-STS3032-visual.stl"
+                  }
+                
+                  castShadows FALSE
+                }
+              ]
+            }
+          ]
+          name "Pendulum_Link"
+          boundingObject Group {
+            children [
+              Pose {
+                translation 0.004540 0.015904 0.004991
+                children [
+                  Box {
+                     size 0.059984 0.005500 0.080033
+                  }
+                ]
+              }
+              Pose {
+                translation 0.031489 0.025770 -0.002807
+                children [
+                  Box {
+                     size 0.032000 0.012000 0.028000
+                  }
+                ]
+              }
+              Pose {
+                translation 0.031489 0.039770 0.005193
+                children [
+                  Cylinder {
+                    radius 0.00465
+                    height 0.01615
+                  }
+                ]
+              }
+            ]
+          }
+          physics Physics {
+            density -1
+            mass 0.175000
+            centerOfMass [ 0.013010 0.019005 0.002540 ]
+            inertiaMatrix [
+              1.120000e-04 8.800000e-05 1.870000e-04
+              4.600000e-05 -2.000000e-06 8.000000e-06
+            ]
+          }
+        }
+      }
+      HingeJoint {
+        jointParameters HingeJointParameters {
+          axis 0.000000 1.000000 0.000000
+          anchor -0.008001 0.062276 0.071250
+        }
+        device [
+          RotationalMotor {
+            name "pendulum_pivot_right_joint"
+            maxVelocity 1.0
+            maxTorque 1.0
+          }
+          PositionSensor {
+            name "pendulum_pivot_right_joint_sensor"
+          }
+        ]
+        endPoint Solid {
+          translation -0.008001 0.062276 0.071250
+          children [
+            Pose {
+              translation 0.004540 0.015904 0.001009
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                    baseColor 0.500000 0.500000 0.500000
+                    roughness 1.000000
+                    metalness 0
+                  }
+                  geometry Box {
+                     size 0.059984 0.005500 0.080033
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.031489 0.025230 0.008807
+              rotation 1.000000 0.000000 -0.000000 3.141593
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                    baseColor 0.500000 0.500000 0.500000
+                    roughness 1.000000
+                    metalness 0
+                  }
+                  geometry USE feetech-STS3032-visual
+                
+                  castShadows FALSE
+                }
+              ]
+            }
+          ]
+          name "Pendulum_Link_Right"
+          boundingObject Group {
+            children [
+              Pose {
+                translation 0.004540 0.015904 0.001009
+                children [
+                  Box {
+                     size 0.059984 0.005500 0.080033
+                  }
+                ]
+              }
+              Pose {
+                translation 0.031489 0.025230 0.008807
+                rotation 1.000000 0.000000 -0.000000 3.141593
+                children [
+                  Box {
+                     size 0.032000 0.012000 0.028000
+                  }
+                ]
+              }
+              Pose {
+                translation 0.031489 0.011230 0.000807
+                rotation 1.000000 0.000000 -0.000000 3.141593
+                children [
+                  Cylinder {
+                    radius 0.00465
+                    height 0.01615
+                  }
+                ]
+              }
+            ]
+          }
+          physics Physics {
+            density -1
+            mass 0.175000
+            centerOfMass [ 0.013010 0.018835 0.003460 ]
+            inertiaMatrix [
+              1.120000e-04 8.900000e-05 1.860000e-04
+              4.500000e-05 1.600000e-05 1.200000e-05
+            ]
+          }
+        }
+      }
+    ]
+    name IS name
+    boundingObject Box {
+       size 0.040000 0.080000 0.002500
+    }
+    physics Physics {
+      density -1
+      mass 0.250000
+      centerOfMass [ 0.000000 0.000000 0.000000 ]
+      inertiaMatrix [
+        1.330000e-04 3.300000e-05 1.670000e-04
+        0.000000e+00 0.000000e+00 0.000000e+00
+      ]
+    }
+  }
+}
