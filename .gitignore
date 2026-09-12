@@ -74,6 +74,16 @@ issue-content*.json
 /poc/freecad-webots-pipeline/webots/run_batch.log*
 /poc/freecad-webots-pipeline/webots/worlds/.*.wbproj
 
+# inverted-pendulum-project/07_Simulation/webots (issue #103) — generated artifacts.
+# PROTO files and temporary URDF rewrites are generated on-demand by generate_proto.sh,
+# not committed. See 07_Simulation/README.md.
+/inverted-pendulum-project/07_Simulation/webots/protos/
+/inverted-pendulum-project/07_Simulation/webots/*.proto
+/inverted-pendulum-project/07_Simulation/webots/*_textures/
+/inverted-pendulum-project/07_Simulation/webots/.generated/
+/inverted-pendulum-project/07_Simulation/webots/worlds/.*.wbproj
+/inverted-pendulum-project/07_Simulation/webots/run_batch.log*
+
 feat-idea.md
 
 NOTICE
