@@ -12,7 +12,7 @@
 #
 # Exits non-zero with clear error messages on any failure.
 
-set -uo pipefail
+set -euo pipefail
 
 # Initialize mamba in this shell session (required in non-interactive scripts).
 # Find the mamba initialization script in standard conda/mamba installation locations.

@@ -21,7 +21,7 @@
 #
 # Exits 0 if Webots initializes and runs without crashing, non-zero otherwise.
 
-set -uo pipefail
+set -euo pipefail
 
 # Initialize mamba in this shell session (required in non-interactive scripts).
 # Find the mamba initialization script in standard conda/mamba installation locations.
