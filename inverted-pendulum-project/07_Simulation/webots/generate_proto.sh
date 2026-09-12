@@ -143,23 +143,38 @@ except IOError as e:
     print(f"FATAL: Cannot read PROTO file {proto_file}: {e}", file=sys.stderr)
     sys.exit(1)
 
-# Strategy: Find Shape blocks that reference feetech-STS3032-visual.
-# Each Shape block is { appearance ... geometry ... }
-# We need to inject castShadows FALSE before the closing }
+def find_shape_blocks(text):
+    """Find all Shape blocks and yield (shape_content, is_matching_shape)."""
+    lines = text.split('\n')
+    i = 0
+    while i < len(lines):
+        if 'Shape {' in lines[i]:
+            shape_lines = [lines[i]]
+            brace_count = lines[i].count('{') - lines[i].count('}')
+            j = i + 1
 
-# Pattern 1: Shape block with DEF feetech-STS3032-visual (the definition)
-# Pattern 2: Shape block with USE feetech-STS3032-visual (the reference)
+            while j < len(lines) and brace_count > 0:
+                shape_lines.append(lines[j])
+                brace_count += lines[j].count('{') - lines[j].count('}')
+                j += 1
 
-# Regex to find Shape blocks containing feetech-STS3032-visual reference.
-# A Shape block starts with "Shape {" and we need to find the matching closing "}"
-# For robustness, we'll process each occurrence one at a time.
+            shape_content = '\n'.join(shape_lines)
+            is_matching = 'feetech-STS3032-visual' in shape_content
+            yield (shape_content, is_matching)
+            i = j
+        else:
+            i += 1
 
-changes_made = False
+# First pass: count matching Shape blocks (expected: 2 DEF + USE)
+matching_count = sum(1 for _, is_matching in find_shape_blocks(content) if is_matching)
 
-# Find all Shape blocks that contain feetech-STS3032-visual
-# We search for the pattern: "Shape {" ... "feetech-STS3032-visual" ... "}"
+if matching_count != 2:
+    print(f"FATAL: Expected 2 Shape blocks referencing feetech-STS3032-visual, found {matching_count} — urdf2webots output shape may have changed, castShadows injection cannot proceed safely.", file=sys.stderr)
+    sys.exit(1)
 
-# Split on "Shape {" and rejoin, tracking Shape boundaries
+# Second pass: inject castShadows where needed
+changes_made = 0
+already_patched = 0
 lines = content.split('\n')
 output_lines = []
 i = 0
@@ -168,32 +183,33 @@ while i < len(lines):
     line = lines[i]
     output_lines.append(line)
 
-    # Check if this line starts a Shape block
     if 'Shape {' in line:
         shape_lines = [line]
-        shape_start_idx = i
         brace_count = line.count('{') - line.count('}')
         j = i + 1
 
-        # Collect lines until we close the Shape block
         while j < len(lines) and brace_count > 0:
             shape_lines.append(lines[j])
             brace_count += lines[j].count('{') - lines[j].count('}')
             j += 1
 
-        # Check if this Shape block references feetech-STS3032-visual
         shape_content = '\n'.join(shape_lines)
         if 'feetech-STS3032-visual' in shape_content:
-            # Check if castShadows FALSE is already present in this Shape block
             if 'castShadows FALSE' not in shape_content:
                 # Inject castShadows FALSE before the closing brace
-                # Find the last closing brace of this Shape block
                 last_brace_idx = len(shape_lines) - 1
+                injected = False
+
                 while last_brace_idx >= 0:
                     if '}' in shape_lines[last_brace_idx]:
-                        # Insert castShadows FALSE before this brace
                         last_brace_line = shape_lines[last_brace_idx]
-                        # Find the position of the last '}'
+
+                        # Safety check: line must contain exactly one closing brace
+                        brace_count_in_line = last_brace_line.count('}')
+                        if brace_count_in_line != 1:
+                            print(f"FATAL: Ambiguous brace placement: target line contains {brace_count_in_line} closing braces. Cannot safely inject castShadows.", file=sys.stderr)
+                            sys.exit(1)
+
                         last_brace_pos = last_brace_line.rfind('}')
                         if last_brace_pos >= 0:
                             indent = len(last_brace_line) - len(last_brace_line.lstrip())
@@ -203,12 +219,17 @@ while i < len(lines):
                                 ' ' * indent + last_brace_line[last_brace_pos:]
                             )
                             shape_lines[last_brace_idx] = modified_line
-                            changes_made = True
-                            break
+                            changes_made += 1
+                            injected = True
                         break
                     last_brace_idx -= 1
 
-        # Add the (possibly modified) shape lines to output, skipping the first one we already added
+                if not injected:
+                    print(f"FATAL: Could not find closing brace to inject castShadows in Shape block.", file=sys.stderr)
+                    sys.exit(1)
+            else:
+                already_patched += 1
+
         for k in range(1, len(shape_lines)):
             output_lines.append(shape_lines[k])
 
@@ -225,17 +246,33 @@ if open_braces != close_braces:
     print(f"FATAL: Brace mismatch in modified PROTO: {open_braces} {{ vs {close_braces} }}", file=sys.stderr)
     sys.exit(1)
 
+# Post-injection validation: verify each matching Shape block contains castShadows FALSE
+castShadows_count = 0
+for shape_content, is_matching in find_shape_blocks(modified_content):
+    if is_matching:
+        if 'castShadows FALSE' not in shape_content:
+            print(f"FATAL: Post-injection validation failed: Shape block with feetech-STS3032-visual does not contain castShadows FALSE.", file=sys.stderr)
+            sys.exit(1)
+        castShadows_count += 1
+
+if castShadows_count != matching_count:
+    print(f"FATAL: Post-injection validation failed: expected {matching_count} Shape blocks with castShadows FALSE, found {castShadows_count}.", file=sys.stderr)
+    sys.exit(1)
+
 # Write back if changes were made
-if changes_made:
+if changes_made > 0:
     try:
         with open(proto_file, 'w') as f:
             f.write(modified_content)
-        print(f"Injected castShadows FALSE into feetech-STS3032-visual Shape blocks.")
+        print(f"Injected castShadows FALSE into {changes_made} feetech-STS3032-visual Shape block(s).")
     except IOError as e:
         print(f"FATAL: Cannot write PROTO file {proto_file}: {e}", file=sys.stderr)
         sys.exit(1)
+elif already_patched == matching_count:
+    print(f"No changes needed (castShadows FALSE already present in all {matching_count} matching Shape blocks).")
 else:
-    print(f"No changes needed (castShadows FALSE already present or no matching Shape blocks).")
+    print(f"FATAL: Unexpected state: matching_count={matching_count}, already_patched={already_patched}, changes_made={changes_made}.", file=sys.stderr)
+    sys.exit(1)
 
 sys.exit(0)
 PYTHON_EOF
