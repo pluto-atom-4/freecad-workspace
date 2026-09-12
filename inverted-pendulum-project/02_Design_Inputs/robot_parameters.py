@@ -47,6 +47,15 @@ _MODULE_DIR = Path(__file__).resolve().parent
 DEFAULT_YAML_PATH = _MODULE_DIR / "robot_parameters.yaml"
 
 VALID_STATUSES = {"PLACEHOLDER", "MEASURED"}
+VALID_SHAPE_FORMS = {
+    "plain_cylinder",
+    "flanged_rim",
+    "spoked",
+    "tire_tread",
+    "solid_block",
+    "hollow_shell",
+    "assembled_subpart",
+}
 
 
 class RobotParametersError(ValueError):
@@ -74,6 +83,44 @@ def _require_nonempty_str(value: Any, name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise RobotParametersError(f"{name} must be a non-empty string, got {value!r}")
     return value
+
+
+@dataclass
+class ShapeStyle:
+    """Human-readable, checkable description of a component's intended visual
+    form (Issue #53/#101) -- makes "looks like a rim" a validated schema field
+    instead of only living in plan-comment prose that gets skimmed past."""
+
+    form: str
+    reference: str
+    rim_detail: Optional[str] = None
+    wall_thickness_mm: Optional[float] = None
+
+    def validate(self, name: str) -> None:
+        if self.form not in VALID_SHAPE_FORMS:
+            raise RobotParametersError(
+                f"{name}.form must be one of {sorted(VALID_SHAPE_FORMS)}, got {self.form!r}"
+            )
+        _require_nonempty_str(self.reference, f"{name}.reference")
+        if self.form == "hollow_shell" and self.wall_thickness_mm is None:
+            raise RobotParametersError(
+                f"{name}: form=hollow_shell requires wall_thickness_mm"
+            )
+        if self.wall_thickness_mm is not None:
+            _require_positive(self.wall_thickness_mm, f"{name}.wall_thickness_mm")
+
+
+def _parse_shape_style(raw: Any, context: str) -> ShapeStyle:
+    """Parse a shape_style dict into a ShapeStyle instance."""
+    if not isinstance(raw, dict):
+        raise RobotParametersError(f"{context} must be a mapping")
+    _require_keys(raw, ("form", "reference"), context)
+    return ShapeStyle(
+        form=raw["form"],
+        reference=raw["reference"],
+        rim_detail=raw.get("rim_detail"),
+        wall_thickness_mm=raw.get("wall_thickness_mm"),
+    )
 
 
 def _parse_component(
@@ -112,11 +159,13 @@ class ChassisSpec(ComponentSpec):
     length_mm: float
     width_mm: float
     height_mm: float
+    shape_style: ShapeStyle
 
     def validate(self, name: str = "chassis") -> None:
         super().validate(name)
         for attr in ("length_mm", "width_mm", "height_mm"):
             _require_positive(getattr(self, attr), f"{name}.{attr}")
+        self.shape_style.validate(f"{name}.shape_style")
 
 
 @dataclass
@@ -127,11 +176,13 @@ class WheelSpec(ComponentSpec):
     diameter_mm: float
     width_mm: float
     track_mm: float
+    shape_style: ShapeStyle
 
     def validate(self, name: str = "wheel") -> None:
         super().validate(name)
         for attr in ("diameter_mm", "width_mm", "track_mm"):
             _require_positive(getattr(self, attr), f"{name}.{attr}")
+        self.shape_style.validate(f"{name}.shape_style")
 
 
 @dataclass
@@ -141,11 +192,13 @@ class PendulumSpec(ComponentSpec):
 
     arm_length_mm: float
     pivot_height_mm: float
+    shape_style: ShapeStyle
 
     def validate(self, name: str = "pendulum") -> None:
         super().validate(name)
         for attr in ("arm_length_mm", "pivot_height_mm"):
             _require_positive(getattr(self, attr), f"{name}.{attr}")
+        self.shape_style.validate(f"{name}.shape_style")
 
 
 @dataclass
@@ -257,9 +310,36 @@ def load_robot_parameters(path: Optional[Union[str, Path]] = None) -> RobotParam
 
     _require_keys(raw, ("schema_version", "status", "robot_name", "chassis", "wheel", "pendulum", "servo"), str(yaml_path))
 
-    chassis = _parse_component(raw["chassis"], "chassis", ChassisSpec, yaml_path)
-    wheel = _parse_component(raw["wheel"], "wheel", WheelSpec, yaml_path)
-    pendulum = _parse_component(raw["pendulum"], "pendulum", PendulumSpec, yaml_path)
+    # Parse chassis with shape_style
+    chassis_raw = raw["chassis"]
+    if not isinstance(chassis_raw, dict):
+        raise RobotParametersError(f"{yaml_path}: 'chassis' must be a mapping")
+    chassis_shape_style = _parse_shape_style(
+        chassis_raw.get("shape_style", {}), "chassis.shape_style"
+    )
+    chassis_data = {**chassis_raw, "shape_style": chassis_shape_style}
+    chassis = _parse_component(chassis_data, "chassis", ChassisSpec, yaml_path)
+
+    # Parse wheel with shape_style
+    wheel_raw = raw["wheel"]
+    if not isinstance(wheel_raw, dict):
+        raise RobotParametersError(f"{yaml_path}: 'wheel' must be a mapping")
+    wheel_shape_style = _parse_shape_style(
+        wheel_raw.get("shape_style", {}), "wheel.shape_style"
+    )
+    wheel_data = {**wheel_raw, "shape_style": wheel_shape_style}
+    wheel = _parse_component(wheel_data, "wheel", WheelSpec, yaml_path)
+
+    # Parse pendulum with shape_style
+    pendulum_raw = raw["pendulum"]
+    if not isinstance(pendulum_raw, dict):
+        raise RobotParametersError(f"{yaml_path}: 'pendulum' must be a mapping")
+    pendulum_shape_style = _parse_shape_style(
+        pendulum_raw.get("shape_style", {}), "pendulum.shape_style"
+    )
+    pendulum_data = {**pendulum_raw, "shape_style": pendulum_shape_style}
+    pendulum = _parse_component(pendulum_data, "pendulum", PendulumSpec, yaml_path)
+
     servo = _parse_component(raw["servo"], "servo", ServoSpec, yaml_path)
 
     links_raw = raw.get("links", {})
