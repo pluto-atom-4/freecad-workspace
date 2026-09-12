@@ -292,6 +292,119 @@ def parallel_axis_theorem(
     return I_total
 
 
+def combine_plate_stack(
+    plate_shapes: List[Dict[str, Any]],
+    target_plate_mass_kg: float,
+) -> Tuple[float, List[float], Dict[str, float]]:
+    """Combine multiple plates' per-plate shape data into a single mass/CoM/inertia.
+
+    Volume-weights target_plate_mass_kg across the plates (each plate's mass =
+    target_mass * (its volume / total volume)), scales each plate's unit-density
+    inertia tensor by its assigned mass (already CoM-relative, per issue #96's
+    live-verified MatrixOfInertia convention), shifts each to a common reference
+    origin (the global frame) via the parallel-axis theorem, sums, mass-weights
+    the combined CoM, then shifts the summed tensor back from the global origin
+    to the combined CoM.
+
+    Args:
+        plate_shapes: List of per-plate shape dicts from LinkRecord.plate_shapes,
+                      each containing 'volume_mm3', 'center_of_mass_mm', and
+                      'inertia_unit_density_kg_mm2'.
+        target_plate_mass_kg: Total target mass to distribute across plates.
+
+    Returns:
+        (mass_kg, com_mm, inertia_kg_mm2) tuple -- same shape as
+        compute_bbox_ellipsoid_inertia's return, drop-in replacement feeding
+        the existing parallel_axis_theorem() servo-combination call unchanged.
+    """
+    if not plate_shapes:
+        raise ValueError("plate_shapes cannot be empty")
+
+    # Compute total volume and per-plate masses
+    total_volume = sum(p['volume_mm3'] for p in plate_shapes)
+    if total_volume <= 0:
+        raise ValueError(f"Total plate volume must be positive, got {total_volume}")
+
+    plate_masses = [
+        target_plate_mass_kg * (p['volume_mm3'] / total_volume)
+        for p in plate_shapes
+    ]
+
+    # Shift each plate's inertia from its own CoM to the global origin (z=0),
+    # scale by its mass, then sum.
+    I_origin = {
+        'ixx': 0.0,
+        'iyy': 0.0,
+        'izz': 0.0,
+        'ixy': 0.0,
+        'ixz': 0.0,
+        'iyz': 0.0,
+    }
+    weighted_com_x = 0.0
+    weighted_com_y = 0.0
+    weighted_com_z = 0.0
+
+    for plate, mass in zip(plate_shapes, plate_masses):
+        com_plate = plate['center_of_mass_mm']
+        com_x, com_y, com_z = com_plate['x'], com_plate['y'], com_plate['z']
+
+        # Scale unit-density (rho=1 kg/mm^3) inertia by the plate's actual
+        # DENSITY, not its mass directly -- the persisted tensor is a raw
+        # geometric moment (mm^5, from Part.Solid.MatrixOfInertia at implied
+        # unit density), so scaling by mass alone leaves it off by a factor
+        # of the plate's own volume (mass = density * volume). Confirmed via
+        # live cross-check: Top_Plate's raw ixx=224628.30 (mm^5) * mass
+        # (~0.042kg) gave ~9405 instead of the correct ~6.98 kg*mm^2 (issue
+        # #96 review fix).
+        I_com = plate['inertia_unit_density_kg_mm2']
+        density = mass / plate['volume_mm3']
+        I_com_scaled = {k: v * density for k, v in I_com.items()}
+
+        # Shift from plate's CoM to global origin (parallel-axis theorem)
+        # Following the sign convention in parallel_axis_theorem():
+        d_sq_x = com_y**2 + com_z**2
+        d_sq_y = com_x**2 + com_z**2
+        d_sq_z = com_x**2 + com_y**2
+
+        I_origin['ixx'] += I_com_scaled['ixx'] + mass * d_sq_x
+        I_origin['iyy'] += I_com_scaled['iyy'] + mass * d_sq_y
+        I_origin['izz'] += I_com_scaled['izz'] + mass * d_sq_z
+        I_origin['ixy'] += I_com_scaled['ixy'] + mass * com_x * com_y
+        I_origin['ixz'] += I_com_scaled['ixz'] + mass * com_x * com_z
+        I_origin['iyz'] += I_com_scaled['iyz'] + mass * com_y * com_z
+
+        # Accumulate mass-weighted CoM
+        weighted_com_x += mass * com_x
+        weighted_com_y += mass * com_y
+        weighted_com_z += mass * com_z
+
+    # Total mass and combined CoM
+    total_mass = sum(plate_masses)
+    combined_com = [
+        weighted_com_x / total_mass,
+        weighted_com_y / total_mass,
+        weighted_com_z / total_mass,
+    ]
+
+    # Shift combined inertia from global origin back to combined CoM
+    # (inverse parallel-axis shift)
+    com_x, com_y, com_z = combined_com[0], combined_com[1], combined_com[2]
+    d_sq_x = com_y**2 + com_z**2
+    d_sq_y = com_x**2 + com_z**2
+    d_sq_z = com_x**2 + com_y**2
+
+    I_combined = {
+        'ixx': I_origin['ixx'] - total_mass * d_sq_x,
+        'iyy': I_origin['iyy'] - total_mass * d_sq_y,
+        'izz': I_origin['izz'] - total_mass * d_sq_z,
+        'ixy': I_origin['ixy'] - total_mass * com_x * com_y,
+        'ixz': I_origin['ixz'] - total_mass * com_x * com_z,
+        'iyz': I_origin['iyz'] - total_mass * com_y * com_z,
+    }
+
+    return total_mass, combined_com, I_combined
+
+
 def verify_collision_envelope(bbox_live: Dict[str, float], validations: List[Dict]) -> bool:
     """Verify derived collision primitives nest inside live-read collision_proxy_bbox_mm.
 
@@ -688,7 +801,18 @@ def main():
                      pend_bbox['y_max'] - pend_bbox['y_min'],
                      pend_bbox['z_max'] - pend_bbox['z_min']]
         pend_plate_mass = body_wheels['links']['Pendulum_Link']['target_mass_kg']
-        pend_plate_inertia = compute_bbox_ellipsoid_inertia(pend_plate_mass, *pend_dims)
+
+        # Combine plates using real per-plate shape data (issue #96)
+        plate_shapes = body_wheels['links']['Pendulum_Link'].get('plate_shapes')
+        if plate_shapes:
+            pend_plate_mass, pend_plate_com, pend_plate_inertia = combine_plate_stack(
+                plate_shapes,
+                pend_plate_mass,
+            )
+        else:
+            # Fallback to old bbox-ellipsoid approximation if plate_shapes not available
+            pend_plate_inertia = compute_bbox_ellipsoid_inertia(pend_plate_mass, *pend_dims)
+            pend_plate_com = [7.995, 18.276, 4.5]
 
         # Combine with servo (parallel-axis theorem)
         servo_l_mass = mass_props['servo_left']['mass_kg']
@@ -708,10 +832,6 @@ def main():
             servo_l_mount_pos[1] + servo_l_com_rotated[1],
             servo_l_mount_pos[2] + servo_l_com_rotated[2],
         ]
-
-        # Plate stack CoM (approximate: center of bounding box)
-        # From live document: PlateStack center ~[7.995, 18.276, 4.5] mm
-        pend_plate_com = [7.995, 18.276, 4.5]
 
         pend_combined_mass = pend_plate_mass + servo_l_mass
         pend_combined_inertia = parallel_axis_theorem(
@@ -789,7 +909,18 @@ def main():
                        pend_r_bbox['y_max'] - pend_r_bbox['y_min'],
                        pend_r_bbox['z_max'] - pend_r_bbox['z_min']]
         pend_r_plate_mass = body_wheels['links']['Pendulum_Link_Right']['target_mass_kg']
-        pend_r_plate_inertia = compute_bbox_ellipsoid_inertia(pend_r_plate_mass, *pend_r_dims)
+
+        # Combine plates using real per-plate shape data (issue #96)
+        plate_shapes_r = body_wheels['links']['Pendulum_Link_Right'].get('plate_shapes')
+        if plate_shapes_r:
+            pend_r_plate_mass, pend_r_plate_com, pend_r_plate_inertia = combine_plate_stack(
+                plate_shapes_r,
+                pend_r_plate_mass,
+            )
+        else:
+            # Fallback to old bbox-ellipsoid approximation if plate_shapes not available
+            pend_r_plate_inertia = compute_bbox_ellipsoid_inertia(pend_r_plate_mass, *pend_r_dims)
+            pend_r_plate_com = [7.995, 18.276, 4.5]
 
         servo_r_mass = mass_props['servo_right']['mass_kg']
         servo_r_com = mass_props['servo_right']['center_of_mass_mm']
@@ -815,10 +946,6 @@ def main():
             servo_r_mount_pos[1] + servo_r_com_rotated[1],
             servo_r_mount_pos[2] + servo_r_com_rotated[2],
         ]
-
-        # Plate stack CoM (approximate: center of bounding box)
-        # Same as left side (plate geometry is identical)
-        pend_r_plate_com = [7.995, 18.276, 4.5]
 
         pend_r_combined_mass = pend_r_plate_mass + servo_r_mass
         pend_r_combined_inertia = parallel_axis_theorem(
@@ -947,7 +1074,7 @@ def main():
             'timestamp': datetime.now().isoformat(),
             'robot_name': robot_name,
             'input_documents': {
-                'robot_parameters_yaml': str(ROBOT_PARAMS_FILE),
+                'robot_parameters_yaml': str(DESIGN_INPUTS_DIR / "robot_parameters.yaml"),
                 'mass_properties_json': str(MASS_PROPERTIES_FILE),
                 'body_wheels_metadata': str(BODY_WHEELS_METADATA_FILE),
                 'joint_config': str(JOINT_CONFIG_FILE),

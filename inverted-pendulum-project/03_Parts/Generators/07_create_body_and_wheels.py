@@ -345,6 +345,7 @@ class LinkRecord:
     volume_mm3: Optional[float] = None
     target_mass_kg: Optional[float] = None
     triangle_count: Optional[int] = None
+    plate_shapes: Optional[List[Dict[str, Any]]] = None
     notes: Optional[str] = None
 
     def to_dict(self) -> dict:
@@ -566,6 +567,41 @@ class BodyWheelsGenerator:
             print(f"  ⚠ WARNING: Could not tessellate shape for triangle count: {e}")
             return 0
 
+    def _plate_shape_record(self, obj) -> Dict[str, Any]:
+        """Extract unit-density (rho=1) volume/CoM/inertia for one plate.
+
+        obj.Shape is a Part.Compound wrapping exactly one Part.Solid.
+        Part.Compound has no CenterOfMass/MatrixOfInertia (confirmed
+        empirically, issue #96). Solid's MatrixOfInertia is already about its
+        own CenterOfMass (confirmed empirically -- no reverse parallel-axis
+        shift needed here).
+        """
+        solids = obj.Shape.Solids
+        if len(solids) != 1:
+            raise ValueError(
+                f"{obj.Name}: expected exactly 1 solid in Shape, got {len(solids)}"
+            )
+        solid = solids[0]
+        com = solid.CenterOfMass
+        moi = solid.MatrixOfInertia
+        return {
+            "name": obj.Name,
+            "volume_mm3": round(solid.Volume, 6),
+            "center_of_mass_mm": {
+                "x": round(com.x, 4),
+                "y": round(com.y, 4),
+                "z": round(com.z, 4),
+            },
+            "inertia_unit_density_kg_mm2": {
+                "ixx": moi.A11,
+                "iyy": moi.A22,
+                "izz": moi.A33,
+                "ixy": moi.A12,
+                "ixz": moi.A13,
+                "iyz": moi.A23,
+            },
+        }
+
     # ---------------------------------------------------------------
     # Pendulum_Link: reuse PlateStack + STS3032_Mount from the source doc
     # ---------------------------------------------------------------
@@ -685,6 +721,16 @@ class BodyWheelsGenerator:
                 except Exception:
                     pass  # not all meshes are guaranteed watertight
 
+            # Extract per-plate shape data (unit-density CoM/inertia via
+            # .Shape.Solids[0] workaround, issue #96)
+            plate_shapes = []
+            for obj in plate_children:
+                try:
+                    plate_shapes.append(self._plate_shape_record(obj))
+                except Exception as e:
+                    print(f"WARNING: Could not extract shape data for {obj.Name}: {e}")
+                    raise  # Stop on first failure to catch solids-count errors
+
             self.links.append(LinkRecord(
                 name="Pendulum_Link",
                 kind="reused_subassembly",
@@ -696,6 +742,7 @@ class BodyWheelsGenerator:
                 bounding_box_mm=_bbox_to_dict(plate_bbox_global),
                 volume_mm3=round(volume, 4),
                 target_mass_kg=self.params.target_mass_for_link_kg("Pendulum_Link"),
+                plate_shapes=plate_shapes,
                 notes=(
                     "Copied (not linked) from plates_servo_assembled.FCStd's "
                     "PlateStack + STS3032_Mount groups -- see module "
@@ -883,6 +930,16 @@ class BodyWheelsGenerator:
             except Exception:
                 target_mass_kg = None
 
+            # Extract per-plate shape data (unit-density CoM/inertia via
+            # .Shape.Solids[0] workaround, issue #96)
+            plate_shapes = []
+            for obj in plate_children:
+                try:
+                    plate_shapes.append(self._plate_shape_record(obj))
+                except Exception as e:
+                    print(f"WARNING: Could not extract shape data for {obj.Name}: {e}")
+                    raise  # Stop on first failure to catch solids-count errors
+
             self.links.append(LinkRecord(
                 name="Pendulum_Link_Right",
                 kind="human_tuned_subassembly",
@@ -894,6 +951,7 @@ class BodyWheelsGenerator:
                 bounding_box_mm=_bbox_to_dict(plate_bbox_global),
                 volume_mm3=round(volume, 4),
                 target_mass_kg=target_mass_kg,
+                plate_shapes=plate_shapes,
                 notes=(
                     "NOT a geometric mirror of Pendulum_Link -- see "
                     "build_pendulum_link_right()'s docstring. "
