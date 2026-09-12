@@ -93,6 +93,14 @@ def test_servo_is_present_and_validated():
     assert params.servo.status == "PLACEHOLDER"
 
 
+def test_wheel_shape_style_is_present_and_validated():
+    """wheel.shape_style field (Issue #101) describes the visual form."""
+    params = load_robot_parameters()
+    assert hasattr(params.wheel, "shape_style")
+    assert params.wheel.shape_style.form == "plain_cylinder"
+    assert params.wheel.shape_style.reference  # non-empty string
+
+
 # ---------------------------------------------------------------------------
 # Schema / type shape
 # ---------------------------------------------------------------------------
@@ -234,6 +242,10 @@ def _valid_minimal_yaml_dict():
             "material": "PLA",
             "density_kg_m3": 1200.0,
             "target_mass_kg": 0.2,
+            "shape_style": {
+                "form": "solid_block",
+                "reference": "test chassis reference",
+            },
         },
         "wheel": {
             "diameter_mm": 65.0,
@@ -242,6 +254,10 @@ def _valid_minimal_yaml_dict():
             "material": "PLA",
             "density_kg_m3": 1200.0,
             "target_mass_kg": 0.025,
+            "shape_style": {
+                "form": "plain_cylinder",
+                "reference": "test wheel reference",
+            },
         },
         "pendulum": {
             "arm_length_mm": 150.0,
@@ -249,6 +265,10 @@ def _valid_minimal_yaml_dict():
             "material": "Aluminum_6061",
             "density_kg_m3": 2700.0,
             "target_mass_kg": 0.1,
+            "shape_style": {
+                "form": "assembled_subpart",
+                "reference": "test pendulum reference",
+            },
         },
         "servo": {
             "material": "Aluminum_alloy_with_plastic_gears",
@@ -353,6 +373,76 @@ def test_missing_servo_key_raises(tmp_path, missing_key):
 
     with pytest.raises(RobotParametersError):
         load_robot_parameters(yaml_path)
+
+
+@pytest.mark.parametrize("component", ["chassis", "wheel", "pendulum"])
+def test_missing_shape_style_key_raises(tmp_path, component):
+    """chassis, wheel, pendulum must have shape_style (Issue #101)."""
+    data = _valid_minimal_yaml_dict()
+    del data[component]["shape_style"]
+    yaml_path = tmp_path / "robot_parameters.yaml"
+    yaml_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    with pytest.raises(RobotParametersError):
+        load_robot_parameters(yaml_path)
+
+
+@pytest.mark.parametrize("component,missing_key", [
+    ("chassis", "form"),
+    ("chassis", "reference"),
+    ("wheel", "form"),
+    ("wheel", "reference"),
+    ("pendulum", "form"),
+    ("pendulum", "reference"),
+])
+def test_missing_shape_style_subkey_raises(tmp_path, component, missing_key):
+    """shape_style must have form and reference (Issue #101)."""
+    data = _valid_minimal_yaml_dict()
+    del data[component]["shape_style"][missing_key]
+    yaml_path = tmp_path / "robot_parameters.yaml"
+    yaml_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    with pytest.raises(RobotParametersError):
+        load_robot_parameters(yaml_path)
+
+
+def test_unknown_shape_form_raises(tmp_path):
+    """shape_style.form must be one of VALID_SHAPE_FORMS (Issue #101)."""
+    data = _valid_minimal_yaml_dict()
+    data["wheel"]["shape_style"]["form"] = "totally_made_up_form"
+    yaml_path = tmp_path / "robot_parameters.yaml"
+    yaml_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    with pytest.raises(RobotParametersError, match=r"must be one of"):
+        load_robot_parameters(yaml_path)
+
+
+def test_hollow_shell_requires_wall_thickness_raises(tmp_path):
+    """If shape_style.form is hollow_shell, wall_thickness_mm is required (Issue #101)."""
+    data = _valid_minimal_yaml_dict()
+    data["chassis"]["shape_style"]["form"] = "hollow_shell"
+    # Don't set wall_thickness_mm
+    yaml_path = tmp_path / "robot_parameters.yaml"
+    yaml_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    with pytest.raises(RobotParametersError, match=r"hollow_shell requires wall_thickness_mm"):
+        load_robot_parameters(yaml_path)
+
+
+def test_hollow_shell_with_wall_thickness_succeeds(tmp_path):
+    """hollow_shell with wall_thickness_mm should validate successfully (Issue #101)."""
+    data = _valid_minimal_yaml_dict()
+    data["chassis"]["shape_style"] = {
+        "form": "hollow_shell",
+        "reference": "hollow box with walls",
+        "wall_thickness_mm": 2.0,
+    }
+    yaml_path = tmp_path / "robot_parameters.yaml"
+    yaml_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    params = load_robot_parameters(yaml_path)
+    assert params.chassis.shape_style.form == "hollow_shell"
+    assert params.chassis.shape_style.wall_thickness_mm == 2.0
 
 
 def test_unknown_schema_version_raises(tmp_path):
