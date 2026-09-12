@@ -8,7 +8,7 @@ Stage A sets up a minimal Webots simulation environment:
 - URDF import from the inverted pendulum robot design (`06_Exports/urdf/robot.urdf`).
 - PROTO generation via `urdf2webots` for Webots asset representation.
 - Webots world with plain offline nodes (Background, DirectionalLight, floor) — no networked PROTOs.
-- Simple void (no-op) controller for the robot (real controllers come in later stages).
+- Simple no-op `"<none>"` controller for the robot (real controllers come in later stages).
 
 **Goal:** Provide a visual validation sandbox. A human can load the world in the Webots GUI and confirm the robot renders correctly (base plate, wheels, pendulum arms with servo mesh, correct scale).
 
@@ -30,7 +30,7 @@ Stage A sets up a minimal Webots simulation environment:
 
 ## What's NOT Included (Out of Scope)
 
-- **Physics/control simulation:** Stage A has a void controller. Real controllers and physics tuning come later.
+- **Physics/control simulation:** Stage A has a no-op `"<none>"` controller. Real controllers and physics tuning come later.
 - **URDF mesh-path resolution:** The source URDF (`06_Exports/urdf/robot.urdf`) uses `package://inverted_pendulum_robot/meshes/...` URIs that `urdf2webots` cannot resolve. This stage's `prepare_urdf_for_webots.sh` script rewrites them to relative paths in a `.generated/` copy — the source URDF is never modified (that's issue #9 territory).
 - **Networked standard-library PROTOs:** Stage A uses plain Webots nodes (Background, DirectionalLight, Solid) for a fully offline world. Future stages may add networked PROTOs (TexturedBackground, etc.) for visual polish.
 
@@ -90,7 +90,7 @@ The source URDF references meshes via `package://inverted_pendulum_robot/meshes/
 - Calls `prepare_urdf_for_webots.sh`.
 - Runs `mamba run -n pendulum-tools python3 -m urdf2webots.importer` with target R2025a.
 - Validates output PROTO exists and is non-empty.
-- (Optionally) Parses urdf2webots output for link/joint counts as a sanity check.
+- **Validates** urdf2webots output for link/joint counts as a required sanity check (5 links, 4 joints expected; exits FATAL if mismatch).
 
 ### run_gui.sh / run_batch.sh
 - Validate world file and WEBOTS_BIN.
@@ -101,7 +101,7 @@ The source URDF references meshes via `package://inverted_pendulum_robot/meshes/
 - Hand-authored, committed.
 - EXTERNPROTO references the generated PROTO.
 - Plain Webots nodes: WorldInfo, Viewpoint, Background, DirectionalLight, Solid floor.
-- Robot instance with `controller "void"` (built-in no-op — no controller code yet).
+- Robot instance with `controller "<none>"` (built-in no-op — no controller code yet).
 - Robot positioned with clearance above floor so it can settle under gravity.
 
 ## Troubleshooting
