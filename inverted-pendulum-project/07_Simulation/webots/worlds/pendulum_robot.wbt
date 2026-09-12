@@ -2,7 +2,7 @@
 
 # Stage A Webots world for inverted pendulum robot (issue #103).
 # Simple scaffolding: plain offline Background + DirectionalLight + flat Solid floor.
-# No networked standard-library PROTOs. Robot controller is void (no-op).
+# No networked standard-library PROTOs. Robot controller is <none> (no-op).
 # This stage is for visual validation only — physics/control come later.
 
 EXTERNPROTO "../protos/InvertedPendulumRobot.proto"
@@ -11,7 +11,7 @@ WorldInfo {
   info [
     "Stage A: Webots world scaffolding for inverted pendulum robot (issue #103)."
     "Simple offline setup for visual validation."
-    "Robot uses void (no-op) controller in this stage."
+    "Robot uses <none> (no-op) controller in this stage."
   ]
   title "pendulum_robot"
   basicTimeStep 32
