@@ -58,5 +58,5 @@ Solid {
 
 InvertedPendulumRobot {
   translation 0 0 0.02
-  controller "void"
+  controller "<none>"
 }
