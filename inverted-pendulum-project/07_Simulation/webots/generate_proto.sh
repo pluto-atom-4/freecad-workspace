@@ -84,8 +84,8 @@ fi
 # Step 4: Parse urdf2webots output to validate link/joint counts.
 # Expected: 5 links (Base_Link, Wheel_Left, Wheel_Right, Pendulum_Link, Pendulum_Link_Right)
 #           4 joints (wheel_left_joint, wheel_right_joint, pendulum_pivot_joint, pendulum_pivot_right_joint)
-LINK_COUNT=$(echo "$URDF2WEBOTS_OUTPUT" | grep -oE "[0-9]+ links" | grep -oE "[0-9]+" | head -1)
-JOINT_COUNT=$(echo "$URDF2WEBOTS_OUTPUT" | grep -oE "[0-9]+ joints" | grep -oE "[0-9]+" | head -1)
+LINK_COUNT=$(echo "$URDF2WEBOTS_OUTPUT" | grep -oE "[0-9]+ links" | grep -oE "[0-9]+" | head -1 || true)
+JOINT_COUNT=$(echo "$URDF2WEBOTS_OUTPUT" | grep -oE "[0-9]+ joints" | grep -oE "[0-9]+" | head -1 || true)
 
 # Provide defaults if counts not found in output (urdf2webots may not always print them).
 LINK_COUNT="${LINK_COUNT:-0}"
