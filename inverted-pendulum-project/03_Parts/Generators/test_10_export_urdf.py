@@ -746,3 +746,52 @@ def test_combine_plate_stack_matches_real_data():
         assert inertia[key] > 0, (
             f"Diagonal inertia {key}={inertia[key]} should be positive"
         )
+
+
+def test_servo_visual_mesh_has_scale():
+    """Servo visual mesh geometry includes correct scale attribute (Issue #105).
+
+    The servo mesh (feetech-STS3032-visual.stl) is authored in mm.
+    URDF expects coordinates in meters, so scale="0.001 0.001 0.001" must be present
+    to convert mm → m. Without this, the mesh appears 1000x oversized in simulators.
+    """
+    root = load_urdf()
+
+    for link_name in ['Pendulum_Link', 'Pendulum_Link_Right']:
+        link = root.find(f".//link[@name='{link_name}']")
+        assert link is not None, f"Link {link_name} not found"
+
+        visuals = link.findall('visual')
+        assert len(visuals) >= 2, f"Link {link_name} should have at least 2 visual elements"
+
+        # Find the servo mesh visual (second one, after the plate box)
+        servo_mesh_visual = None
+        for visual in visuals:
+            geometry = visual.find('geometry')
+            mesh = geometry.find('mesh')
+            if mesh is not None and 'feetech-STS3032-visual.stl' in mesh.get('filename', ''):
+                servo_mesh_visual = mesh
+                break
+
+        assert servo_mesh_visual is not None, (
+            f"Link {link_name} missing servo mesh visual element"
+        )
+
+        # Check scale attribute exists
+        scale_attr = servo_mesh_visual.get('scale')
+        assert scale_attr is not None, (
+            f"Link {link_name} servo mesh missing 'scale' attribute"
+        )
+
+        # Parse and verify scale values are [0.001, 0.001, 0.001]
+        scale_parts = scale_attr.split()
+        assert len(scale_parts) == 3, (
+            f"Link {link_name} servo mesh scale should have 3 values, got: {scale_attr}"
+        )
+
+        expected_scales = [0.001, 0.001, 0.001]
+        for i, (actual_str, expected) in enumerate(zip(scale_parts, expected_scales)):
+            actual = float(actual_str)
+            assert abs(actual - expected) < 1e-9, (
+                f"Link {link_name} servo mesh scale[{i}] = {actual:.6f}, expected {expected:.6f}"
+            )
