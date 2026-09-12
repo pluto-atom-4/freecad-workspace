@@ -117,6 +117,135 @@ if [ "$JOINT_COUNT" -ne 4 ]; then
     exit 1
 fi
 
+# Step 5: Post-process PROTO to inject castShadows FALSE for high-triangle-count meshes.
+# The feetech-STS3032-visual mesh has ~37556 triangles, exceeding Webots' 21845-triangle
+# limit. Webots warns about shadow casting on oversized meshes; suppress with castShadows FALSE.
+# This post-processor is idempotent: if castShadows already exists in the Shape, it skips.
+
+echo ""
+echo "Post-processing PROTO to suppress shadow-casting warnings..."
+
+POST_PROCESS_RESULT=$(PROTO_OUTPUT_FILE="$PROTO_OUTPUT" python3 << 'PYTHON_EOF'
+import re
+import sys
+import os
+
+# proto_file passed as an environment variable from the bash script
+proto_file = os.environ.get('PROTO_OUTPUT_FILE')
+if not proto_file:
+    print("FATAL: PROTO_OUTPUT_FILE environment variable not set", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    with open(proto_file, 'r') as f:
+        content = f.read()
+except IOError as e:
+    print(f"FATAL: Cannot read PROTO file {proto_file}: {e}", file=sys.stderr)
+    sys.exit(1)
+
+# Strategy: Find Shape blocks that reference feetech-STS3032-visual.
+# Each Shape block is { appearance ... geometry ... }
+# We need to inject castShadows FALSE before the closing }
+
+# Pattern 1: Shape block with DEF feetech-STS3032-visual (the definition)
+# Pattern 2: Shape block with USE feetech-STS3032-visual (the reference)
+
+# Regex to find Shape blocks containing feetech-STS3032-visual reference.
+# A Shape block starts with "Shape {" and we need to find the matching closing "}"
+# For robustness, we'll process each occurrence one at a time.
+
+changes_made = False
+
+# Find all Shape blocks that contain feetech-STS3032-visual
+# We search for the pattern: "Shape {" ... "feetech-STS3032-visual" ... "}"
+
+# Split on "Shape {" and rejoin, tracking Shape boundaries
+lines = content.split('\n')
+output_lines = []
+i = 0
+
+while i < len(lines):
+    line = lines[i]
+    output_lines.append(line)
+
+    # Check if this line starts a Shape block
+    if 'Shape {' in line:
+        shape_lines = [line]
+        shape_start_idx = i
+        brace_count = line.count('{') - line.count('}')
+        j = i + 1
+
+        # Collect lines until we close the Shape block
+        while j < len(lines) and brace_count > 0:
+            shape_lines.append(lines[j])
+            brace_count += lines[j].count('{') - lines[j].count('}')
+            j += 1
+
+        # Check if this Shape block references feetech-STS3032-visual
+        shape_content = '\n'.join(shape_lines)
+        if 'feetech-STS3032-visual' in shape_content:
+            # Check if castShadows FALSE is already present in this Shape block
+            if 'castShadows FALSE' not in shape_content:
+                # Inject castShadows FALSE before the closing brace
+                # Find the last closing brace of this Shape block
+                last_brace_idx = len(shape_lines) - 1
+                while last_brace_idx >= 0:
+                    if '}' in shape_lines[last_brace_idx]:
+                        # Insert castShadows FALSE before this brace
+                        last_brace_line = shape_lines[last_brace_idx]
+                        # Find the position of the last '}'
+                        last_brace_pos = last_brace_line.rfind('}')
+                        if last_brace_pos >= 0:
+                            indent = len(last_brace_line) - len(last_brace_line.lstrip())
+                            modified_line = (
+                                last_brace_line[:last_brace_pos] +
+                                '\n' + ' ' * (indent + 2) + 'castShadows FALSE\n' +
+                                ' ' * indent + last_brace_line[last_brace_pos:]
+                            )
+                            shape_lines[last_brace_idx] = modified_line
+                            changes_made = True
+                            break
+                        break
+                    last_brace_idx -= 1
+
+        # Add the (possibly modified) shape lines to output, skipping the first one we already added
+        for k in range(1, len(shape_lines)):
+            output_lines.append(shape_lines[k])
+
+        i = j
+    else:
+        i += 1
+
+modified_content = '\n'.join(output_lines)
+
+# Validate basic VRML syntax: check brace matching
+open_braces = modified_content.count('{')
+close_braces = modified_content.count('}')
+if open_braces != close_braces:
+    print(f"FATAL: Brace mismatch in modified PROTO: {open_braces} {{ vs {close_braces} }}", file=sys.stderr)
+    sys.exit(1)
+
+# Write back if changes were made
+if changes_made:
+    try:
+        with open(proto_file, 'w') as f:
+            f.write(modified_content)
+        print(f"Injected castShadows FALSE into feetech-STS3032-visual Shape blocks.")
+    except IOError as e:
+        print(f"FATAL: Cannot write PROTO file {proto_file}: {e}", file=sys.stderr)
+        sys.exit(1)
+else:
+    print(f"No changes needed (castShadows FALSE already present or no matching Shape blocks).")
+
+sys.exit(0)
+PYTHON_EOF
+) || {
+    echo "FATAL: Post-processing failed." >&2
+    exit 1
+}
+
+echo "$POST_PROCESS_RESULT"
+
 echo ""
 echo "=================================================================="
 echo "PROTO generation complete."
