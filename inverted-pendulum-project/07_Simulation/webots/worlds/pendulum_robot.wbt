@@ -1,0 +1,62 @@
+#VRML_SIM R2025a utf8
+
+# Stage A Webots world for inverted pendulum robot (issue #103).
+# Simple scaffolding: plain offline Background + DirectionalLight + flat Solid floor.
+# No networked standard-library PROTOs. Robot controller is void (no-op).
+# This stage is for visual validation only — physics/control come later.
+
+EXTERNPROTO "../protos/InvertedPendulumRobot.proto"
+
+WorldInfo {
+  info [
+    "Stage A: Webots world scaffolding for inverted pendulum robot (issue #103)."
+    "Simple offline setup for visual validation."
+    "Robot uses void (no-op) controller in this stage."
+  ]
+  title "pendulum_robot"
+  basicTimeStep 32
+}
+
+Viewpoint {
+  orientation -0.3 0.3 0.9 1.2
+  position -0.2 -0.3 0.15
+}
+
+Background {
+  skyColor [0.4 0.6 1.0]
+}
+
+DirectionalLight {
+  direction 0.5 -1.0 0.5
+  intensity 1.0
+}
+
+Solid {
+  translation 0 0 -0.01
+  rotation 1 0 0 0
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.8 0.8 0.8
+        }
+      }
+      geometry Box {
+        size 1.0 1.0 0.02
+      }
+    }
+  ]
+  boundingObject Box {
+    size 1.0 1.0 0.02
+  }
+  physics Physics {
+    density -1
+    mass 100
+  }
+  name "floor"
+}
+
+InvertedPendulumRobot {
+  translation 0 0 0.02
+  controller "void"
+}
