@@ -91,6 +91,7 @@ The source URDF references meshes via `package://inverted_pendulum_robot/meshes/
 - Runs `mamba run -n pendulum-tools python3 -m urdf2webots.importer` with target R2025a.
 - Validates output PROTO exists and is non-empty.
 - **Validates** urdf2webots output for link/joint counts as a required sanity check (5 links, 4 joints expected; exits FATAL if mismatch).
+- **Post-processes** the PROTO to inject `castShadows FALSE` into Shape nodes referencing the `feetech-STS3032-visual` mesh (a high-triangle-count servo mesh ~37556 triangles). Webots warns about shadow casting on meshes exceeding 21845 triangles; this suppression is idempotent (safe to re-run; does not duplicate the injection).
 
 ### run_gui.sh / run_batch.sh
 - Validate world file and WEBOTS_BIN.
