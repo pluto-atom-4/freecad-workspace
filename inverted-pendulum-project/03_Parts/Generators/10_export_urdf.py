@@ -226,6 +226,78 @@ def apply_rotation_to_vector(vector_mm: List[float], yaw_deg: float, pitch_deg: 
     return [x3, y3, z3]
 
 
+def build_plate_visual_boxes(plate_shapes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Build separate URDF visual box elements for each plate (Issue #133).
+
+    Each plate's box is placed in its own local frame (unrotated), then
+    positioned via its own Placement's origin+rpy.
+
+    Args:
+        plate_shapes: List of plate shape records from 07_body_wheels_metadata.json.
+                     Each record has 'local_bbox_mm', 'own_placement' (Issue #133).
+
+    Returns:
+        List of visual geometry dicts, one per plate, ready for build_urdf_link().
+    """
+    import math
+    visual_boxes = []
+
+    for plate in plate_shapes:
+        local_bbox = plate['local_bbox_mm']
+        own_placement = plate['own_placement']
+
+        # Box dimensions from unrotated local bbox
+        dims = [
+            local_bbox['x_max'] - local_bbox['x_min'],
+            local_bbox['y_max'] - local_bbox['y_min'],
+            local_bbox['z_max'] - local_bbox['z_min'],
+        ]
+
+        # Local center of the bbox
+        local_center = [
+            (local_bbox['x_min'] + local_bbox['x_max']) / 2.0,
+            (local_bbox['y_min'] + local_bbox['y_max']) / 2.0,
+            (local_bbox['z_min'] + local_bbox['z_max']) / 2.0,
+        ]
+
+        # Get plate's rotation and position
+        ypr = own_placement['rotation_ypr_deg']
+        yaw = ypr['yaw']
+        pitch = ypr['pitch']
+        roll = ypr['roll']
+        position = own_placement['position']
+
+        # Rotate local center by plate's rotation to get placed center
+        local_center_rotated = apply_rotation_to_vector(local_center, yaw, pitch, roll)
+
+        # Placed center = rotation applied to local center + position
+        placed_center = [
+            position['x'] + local_center_rotated[0],
+            position['y'] + local_center_rotated[1],
+            position['z'] + local_center_rotated[2],
+        ]
+
+        # Convert yaw-pitch-roll (degrees) to rpy string (radians, roll-pitch-yaw order)
+        rpy_str = ' '.join([
+            f'{math.radians(roll):.6f}',
+            f'{math.radians(pitch):.6f}',
+            f'{math.radians(yaw):.6f}',
+        ])
+
+        visual_boxes.append({
+            'type': 'box',
+            'dimensions_mm': {
+                'length': dims[0],
+                'width': dims[1],
+                'height': dims[2],
+            },
+            'origin': placed_center,
+            'rpy': rpy_str,
+        })
+
+    return visual_boxes
+
+
 def parallel_axis_theorem(
     I_local: Dict[str, float],
     com_local: List[float],
@@ -878,28 +950,23 @@ def main():
             (pend_plate_mass * pend_plate_com[2] + servo_l_mass * servo_l_com_assembly[2]) / pend_combined_mass,
         ]
 
+        # Build separate visual boxes for each plate (Issue #133)
+        plate_visual_boxes = build_plate_visual_boxes(plate_shapes) if plate_shapes else []
+
+        # Servo mesh visual
+        servo_l_visual_mesh = {
+            'type': 'mesh',
+            'filename': 'package://inverted_pendulum_robot/meshes/feetech-STS3032-visual.stl',
+            'origin': servo_l_com_assembly,
+            'scale': [0.001, 0.001, 0.001],
+        }
+
         pend_link = build_urdf_link(
             'Pendulum_Link',
             pend_combined_mass,
             pend_combined_com,
             pend_combined_inertia,
-            visual_geometry=[
-                {
-                    'type': 'box',
-                    'dimensions_mm': {
-                        'length': pend_dims[0],
-                        'width': pend_dims[1],
-                        'height': pend_dims[2],
-                    },
-                    'origin': pend_plate_com,
-                },
-                {
-                    'type': 'mesh',
-                    'filename': 'package://inverted_pendulum_robot/meshes/feetech-STS3032-visual.stl',
-                    'origin': servo_l_com_assembly,
-                    'scale': [0.001, 0.001, 0.001],
-                }
-            ],
+            visual_geometry=plate_visual_boxes + [servo_l_visual_mesh],
             collision_geometry=[
                 {  # Plate stack box
                     'type': 'box',
@@ -1003,29 +1070,24 @@ def main():
             (pend_r_plate_mass * pend_r_plate_com[2] + servo_r_mass * servo_r_com_assembly[2]) / pend_r_combined_mass,
         ]
 
+        # Build separate visual boxes for each plate (Issue #133)
+        plate_visual_boxes_r = build_plate_visual_boxes(plate_shapes_r) if plate_shapes_r else []
+
+        # Servo mesh visual with rotation
+        servo_r_visual_mesh = {
+            'type': 'mesh',
+            'filename': 'package://inverted_pendulum_robot/meshes/feetech-STS3032-visual.stl',
+            'origin': servo_r_com_assembly,
+            'rpy': servo_r_rpy,
+            'scale': [0.001, 0.001, 0.001],
+        }
+
         pend_r_link = build_urdf_link(
             'Pendulum_Link_Right',
             pend_r_combined_mass,
             pend_r_combined_com,
             pend_r_combined_inertia,
-            visual_geometry=[
-                {
-                    'type': 'box',
-                    'dimensions_mm': {
-                        'length': pend_r_dims[0],
-                        'width': pend_r_dims[1],
-                        'height': pend_r_dims[2],
-                    },
-                    'origin': pend_r_plate_com,
-                },
-                {
-                    'type': 'mesh',
-                    'filename': 'package://inverted_pendulum_robot/meshes/feetech-STS3032-visual.stl',
-                    'origin': servo_r_com_assembly,
-                    'rpy': servo_r_rpy,
-                    'scale': [0.001, 0.001, 0.001],
-                }
-            ],
+            visual_geometry=plate_visual_boxes_r + [servo_r_visual_mesh],
             collision_geometry=[
                 {  # Plate stack box
                     'type': 'box',

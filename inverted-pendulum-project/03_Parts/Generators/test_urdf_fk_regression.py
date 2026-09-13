@@ -122,6 +122,52 @@ def _compute_plate_com(plate_shapes: List[Dict[str, Any]], target_mass_kg: float
     return [c / target_mass_kg for c in weighted_com]
 
 
+def _compute_first_plate_placed_center(plate_shapes: List[Dict[str, Any]]) -> List[float]:
+    """Compute the first plate's placed center in its own frame (Issue #133).
+
+    The first plate (index 0) has its own local_bbox_mm and own_placement.
+    Compute the local center (from bbox), apply its own rotation, add position.
+
+    Args:
+        plate_shapes: List of per-plate dicts from LinkRecord['plate_shapes']
+
+    Returns:
+        [x, y, z] placed center in mm (in the plate's own local frame)
+    """
+    if not plate_shapes:
+        raise ValueError("plate_shapes cannot be empty")
+
+    first_plate = plate_shapes[0]
+    local_bbox = first_plate['local_bbox_mm']
+    own_placement = first_plate['own_placement']
+
+    # Local center of the bbox
+    local_center = [
+        (local_bbox['x_min'] + local_bbox['x_max']) / 2.0,
+        (local_bbox['y_min'] + local_bbox['y_max']) / 2.0,
+        (local_bbox['z_min'] + local_bbox['z_max']) / 2.0,
+    ]
+
+    # Get plate's rotation and position
+    ypr = own_placement['rotation_ypr_deg']
+    yaw = ypr['yaw']
+    pitch = ypr['pitch']
+    roll = ypr['roll']
+    position = own_placement['position']
+
+    # Rotate local center by plate's rotation
+    local_center_rotated = _apply_rotation_ypr(local_center, yaw, pitch, roll)
+
+    # Placed center = rotated center + position
+    placed_center = [
+        position['x'] + local_center_rotated[0],
+        position['y'] + local_center_rotated[1],
+        position['z'] + local_center_rotated[2],
+    ]
+
+    return placed_center
+
+
 def _mm_to_m(value_or_list) -> Any:
     """Convert mm to m (scalar or list)."""
     if isinstance(value_or_list, (list, tuple)):
@@ -279,12 +325,14 @@ class TestPendulumPlateCoM:
     """Pendulum plate CoM test (Group 2)."""
 
     def test_pendulum_plate_com_matches_independently_recomputed_value(self):
-        """Test Group 2: URDF plate visual origin xyz ≈ independently-recomputed plate CoM / 1000.
+        """Test Group 2: URDF first plate visual origin xyz ≈ independently-recomputed first plate center / 1000.
 
-        Recompute the pendulum plate CoM FRESH from plate_shapes JSON (NOT reusing
-        combine_plate_stack() from 10_export_urdf.py, to avoid circularity).
+        After Issue #133, each pendulum link has 3 separate plate visuals instead of 1 combined.
+        This test validates the FIRST plate's placement by computing its placed center FRESH
+        from plate_shapes[0] (local_bbox_mm + own_placement), NOT reusing 10_export_urdf.py
+        logic to avoid circularity.
 
-        Compare against URDF's plate <visual><origin> for both Pendulum_Link and
+        Compare against URDF's first plate box <visual><origin> for both Pendulum_Link and
         Pendulum_Link_Right.
 
         Tolerance: 1e-6 m (tight regression pin).
@@ -296,33 +344,32 @@ class TestPendulumPlateCoM:
 
         for link_name in links_to_test:
             link_data = body_wheels['links'][link_name]
-            target_mass = link_data['target_mass_kg']
             plate_shapes = link_data.get('plate_shapes')
 
             if not plate_shapes:
                 pytest.skip(f"No plate_shapes found for {link_name}")
 
-            # Independently recompute plate CoM
-            computed_plate_com = _compute_plate_com(plate_shapes, target_mass)
-            expected_xyz = _mm_to_m(computed_plate_com)
+            # Independently recompute first plate's placed center (Issue #133)
+            computed_first_plate_center = _compute_first_plate_placed_center(plate_shapes)
+            expected_xyz = _mm_to_m(computed_first_plate_center)
 
-            # Find link and first visual (plate box)
+            # Find link and first visual (first plate box)
             link_elem = urdf.find(f".//link[@name='{link_name}']")
             assert link_elem is not None, f"Link {link_name} not found in URDF"
 
             visual_elems = link_elem.findall('visual')
-            assert len(visual_elems) >= 1, f"No visual elements found for {link_name}"
+            assert len(visual_elems) >= 3, f"Expected >= 3 visual elements in {link_name} (3 plates), found {len(visual_elems)}"
 
-            # First visual should be the plate box (with origin at plate CoM)
-            plate_visual = visual_elems[0]
-            origin_elem = plate_visual.find('origin')
+            # First visual should be the first plate box (Top_Plate)
+            first_plate_visual = visual_elems[0]
+            origin_elem = first_plate_visual.find('origin')
             assert origin_elem is not None, f"No origin in first visual of {link_name}"
             urdf_xyz = _parse_xyz(origin_elem.get('xyz'))
 
             # Compare
             for i, (name, urdf_val, exp_val) in enumerate(zip(['x', 'y', 'z'], urdf_xyz, expected_xyz)):
                 assert abs(urdf_val - exp_val) < TOLERANCE_M, (
-                    f"Plate CoM {link_name} {name}: URDF={urdf_val:.9f} m, "
+                    f"First plate center {link_name} {name}: URDF={urdf_val:.9f} m, "
                     f"expected={exp_val:.9f} m, diff={abs(urdf_val - exp_val):.2e} m"
                 )
 
@@ -400,10 +447,20 @@ class TestServoMeshComposition:
             link_elem = urdf.find(f".//link[@name='{link_name}']")
             assert link_elem is not None, f"Link {link_name} not found in URDF"
 
-            # Find servo mesh visual (second visual element, type=mesh)
+            # Find servo mesh visual by geometry type (Issue #133: may not be at index 1 anymore)
+            # Search for the mesh with feetech-STS3032-visual.stl filename
             visual_elems = link_elem.findall('visual')
-            assert len(visual_elems) >= 2, f"Expected >= 2 visuals in {link_name}, found {len(visual_elems)}"
-            servo_visual = visual_elems[1]
+            assert len(visual_elems) >= 4, f"Expected >= 4 visuals in {link_name} (3 plates + servo), found {len(visual_elems)}"
+
+            servo_visual = None
+            for visual in visual_elems:
+                geometry = visual.find('geometry')
+                mesh = geometry.find('mesh')
+                if mesh is not None and 'feetech-STS3032-visual.stl' in mesh.get('filename', ''):
+                    servo_visual = visual
+                    break
+
+            assert servo_visual is not None, f"Could not find servo mesh visual in {link_name}"
 
             origin_elem = servo_visual.find('origin')
             assert origin_elem is not None, f"No origin in servo visual of {link_name}"
@@ -417,6 +474,7 @@ class TestServoMeshComposition:
                 )
 
             # Also check servo box collision geometry (should have same origin)
+            # The servo box is the second collision element (index 1: plate box is index 0)
             collision_elems = link_elem.findall('collision')
             assert len(collision_elems) >= 2, f"Expected >= 2 collisions in {link_name}, found {len(collision_elems)}"
             servo_collision = collision_elems[1]
