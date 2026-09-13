@@ -173,7 +173,8 @@ PROTO InvertedPendulumRobot [
           rotation 1.000000 0.000000 0.000000 1.570796
           children [
             Pose {
-              translation 0.004540 0.015904 0.004991
+              translation -0.001980 0.033300 0.006000
+              rotation 0.000000 0.000000 1.000000 0.926770
               children [
                 Shape {
                   appearance PBRAppearance {
@@ -182,7 +183,39 @@ PROTO InvertedPendulumRobot [
                     metalness 0
                   }
                   geometry Box {
-                     size 0.059984 0.080033 0.005500
+                     size 0.060000 0.010000 0.002500
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.013000 0.015760 0.006000
+              rotation 0.000000 0.000000 1.000000 0.464258
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                    baseColor 0.500000 0.500000 0.500000
+                    roughness 1.000000
+                    metalness 0
+                  }
+                  geometry Box {
+                     size 0.054720 0.010000 0.002500
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.003010 -0.001730 0.003000
+              rotation 0.000000 -0.000000 -1.000000 0.644026
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                    baseColor 0.500000 0.500000 0.500000
+                    roughness 1.000000
+                    metalness 0
+                  }
+                  geometry Box {
+                     size 0.060000 0.010000 0.002500
                   }
                 }
               ]
@@ -267,7 +300,8 @@ PROTO InvertedPendulumRobot [
           rotation 1.000000 0.000000 0.000000 1.570796
           children [
             Pose {
-              translation 0.004540 0.015904 0.001009
+              translation -0.001980 0.033300 0.000000
+              rotation 0.000000 0.000000 1.000000 0.926770
               children [
                 Shape {
                   appearance PBRAppearance {
@@ -276,7 +310,39 @@ PROTO InvertedPendulumRobot [
                     metalness 0
                   }
                   geometry Box {
-                     size 0.059984 0.080033 0.005500
+                     size 0.060000 0.010000 0.002500
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.013000 0.015760 0.000000
+              rotation 0.000000 0.000000 1.000000 0.464258
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                    baseColor 0.500000 0.500000 0.500000
+                    roughness 1.000000
+                    metalness 0
+                  }
+                  geometry Box {
+                     size 0.054720 0.010000 0.002500
+                  }
+                }
+              ]
+            }
+            Pose {
+              translation 0.003010 -0.001730 0.003000
+              rotation 0.000000 -0.000000 -1.000000 0.644026
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                    baseColor 0.500000 0.500000 0.500000
+                    roughness 1.000000
+                    metalness 0
+                  }
+                  geometry Box {
+                     size 0.060000 0.010000 0.002500
                   }
                 }
               ]
