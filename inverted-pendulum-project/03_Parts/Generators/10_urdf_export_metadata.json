@@ -1,7 +1,7 @@
 {
   "issue": 84,
   "phase": 10,
-  "timestamp": "2026-09-13T08:31:17.502288",
+  "timestamp": "2026-09-13T08:57:40.467662",
   "robot_name": "inverted_pendulum_robot",
   "input_documents": {
     "robot_parameters_yaml": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/02_Design_Inputs/robot_parameters.yaml",
@@ -46,7 +46,7 @@
     "right_servo_box_origin_mm": [
       31.489199999999997,
       25.2299,
-      8.806600000000003
+      2.806600000000003
     ],
     "right_servo_box_rpy_rad": [
       3.141592653589793,
@@ -56,7 +56,7 @@
     "right_servo_cylinder_origin_mm": [
       31.489199999999997,
       11.229899999999999,
-      0.8066000000000049
+      -5.193399999999995
     ],
     "right_servo_cylinder_rpy_rad": [
       3.141592653589793,
@@ -128,15 +128,15 @@
       "combined_com_mm": [
         13.010068167258375,
         18.83520853170296,
-        3.4595064347549274
+        1.5737921490406417
       ],
       "combined_inertia_kg_mm2": {
-        "ixx": 111.66349859983805,
-        "iyy": 89.12454660023917,
+        "ixx": 107.83114259983805,
+        "iyy": 85.29219060023917,
         "izz": 185.8087050519502,
         "ixy": 45.23694312171522,
-        "ixz": 15.662286585578373,
-        "iyz": 11.976682513021062
+        "ixz": 5.270850585578376,
+        "iyz": 3.650815513021063
       }
     }
   },
