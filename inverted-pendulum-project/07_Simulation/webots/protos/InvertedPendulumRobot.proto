@@ -221,7 +221,7 @@ PROTO InvertedPendulumRobot [
               ]
             }
             Transform {
-              translation 0.031489 0.025770 -0.002807
+              translation 0.031489 0.032270 -0.017807
               scale 0.001000 0.001000 0.001000
               children [
                 Shape {
@@ -251,7 +251,7 @@ PROTO InvertedPendulumRobot [
                 ]
               }
               Pose {
-                translation 0.031489 0.025770 -0.002807
+                translation 0.031489 0.032270 -0.017807
                 children [
                   Box {
                      size 0.032000 0.012000 0.028000
@@ -259,7 +259,7 @@ PROTO InvertedPendulumRobot [
                 ]
               }
               Pose {
-                translation 0.031489 0.039770 0.005193
+                translation 0.031489 0.046270 -0.009807
                 children [
                   Cylinder {
                     radius 0.00465
@@ -272,10 +272,10 @@ PROTO InvertedPendulumRobot [
           physics Physics {
             density -1
             mass 0.175000
-            centerOfMass [ 0.013010 0.019005 0.002540 ]
+            centerOfMass [ 0.013010 0.021048 -0.002174 ]
             inertiaMatrix [
-              1.120000e-04 8.800000e-05 1.870000e-04
-              4.600000e-05 -2.000000e-06 8.000000e-06
+              1.500000e-04 1.050000e-04 2.080000e-04
+              5.700000e-05 -2.800000e-05 -2.000000e-05
             ]
           }
         }
@@ -348,7 +348,7 @@ PROTO InvertedPendulumRobot [
               ]
             }
             Transform {
-              translation 0.031489 0.025230 0.008807
+              translation 0.031489 0.018730 -0.017193
               rotation 1.000000 0.000000 -0.000000 3.141593
               scale 0.001000 0.001000 0.001000
               children [
@@ -377,7 +377,7 @@ PROTO InvertedPendulumRobot [
                 ]
               }
               Pose {
-                translation 0.031489 0.025230 0.008807
+                translation 0.031489 0.018730 -0.017193
                 rotation 1.000000 0.000000 -0.000000 3.141593
                 children [
                   Box {
@@ -386,7 +386,7 @@ PROTO InvertedPendulumRobot [
                 ]
               }
               Pose {
-                translation 0.031489 0.011230 0.000807
+                translation 0.031489 0.004730 -0.025193
                 rotation 1.000000 0.000000 -0.000000 3.141593
                 children [
                   Cylinder {
@@ -400,10 +400,10 @@ PROTO InvertedPendulumRobot [
           physics Physics {
             density -1
             mass 0.175000
-            centerOfMass [ 0.013010 0.018835 0.003460 ]
+            centerOfMass [ 0.013010 0.016792 -0.004712 ]
             inertiaMatrix [
-              1.120000e-04 8.900000e-05 1.860000e-04
-              4.500000e-05 1.600000e-05 1.200000e-05
+              1.080000e-04 1.010000e-04 1.700000e-04
+              3.400000e-05 -2.900000e-05 -1.800000e-05
             ]
           }
         }
