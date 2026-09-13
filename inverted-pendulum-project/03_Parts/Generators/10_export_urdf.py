@@ -610,6 +610,7 @@ def build_urdf_joint(
     child: str,
     origin_mm: List[float],
     axis: List[float],  # [x, y, z]
+    rpy: List[float] = None,  # [roll, pitch, yaw] in radians
 ) -> ET.Element:
     """Build a <joint> XML element.
 
@@ -620,10 +621,14 @@ def build_urdf_joint(
         child: child link name
         origin_mm: [x, y, z] offset in mm
         axis: [x, y, z] rotation axis
+        rpy: [roll, pitch, yaw] rotation in radians (defaults to [0, 0, 0])
 
     Returns:
         <joint> ET.Element
     """
+    if rpy is None:
+        rpy = [0.0, 0.0, 0.0]
+
     joint = ET.Element('joint')
     joint.set('name', name)
     joint.set('type', type_)
@@ -636,7 +641,7 @@ def build_urdf_joint(
 
     origin = ET.SubElement(joint, 'origin')
     origin.set('xyz', ' '.join(f'{x/1000.0:.6f}' for x in origin_mm))  # mm to m
-    origin.set('rpy', '0 0 0')
+    origin.set('rpy', ' '.join(f'{x:.6f}' for x in rpy))
 
     axis_elem = ET.SubElement(joint, 'axis')
     axis_elem.set('xyz', ' '.join(f'{x:.6f}' for x in axis))
@@ -1079,6 +1084,16 @@ def main():
                 axis = [0, 1, 0]
                 print(f"   WARNING: Could not parse axis for {joint_name}, using [0, 1, 0]")
 
+            # Extract and convert rotation from joint_config
+            # joint_config stores rotation_ypr_deg as {yaw, pitch, roll} in degrees
+            # URDF rpy format is [roll, pitch, yaw] in radians (intrinsic XYZ order)
+            rotation_ypr_deg = joint_data.get('rotation_ypr_deg', {'yaw': 0.0, 'pitch': 0.0, 'roll': 0.0})
+            yaw_deg = rotation_ypr_deg.get('yaw', 0.0)
+            pitch_deg = rotation_ypr_deg.get('pitch', 0.0)
+            roll_deg = rotation_ypr_deg.get('roll', 0.0)
+            # Convert to radians and reorder: URDF uses [roll, pitch, yaw]
+            rpy_rad = [math.radians(roll_deg), math.radians(pitch_deg), math.radians(yaw_deg)]
+
             joint_elem = build_urdf_joint(
                 joint_name,
                 'revolute',
@@ -1086,6 +1101,7 @@ def main():
                 child,
                 [origin['x'], origin['y'], origin['z']],
                 axis,
+                rpy_rad,
             )
             root.append(joint_elem)
 

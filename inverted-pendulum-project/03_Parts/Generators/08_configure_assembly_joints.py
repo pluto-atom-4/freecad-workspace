@@ -228,12 +228,20 @@ class JointConfigurator:
             axis_rotation = App.Rotation(App.Vector(0, 0, 1), 90)
 
             for joint_name, moving_key in JOINT_SPECS:
-                # Derive joint origin live from the Stage 1 document's link placement
+                # Derive joint origin and rotation live from the Stage 1 document's link placement
                 link_obj = self.doc.getObject(moving_key)
                 if link_obj is None:
                     raise RuntimeError(f"Link object {moving_key} not found in document")
                 origin_vec = link_obj.Placement.Base
                 origin = (origin_vec.x, origin_vec.y, origin_vec.z)
+
+                # Extract rotation as Yaw-Pitch-Roll in degrees (matching 07_create_body_and_wheels.py's format)
+                ypr = link_obj.Placement.Rotation.getYawPitchRoll()
+                rotation_ypr_deg = {
+                    "yaw": round(ypr[0], 4),
+                    "pitch": round(ypr[1], 4),
+                    "roll": round(ypr[2], 4),
+                }
 
                 j = joint_group.newObject("App::FeaturePython", joint_name)
                 JointObject.Joint(j, 1)  # 1 = "Revolute"
@@ -268,11 +276,12 @@ class JointConfigurator:
                     "reference1": moving_key + "_Link",
                     "reference2": "Base_Link_Link",
                     "origin_mm": {"x": origin[0], "y": origin[1], "z": origin[2]},
+                    "rotation_ypr_deg": rotation_ypr_deg,
                     "axis": "global Y (0,1,0)",
                     "enable_angle_min": bool(j.EnableAngleMin),
                     "enable_angle_max": bool(j.EnableAngleMax),
                 })
-                print(f"✓ {joint_name}: Revolute, origin={origin}")
+                print(f"✓ {joint_name}: Revolute, origin={origin}, rotation_ypr={rotation_ypr_deg}")
 
             self.doc.recompute()
             return True
