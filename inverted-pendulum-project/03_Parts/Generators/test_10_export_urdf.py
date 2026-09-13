@@ -798,3 +798,79 @@ def test_servo_visual_mesh_has_scale():
             assert abs(actual - expected) < 1e-9, (
                 f"Link {link_name} servo mesh scale[{i}] = {actual:.6f}, expected {expected:.6f}"
             )
+
+
+def test_base_link_visual_collision_box_origin():
+    """Base_Link's visual and collision box origins match its asymmetric bbox center (Issue #124).
+
+    Base_Link's bounding box in world frame is asymmetric:
+      x: -4.6 to 35.4  (span 40.0mm, center 15.4)
+      y: -21.0 to 59.0 (span 80.0mm, center 19.0)
+      z: 87.9 to 90.4  (span 2.5mm, center 89.15)
+
+    Both visual and collision geometry must have <origin xyz> set to the bbox center
+    (in meters), otherwise the box renders as a thin sliver stuck at world origin,
+    disconnected from the wheel and pendulum joint anchors (Issue #124).
+
+    This test independently recomputes the bbox center from 07_body_wheels_metadata.json
+    and verifies both visual and collision elements have the correct origin.
+    """
+    root = load_urdf()
+
+    # Load metadata and compute expected origin independently
+    metadata_path = SCRIPT_DIR / "07_body_wheels_metadata.json"
+    if not metadata_path.exists():
+        pytest.skip(f"Metadata fixture not found: {metadata_path}")
+
+    with open(metadata_path, 'r') as f:
+        body_wheels_metadata = json.load(f)
+
+    base_bbox = body_wheels_metadata['links']['Base_Link']['bounding_box_mm']
+    expected_center_mm = [
+        (base_bbox['x_min'] + base_bbox['x_max']) / 2.0,
+        (base_bbox['y_min'] + base_bbox['y_max']) / 2.0,
+        (base_bbox['z_min'] + base_bbox['z_max']) / 2.0,
+    ]
+    expected_center_m = [x / 1000.0 for x in expected_center_mm]
+
+    tolerance = 0.0001  # 0.1mm in meters
+
+    # Find Base_Link
+    base_link = root.find(".//link[@name='Base_Link']")
+    assert base_link is not None, "Base_Link not found in URDF"
+
+    # Check visual element has origin
+    visuals = base_link.findall('visual')
+    assert len(visuals) >= 1, "Base_Link should have at least one visual element"
+
+    visual = visuals[0]
+    visual_origin = visual.find('origin')
+    assert visual_origin is not None, "Base_Link visual should have origin element"
+
+    visual_xyz_str = visual_origin.get('xyz')
+    assert visual_xyz_str is not None, "Base_Link visual origin missing xyz"
+
+    visual_xyz = [float(x) for x in visual_xyz_str.split()]
+    for i in range(3):
+        assert abs(visual_xyz[i] - expected_center_m[i]) < tolerance, (
+            f"Base_Link visual origin[{i}] = {visual_xyz[i]:.6f}m, "
+            f"expected {expected_center_m[i]:.6f}m (bbox center)"
+        )
+
+    # Check collision element has origin
+    collisions = base_link.findall('collision')
+    assert len(collisions) >= 1, "Base_Link should have at least one collision element"
+
+    collision = collisions[0]
+    collision_origin = collision.find('origin')
+    assert collision_origin is not None, "Base_Link collision should have origin element"
+
+    collision_xyz_str = collision_origin.get('xyz')
+    assert collision_xyz_str is not None, "Base_Link collision origin missing xyz"
+
+    collision_xyz = [float(x) for x in collision_xyz_str.split()]
+    for i in range(3):
+        assert abs(collision_xyz[i] - expected_center_m[i]) < tolerance, (
+            f"Base_Link collision origin[{i}] = {collision_xyz[i]:.6f}m, "
+            f"expected {expected_center_m[i]:.6f}m (bbox center)"
+        )

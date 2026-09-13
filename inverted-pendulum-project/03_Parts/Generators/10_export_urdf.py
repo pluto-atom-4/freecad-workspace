@@ -701,6 +701,11 @@ def main():
         base_dims = [base_bbox['x_max'] - base_bbox['x_min'],
                      base_bbox['y_max'] - base_bbox['y_min'],
                      base_bbox['z_max'] - base_bbox['z_min']]
+        base_center = [
+            (base_bbox['x_min'] + base_bbox['x_max']) / 2.0,
+            (base_bbox['y_min'] + base_bbox['y_max']) / 2.0,
+            (base_bbox['z_min'] + base_bbox['z_max']) / 2.0,
+        ]
         base_mass = body_wheels['links']['Base_Link']['target_mass_kg']
         base_inertia = compute_box_inertia(base_mass, *base_dims)
 
@@ -716,7 +721,8 @@ def main():
                     'length': base_dims[0],
                     'width': base_dims[1],
                     'height': base_dims[2],
-                }
+                },
+                'origin': base_center,
             },
             collision_geometry={
                 'type': 'box',
@@ -724,7 +730,8 @@ def main():
                     'length': base_dims[0],
                     'width': base_dims[1],
                     'height': base_dims[2],
-                }
+                },
+                'origin': base_center,
             }
         )
         root.append(base_link)
