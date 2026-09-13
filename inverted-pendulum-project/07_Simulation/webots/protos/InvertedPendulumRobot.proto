@@ -161,8 +161,9 @@ PROTO InvertedPendulumRobot [
                 }
               ]
             }
-            Pose {
+            Transform {
               translation 0.031489 0.025770 -0.002807
+              scale 0.001000 0.001000 0.001000
               children [
                 Shape {
                   appearance PBRAppearance {
@@ -253,9 +254,10 @@ PROTO InvertedPendulumRobot [
                 }
               ]
             }
-            Pose {
+            Transform {
               translation 0.031489 0.025230 0.008807
               rotation 1.000000 0.000000 -0.000000 3.141593
+              scale 0.001000 0.001000 0.001000
               children [
                 Shape {
                   appearance PBRAppearance {
