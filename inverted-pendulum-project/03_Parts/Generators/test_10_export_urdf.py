@@ -234,8 +234,8 @@ def test_visual_mesh_referenced_in_urdf():
 
 
 def test_pendulum_links_visual_geometry_structure():
-    """Pendulum_Link and Pendulum_Link_Right each have exactly 2 visual elements:
-    plate box + servo mesh.
+    """Pendulum_Link and Pendulum_Link_Right each have exactly 4 visual elements:
+    3 separate plate boxes (Top/Middle/Bottom) + servo mesh (Issue #133).
     """
     root = load_urdf()
 
@@ -244,9 +244,9 @@ def test_pendulum_links_visual_geometry_structure():
         assert link is not None, f"Link {link_name} not found"
 
         visuals = link.findall('visual')
-        assert len(visuals) == 2, (
-            f"Link {link_name} has {len(visuals)} visual elements, expected 2 "
-            "(plate box + servo mesh)"
+        assert len(visuals) == 4, (
+            f"Link {link_name} has {len(visuals)} visual elements, expected 4 "
+            "(3 plate boxes + servo mesh, Issue #133)"
         )
 
         # Collect geometry types from all visual elements
@@ -268,10 +268,10 @@ def test_pendulum_links_visual_geometry_structure():
             else:
                 raise AssertionError(f"Visual {i} in {link_name} has no recognized geometry")
 
-        # Verify the expected geometry types (order: plate box, servo mesh)
-        assert geometry_types == ['box', 'mesh'], (
+        # Verify the expected geometry types (order: 3x plate box, servo mesh)
+        assert geometry_types == ['box', 'box', 'box', 'mesh'], (
             f"Link {link_name} visual geometries {geometry_types}, "
-            f"expected ['box', 'mesh']"
+            f"expected ['box', 'box', 'box', 'mesh']"
         )
 
 

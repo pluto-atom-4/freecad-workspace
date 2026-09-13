@@ -577,6 +577,9 @@ class BodyWheelsGenerator:
         empirically, issue #96). Solid's MatrixOfInertia is already about its
         own CenterOfMass (confirmed empirically -- no reverse parallel-axis
         shift needed here).
+
+        Also captures the plate's local bounding box (in its unrotated frame,
+        transform=False) and its own Placement for URDF visual geometry (Issue #133).
         """
         solids = obj.Shape.Solids
         if len(solids) != 1:
@@ -586,6 +589,12 @@ class BodyWheelsGenerator:
         solid = solids[0]
         com = solid.CenterOfMass
         moi = solid.MatrixOfInertia
+
+        # Capture local bbox (unrotated frame, transform=False) for URDF box dims
+        # per Issue #130's pattern: raw shape without placement applied
+        raw_local_shape = Part.getShape(obj, "", needSubElement=False, transform=False)
+        local_bbox = raw_local_shape.BoundBox
+
         return {
             "name": obj.Name,
             "volume_mm3": round(solid.Volume, 6),
@@ -602,6 +611,8 @@ class BodyWheelsGenerator:
                 "ixz": moi.A13,
                 "iyz": moi.A23,
             },
+            "local_bbox_mm": _bbox_to_dict(local_bbox),
+            "own_placement": _placement_to_dict(obj.Placement),
         }
 
     # ---------------------------------------------------------------

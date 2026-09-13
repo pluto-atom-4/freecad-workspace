@@ -1,7 +1,7 @@
 {
   "phase": 7,
   "title": "Stage 1: Body + Wheel Geometry",
-  "timestamp": "2026-09-13T06:14:00.588919",
+  "timestamp": "2026-09-13T06:45:05.466551",
   "issue": 9,
   "source_document": "plates_servo_assembled.FCStd",
   "output_document": "robot_body_wheels.FCStd",
@@ -159,6 +159,26 @@
             "ixy": -159501.21122654586,
             "ixz": 8.52651282912121e-14,
             "iyz": -8.526512829121198e-14
+          },
+          "local_bbox_mm": {
+            "x_min": -30.0,
+            "x_max": 30.0,
+            "y_min": -5.0,
+            "y_max": 5.0,
+            "z_min": -1.25,
+            "z_max": 1.25
+          },
+          "own_placement": {
+            "position": {
+              "x": -1.98,
+              "y": 33.3,
+              "z": 6.0
+            },
+            "rotation_ypr_deg": {
+              "yaw": 53.1,
+              "pitch": 0.0,
+              "roll": 0.0
+            }
           }
         },
         {
@@ -176,6 +196,26 @@
             "ixy": -97978.72032559961,
             "ixz": 2.5579538487363607e-13,
             "iyz": 9.947598300641404e-14
+          },
+          "local_bbox_mm": {
+            "x_min": -27.36,
+            "x_max": 27.36,
+            "y_min": -5.0,
+            "y_max": 5.0,
+            "z_min": -1.25,
+            "z_max": 1.25
+          },
+          "own_placement": {
+            "position": {
+              "x": 13.0,
+              "y": 15.76,
+              "z": 6.0
+            },
+            "rotation_ypr_deg": {
+              "yaw": 26.6,
+              "pitch": 0.0,
+              "roll": 0.0
+            }
           }
         },
         {
@@ -193,6 +233,26 @@
             "ixy": 155679.3771161953,
             "ixz": -7.428813355319493e-14,
             "iyz": 1.83628118864995e-13
+          },
+          "local_bbox_mm": {
+            "x_min": -30.0,
+            "x_max": 30.0,
+            "y_min": -5.0,
+            "y_max": 5.0,
+            "z_min": -1.25,
+            "z_max": 1.25
+          },
+          "own_placement": {
+            "position": {
+              "x": 3.01,
+              "y": -1.73,
+              "z": 3.0
+            },
+            "rotation_ypr_deg": {
+              "yaw": -36.9,
+              "pitch": -0.0,
+              "roll": 0.0
+            }
           }
         }
       ],
@@ -263,6 +323,26 @@
             "ixy": -159501.21122654586,
             "ixz": -2.8421709430403938e-14,
             "iyz": -2.55795384873636e-13
+          },
+          "local_bbox_mm": {
+            "x_min": -30.0,
+            "x_max": 30.0,
+            "y_min": -5.0,
+            "y_max": 5.0,
+            "z_min": -1.25,
+            "z_max": 1.25
+          },
+          "own_placement": {
+            "position": {
+              "x": -1.98,
+              "y": 33.3,
+              "z": 0.0
+            },
+            "rotation_ypr_deg": {
+              "yaw": 53.1,
+              "pitch": 0.0,
+              "roll": 0.0
+            }
           }
         },
         {
@@ -280,6 +360,26 @@
             "ixy": -97978.72032559961,
             "ixz": -2.8421709430404004e-14,
             "iyz": 4.566433137579927e-30
+          },
+          "local_bbox_mm": {
+            "x_min": -27.36,
+            "x_max": 27.36,
+            "y_min": -5.0,
+            "y_max": 5.0,
+            "z_min": -1.25,
+            "z_max": 1.25
+          },
+          "own_placement": {
+            "position": {
+              "x": 13.0,
+              "y": 15.76,
+              "z": 0.0
+            },
+            "rotation_ypr_deg": {
+              "yaw": 26.6,
+              "pitch": 0.0,
+              "roll": 0.0
+            }
           }
         },
         {
@@ -297,6 +397,26 @@
             "ixy": 155679.3771161953,
             "ixz": -7.428813355319493e-14,
             "iyz": 1.83628118864995e-13
+          },
+          "local_bbox_mm": {
+            "x_min": -30.0,
+            "x_max": 30.0,
+            "y_min": -5.0,
+            "y_max": 5.0,
+            "z_min": -1.25,
+            "z_max": 1.25
+          },
+          "own_placement": {
+            "position": {
+              "x": 3.01,
+              "y": -1.73,
+              "z": 3.0
+            },
+            "rotation_ypr_deg": {
+              "yaw": -36.9,
+              "pitch": -0.0,
+              "roll": 0.0
+            }
           }
         }
       ],
