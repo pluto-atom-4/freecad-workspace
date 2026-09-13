@@ -13,6 +13,7 @@ and URDF XML, validates math in isolation.
 """
 
 import json
+import math
 import sys
 import importlib.util
 from pathlib import Path
@@ -218,6 +219,61 @@ class TestJointFK:
                     f"diff={abs(urdf_val - exp_val):.2e} m"
                 )
 
+    def test_joint_origin_rpy_matches_freecad_link_rotation(self):
+        """Test Group 1.3: URDF joint origin rpy ≈ FreeCAD link rotation (Issue #121).
+
+        The joint origin rpy should match the child link's rotation from FreeCAD metadata.
+        Joint rotation is captured during Stage 2 (08_configure_assembly_joints.py) and
+        exported during Stage 4 (10_export_urdf.py).
+
+        Expected rotations from 07_body_wheels_metadata.json:
+        - Wheel_Left, Wheel_Right, Base_Link: identity [0, 0, 0]
+        - Pendulum_Link: roll=90° = [1.570796, 0, 0] rad (tilted so plates parallel wheel discs)
+        - Pendulum_Link_Right: roll=180° = [3.141593, 0, 0] rad
+
+        Tolerance: 1e-6 rad (tight regression pin).
+        """
+        urdf = load_urdf()
+        body_wheels = load_body_wheels_metadata()
+
+        # Map URDF joint names to expected child link names and link keys in metadata
+        joint_to_link = {
+            'wheel_left_joint': 'Wheel_Left',
+            'wheel_right_joint': 'Wheel_Right',
+            'pendulum_pivot_joint': 'Pendulum_Link',
+            'pendulum_pivot_right_joint': 'Pendulum_Link_Right',
+        }
+
+        for urdf_joint_name, link_name in joint_to_link.items():
+            # Find joint in URDF
+            joint_elem = urdf.find(f".//joint[@name='{urdf_joint_name}']")
+            assert joint_elem is not None, f"Joint {urdf_joint_name} not found in URDF"
+
+            # Get rpy from URDF (in radians)
+            origin_elem = joint_elem.find('origin')
+            assert origin_elem is not None, f"Origin not found for joint {urdf_joint_name}"
+            urdf_rpy = _parse_xyz(origin_elem.get('rpy'))  # rpy is formatted same as xyz
+
+            # Get expected rotation from FreeCAD metadata (Placement.rotation_ypr_deg)
+            # Stored as {yaw, pitch, roll} in degrees, need to convert to {roll, pitch, yaw} in radians
+            link_data = body_wheels['links'][link_name]
+            placement = link_data['placement']
+            rot_ypr_deg = placement['rotation_ypr_deg']
+            # URDF rpy format is [roll, pitch, yaw], so reorder and convert to radians
+            expected_rpy = [
+                math.radians(rot_ypr_deg['roll']),
+                math.radians(rot_ypr_deg['pitch']),
+                math.radians(rot_ypr_deg['yaw']),
+            ]
+
+            # Compare (1e-6 rad tolerance, matching TOLERANCE_M convention)
+            for i, (name, urdf_val, exp_val) in enumerate(zip(['roll', 'pitch', 'yaw'], urdf_rpy, expected_rpy)):
+                assert abs(urdf_val - exp_val) < TOLERANCE_M, (
+                    f"Joint {urdf_joint_name} (link {link_name}) rpy {name}: "
+                    f"URDF={urdf_val:.6f} rad, expected={exp_val:.6f} rad, "
+                    f"diff={abs(urdf_val - exp_val):.2e} rad"
+                )
+
 
 class TestPendulumPlateCoM:
     """Pendulum plate CoM test (Group 2)."""
@@ -286,10 +342,6 @@ class TestServoMeshComposition:
 
         This test does NOT verify the mount-offset constants themselves against live CAD
         (tracked separately as #120), only validates the composition math.
-
-        KNOWN RISK (#121): build_urdf_joint() always writes rpy="0 0 0" on joint origins
-        despite Pendulum_Link having real non-identity FreeCAD rotation. If this test
-        reveals a discrepancy, it is NOT adjusted — reported exactly as found.
 
         Tolerance: 1e-6 m (tight regression pin).
         """

@@ -1,7 +1,7 @@
 {
   "phase": 8,
   "title": "Stage 2: Assembly Joint Configuration",
-  "generated": "2026-09-11T09:11:40.496330",
+  "generated": "2026-09-12T23:57:22.548270",
   "source_document": "robot_body_wheels.FCStd",
   "output_document": "robot_assembly.FCStd",
   "assembly_container": "Assembly",
@@ -33,6 +33,11 @@
         "y": -28.525805414515084,
         "z": 54.00949436685289
       },
+      "rotation_ypr_deg": {
+        "yaw": 0.0,
+        "pitch": 0.0,
+        "roll": 0.0
+      },
       "axis": "global Y (0,1,0)",
       "enable_angle_min": false,
       "enable_angle_max": false
@@ -46,6 +51,11 @@
         "x": 15.000724910886674,
         "y": 67.02580541451508,
         "z": 54.00949436685289
+      },
+      "rotation_ypr_deg": {
+        "yaw": 0.0,
+        "pitch": 0.0,
+        "roll": 0.0
       },
       "axis": "global Y (0,1,0)",
       "enable_angle_min": false,
@@ -61,6 +71,11 @@
         "y": -18.27580541451508,
         "z": 70.75
       },
+      "rotation_ypr_deg": {
+        "yaw": 0.0,
+        "pitch": 0.0,
+        "roll": 90.0
+      },
       "axis": "global Y (0,1,0)",
       "enable_angle_min": false,
       "enable_angle_max": false
@@ -74,6 +89,11 @@
         "x": -8.001391551290586,
         "y": 62.27580541451508,
         "z": 71.25
+      },
+      "rotation_ypr_deg": {
+        "yaw": 0.0,
+        "pitch": 0.0,
+        "roll": 90.0
       },
       "axis": "global Y (0,1,0)",
       "enable_angle_min": false,
