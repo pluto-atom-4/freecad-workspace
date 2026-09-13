@@ -753,11 +753,15 @@ def main():
                 'type': 'cylinder',
                 'radius_mm': wheel_l_radius,
                 'height_mm': wheel_l_height,
+                'origin': [0, 0, 0],
+                'rpy': '-1.570796 0 0',  # Rotate -90° about X to align cylinder axis with Y (rolling axis)
             },
             collision_geometry={
                 'type': 'cylinder',
                 'radius_mm': wheel_l_radius,
                 'height_mm': wheel_l_height,
+                'origin': [0, 0, 0],
+                'rpy': '-1.570796 0 0',  # Rotate -90° about X to align cylinder axis with Y (rolling axis)
             }
         )
         root.append(wheel_l_link)
@@ -786,11 +790,15 @@ def main():
                 'type': 'cylinder',
                 'radius_mm': wheel_r_radius,
                 'height_mm': wheel_r_height,
+                'origin': [0, 0, 0],
+                'rpy': '-1.570796 0 0',  # Rotate -90° about X to align cylinder axis with Y (rolling axis)
             },
             collision_geometry={
                 'type': 'cylinder',
                 'radius_mm': wheel_r_radius,
                 'height_mm': wheel_r_height,
+                'origin': [0, 0, 0],
+                'rpy': '-1.570796 0 0',  # Rotate -90° about X to align cylinder axis with Y (rolling axis)
             }
         )
         root.append(wheel_r_link)
