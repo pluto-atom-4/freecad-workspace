@@ -245,7 +245,7 @@ WHEEL_ON_PLATE_HOLE_EDGE = "Edge27"
 # with 08_configure_assembly_joints.py itself (its own
 # build_assembly_and_links() already sets Link visibility=True by
 # design).
-PENDULUM_LINK_STS_MOUNT_POSITION_MM = (-1.0, 5.60, 0.0)
+PENDULUM_LINK_STS_MOUNT_POSITION_MM = (-1.0, 5.60, -6.0)
 PENDULUM_LINK_STS_MOUNT_TILT_DEG = 0.0
 
 PENDULUM_LINK_RIGHT_TOP_PLATE_Z_MM = 6.0

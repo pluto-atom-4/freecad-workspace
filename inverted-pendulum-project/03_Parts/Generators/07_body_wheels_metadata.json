@@ -1,7 +1,7 @@
 {
   "phase": 7,
   "title": "Stage 1: Body + Wheel Geometry",
-  "timestamp": "2026-09-13T10:30:33.780751",
+  "timestamp": "2026-09-13T10:35:47.618414",
   "issue": 9,
   "source_document": "plates_servo_assembled.FCStd",
   "output_document": "robot_body_wheels.FCStd",
@@ -260,7 +260,7 @@
         "position": {
           "x": -1.0,
           "y": 5.6,
-          "z": 0.0
+          "z": -6.0
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
