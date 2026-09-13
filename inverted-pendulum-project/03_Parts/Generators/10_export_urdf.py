@@ -828,12 +828,20 @@ def main():
         servo_l_inertia = mass_props['servo_left']['inertia_kg_mm2']
 
         # Servo CoM offset from Pendulum_Link's local origin
-        # From live document inspection:
-        # - STS3032_Mount placement: [-1, 0, 0] mm, no rotation (yaw=0, pitch=0, roll=0)
+        # Read STS3032_Mount placement from 07_body_wheels_metadata.json (Issue #120)
         # - Servo's local CoM: [32.489, 25.770, -2.807] mm
         # - Servo CoM in Pendulum_Link frame = mount_position + servo_com
-        servo_l_mount_pos = [-1.0, 0.0, 0.0]
-        servo_l_mount_rot = [0.0, 0.0, 0.0]  # yaw, pitch, roll in degrees
+        sts_mount_placement_l = body_wheels['links']['Pendulum_Link']['sts_mount_placement']
+        servo_l_mount_pos = [
+            sts_mount_placement_l['position']['x'],
+            sts_mount_placement_l['position']['y'],
+            sts_mount_placement_l['position']['z'],
+        ]
+        servo_l_mount_rot = [
+            sts_mount_placement_l['rotation_ypr_deg']['yaw'],
+            sts_mount_placement_l['rotation_ypr_deg']['pitch'],
+            sts_mount_placement_l['rotation_ypr_deg']['roll'],
+        ]  # yaw, pitch, roll in degrees
         servo_l_com_rotated = apply_rotation_to_vector(servo_l_com, *servo_l_mount_rot)
         servo_l_com_assembly = [
             servo_l_mount_pos[0] + servo_l_com_rotated[0],
@@ -936,12 +944,20 @@ def main():
         servo_r_inertia = mass_props['servo_right']['inertia_kg_mm2']
 
         # Servo CoM offset from Pendulum_Link_Right's local origin
-        # From live document inspection:
-        # - STS3032_Mount_Right placement: [-1, 51, 6] mm with yaw=0, pitch=0, roll=180
+        # Read STS3032_Mount_Right placement from 07_body_wheels_metadata.json (Issue #120)
         # - Servo's local CoM: [32.489, 25.770, -2.807] mm
-        # - Apply 180 degree roll rotation to servo's CoM, then add mount position
-        servo_r_mount_pos = [-1.0, 51.0, 6.0]
-        servo_r_mount_rot = [0.0, 0.0, 180.0]  # yaw, pitch, roll in degrees
+        # - Apply servo's local CoM with mount rotation, then add mount position
+        sts_mount_placement_r = body_wheels['links']['Pendulum_Link_Right']['sts_mount_placement']
+        servo_r_mount_pos = [
+            sts_mount_placement_r['position']['x'],
+            sts_mount_placement_r['position']['y'],
+            sts_mount_placement_r['position']['z'],
+        ]
+        servo_r_mount_rot = [
+            sts_mount_placement_r['rotation_ypr_deg']['yaw'],
+            sts_mount_placement_r['rotation_ypr_deg']['pitch'],
+            sts_mount_placement_r['rotation_ypr_deg']['roll'],
+        ]  # yaw, pitch, roll in degrees
         servo_r_com_rotated = apply_rotation_to_vector(servo_r_com, *servo_r_mount_rot)
 
         # Convert mount rotation to URDF rpy (radians, roll-pitch-yaw order)

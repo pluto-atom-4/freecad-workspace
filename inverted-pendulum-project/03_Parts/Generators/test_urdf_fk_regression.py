@@ -295,12 +295,33 @@ class TestServoMeshComposition:
         """
         urdf = load_urdf()
         mass_props = load_mass_properties()
+        body_wheels = load_body_wheels_metadata()
 
-        # Mount constants from 10_export_urdf.py (trusted frozen input, not verified here)
-        servo_l_mount_pos = _export_urdf.servo_l_mount_pos if hasattr(_export_urdf, 'servo_l_mount_pos') else [-1.0, 0.0, 0.0]
-        servo_l_mount_rot = [0.0, 0.0, 0.0]  # yaw, pitch, roll in degrees
-        servo_r_mount_pos = _export_urdf.servo_r_mount_pos if hasattr(_export_urdf, 'servo_r_mount_pos') else [-1.0, 51.0, 6.0]
-        servo_r_mount_rot = [0.0, 0.0, 180.0]  # yaw, pitch, roll in degrees
+        # Mount placement from 07_body_wheels_metadata.json (Issue #120)
+        # — independently captured from FreeCAD, not from 10_export_urdf.py's composition
+        sts_mount_placement_l = body_wheels['links']['Pendulum_Link']['sts_mount_placement']
+        servo_l_mount_pos = [
+            sts_mount_placement_l['position']['x'],
+            sts_mount_placement_l['position']['y'],
+            sts_mount_placement_l['position']['z'],
+        ]
+        servo_l_mount_rot = [
+            sts_mount_placement_l['rotation_ypr_deg']['yaw'],
+            sts_mount_placement_l['rotation_ypr_deg']['pitch'],
+            sts_mount_placement_l['rotation_ypr_deg']['roll'],
+        ]  # yaw, pitch, roll in degrees
+
+        sts_mount_placement_r = body_wheels['links']['Pendulum_Link_Right']['sts_mount_placement']
+        servo_r_mount_pos = [
+            sts_mount_placement_r['position']['x'],
+            sts_mount_placement_r['position']['y'],
+            sts_mount_placement_r['position']['z'],
+        ]
+        servo_r_mount_rot = [
+            sts_mount_placement_r['rotation_ypr_deg']['yaw'],
+            sts_mount_placement_r['rotation_ypr_deg']['pitch'],
+            sts_mount_placement_r['rotation_ypr_deg']['roll'],
+        ]  # yaw, pitch, roll in degrees
 
         test_cases = [
             ('Pendulum_Link', 'servo_left', servo_l_mount_pos, servo_l_mount_rot),
