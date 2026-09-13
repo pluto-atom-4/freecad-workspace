@@ -1,9 +1,9 @@
 {
-  "timestamp": "2026-09-03T14:10:36.735442",
+  "timestamp": "2026-09-13T09:10:50.210704",
   "test_suite": "Phase 5: Integration Tests",
   "total_tests": 23,
-  "passed": 23,
-  "failed": 0,
+  "passed": 22,
+  "failed": 1,
   "test_results": [
     {
       "test": "STEP file exists",
@@ -101,8 +101,8 @@
     {
       "test": "Placement clearances",
       "category": "Positioning",
-      "passed": true,
-      "message": "Clearance checks: passed",
+      "passed": false,
+      "message": "Clearance checks: failed",
       "details": {
         "clearance_checks": 3
       }
