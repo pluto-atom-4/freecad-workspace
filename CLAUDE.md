@@ -153,6 +153,30 @@ ad-hoc human-review aid (its own pipeline stays headless-only). Found while doin
 
 Local `.claude/agents/` team (configured in `.claude/settings.json`): architect (Sonnet), builder/reviewer/investigator (Haiku). Distinct from `caveman:cavecrew-*` plugin agents — cavecrew-builder is surgical (1–2 files only), cavecrew-investigator is read-only/location-only, cavecrew-reviewer is findings-only.
 
+## GitHub Issue Workflow (investigate → plan → build)
+
+The repeated cycle for turning a flaw/lead into a merged fix is codified as the project-level
+Claude Code Skill `investigate-plan-build` (`.claude/skills/investigate-plan-build/SKILL.md`,
+invoke as `/investigate-plan-build`). It's written repo-agnostic (falls back to generic
+architect/builder/reviewer agents if this repo's local `Architect`/`Builder` team or a
+`cavecrew-reviewer`-style plugin aren't present), so it's portable to other repos too. Summary
+for sessions that don't invoke it by name:
+
+- File a short GitHub issue (sub-issue of a parent if part of a tracked effort) → dispatch
+  `Architect` (read-only) for findings (file:line) + a plan + only genuine human decision-forks
+  (never manufactured ones) → surface forks via `AskUserQuestion` (≤4 per call, recommended
+  option first) → dispatch `Builder` to implement on a branch, add tests, run the suite, and
+  open a PR with "Closes #N" and this session's real attribution footer.
+- Optional capped review loop (`caveman:cavecrew-reviewer` ↔ `Builder`, default cap 4 rounds,
+  stop early once clean).
+- The PAT can't merge PRs — a human always merges manually. Never treat a PR as merged on
+  say-so; verify with `mcp__github__pull_request_read` (method `get`) first.
+- After a confirmed merge, regenerate any affected downstream artifacts and relaunch inspection
+  tooling in the background — an agent reports launch success only, never visual correctness.
+- If fresh human inspection shows the issue persists or something new surfaces, re-loop the
+  whole cycle; keep the umbrella issue open until genuinely resolved, and correct a wrong
+  close/assessment with an explicit comment rather than a silent reopen.
+
 ## References
 
 - [FreeCAD](https://www.freecadweb.org/)
