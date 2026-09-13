@@ -342,6 +342,7 @@ class LinkRecord:
     dimensions_mm: Dict[str, float] = field(default_factory=dict)
     placement: Dict[str, Any] = field(default_factory=dict)
     bounding_box_mm: Dict[str, float] = field(default_factory=dict)
+    bounding_box_local_mm: Optional[Dict[str, float]] = None
     volume_mm3: Optional[float] = None
     target_mass_kg: Optional[float] = None
     triangle_count: Optional[int] = None
@@ -708,12 +709,21 @@ class BodyWheelsGenerator:
             # Capture STS3032_Mount's placement for metadata (Issue #120)
             sts_mount_placement = _placement_to_dict(sts_mount.Placement)
 
+            # Snapshot the LOCAL (pre-tilt) bbox before applying container Placement.
+            # `plate_bbox` computed at lines 678-680 already reflects each plate's own
+            # Placement, but NOT the Pendulum_Link container's offset/tilt (set at
+            # lines 690-704). This is the correct frame for box dimensions in URDF.
+            plate_bbox_local = _bbox_to_dict(plate_bbox)
+
             # `plate_bbox` above already reflects each plate's own Placement
             # (Part::Feature.Shape auto-applies its object's Placement), but
             # NOT the PlateStack/Pendulum_Link container Placements above it
             # (App::Part-nested container placements don't fold into a
             # child's .Shape). Compose the container offset manually to get
             # the true global bbox for reporting.
+            # WARNING: bounding_box_mm (post-Placement, world-frame) is NOT safe
+            # to use directly as box dimensions in URDF when the link has rotation --
+            # use bounding_box_local_mm instead.
             plate_bbox_global = plate_bbox.transformed(pendulum_link.Placement.toMatrix())
 
             volume = sum(obj.Shape.Volume for obj in plate_children)
@@ -744,6 +754,7 @@ class BodyWheelsGenerator:
                 },
                 placement=_placement_to_dict(pendulum_link.Placement),
                 bounding_box_mm=_bbox_to_dict(plate_bbox_global),
+                bounding_box_local_mm=plate_bbox_local,
                 volume_mm3=round(volume, 4),
                 target_mass_kg=self.params.target_mass_for_link_kg("Pendulum_Link"),
                 plate_shapes=plate_shapes,
@@ -917,6 +928,15 @@ class BodyWheelsGenerator:
             # Capture STS3032_Mount_Right's placement for metadata (Issue #120)
             sts_mount_placement = _placement_to_dict(sts_mount.Placement)
 
+            # Snapshot the LOCAL (pre-tilt) bbox before applying container Placement.
+            # `plate_bbox` computed at lines 883-885 already reflects each plate's own
+            # Placement, but NOT the Pendulum_Link_Right container's offset/tilt
+            # (set at lines 895-913). This is the correct frame for box dimensions in URDF.
+            plate_bbox_local = _bbox_to_dict(plate_bbox)
+
+            # WARNING: bounding_box_mm (post-Placement, world-frame) is NOT safe
+            # to use directly as box dimensions in URDF when the link has rotation --
+            # use bounding_box_local_mm instead.
             plate_bbox_global = plate_bbox.transformed(pendulum_link_right.Placement.toMatrix())
 
             volume = sum(obj.Shape.Volume for obj in plate_children)
@@ -957,6 +977,7 @@ class BodyWheelsGenerator:
                 },
                 placement=_placement_to_dict(pendulum_link_right.Placement),
                 bounding_box_mm=_bbox_to_dict(plate_bbox_global),
+                bounding_box_local_mm=plate_bbox_local,
                 volume_mm3=round(volume, 4),
                 target_mass_kg=target_mass_kg,
                 plate_shapes=plate_shapes,
