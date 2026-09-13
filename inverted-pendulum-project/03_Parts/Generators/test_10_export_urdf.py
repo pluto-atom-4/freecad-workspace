@@ -506,8 +506,11 @@ def test_visual_mesh_metadata():
     assert 'facet_count' in visual_mesh
     assert 'tolerance_mm' in visual_mesh
 
-    assert visual_mesh['facet_count'] == 37556, (
-        f"Expected 37556 facets, got {visual_mesh['facet_count']}"
+    # Issue #107: Visual mesh was regenerated with correct local-frame coordinates.
+    # Tessellation from fresh STEP source produces 35778 facets (slight variation
+    # from original 37556 due to tessellation algorithm, both are valid at 1.0mm tolerance).
+    assert visual_mesh['facet_count'] == 35778, (
+        f"Expected 35778 facets (regenerated from STEP with issue #107 fix), got {visual_mesh['facet_count']}"
     )
     assert visual_mesh['tolerance_mm'] == 1.0
 
