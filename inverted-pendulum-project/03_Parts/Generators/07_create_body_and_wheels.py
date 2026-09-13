@@ -346,6 +346,7 @@ class LinkRecord:
     target_mass_kg: Optional[float] = None
     triangle_count: Optional[int] = None
     plate_shapes: Optional[List[Dict[str, Any]]] = None
+    sts_mount_placement: Optional[Dict[str, Any]] = None
     notes: Optional[str] = None
 
     def to_dict(self) -> dict:
@@ -704,6 +705,9 @@ class BodyWheelsGenerator:
 
             self.output_doc.recompute()
 
+            # Capture STS3032_Mount's placement for metadata (Issue #120)
+            sts_mount_placement = _placement_to_dict(sts_mount.Placement)
+
             # `plate_bbox` above already reflects each plate's own Placement
             # (Part::Feature.Shape auto-applies its object's Placement), but
             # NOT the PlateStack/Pendulum_Link container Placements above it
@@ -743,6 +747,7 @@ class BodyWheelsGenerator:
                 volume_mm3=round(volume, 4),
                 target_mass_kg=self.params.target_mass_for_link_kg("Pendulum_Link"),
                 plate_shapes=plate_shapes,
+                sts_mount_placement=sts_mount_placement,
                 notes=(
                     "Copied (not linked) from plates_servo_assembled.FCStd's "
                     "PlateStack + STS3032_Mount groups -- see module "
@@ -909,6 +914,9 @@ class BodyWheelsGenerator:
 
             self.output_doc.recompute()
 
+            # Capture STS3032_Mount_Right's placement for metadata (Issue #120)
+            sts_mount_placement = _placement_to_dict(sts_mount.Placement)
+
             plate_bbox_global = plate_bbox.transformed(pendulum_link_right.Placement.toMatrix())
 
             volume = sum(obj.Shape.Volume for obj in plate_children)
@@ -952,6 +960,7 @@ class BodyWheelsGenerator:
                 volume_mm3=round(volume, 4),
                 target_mass_kg=target_mass_kg,
                 plate_shapes=plate_shapes,
+                sts_mount_placement=sts_mount_placement,
                 notes=(
                     "NOT a geometric mirror of Pendulum_Link -- see "
                     "build_pendulum_link_right()'s docstring. "

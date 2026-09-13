@@ -1,7 +1,7 @@
 {
   "phase": 7,
   "title": "Stage 1: Body + Wheel Geometry",
-  "timestamp": "2026-09-11T16:43:31.577092",
+  "timestamp": "2026-09-12T20:48:38.125142",
   "issue": 9,
   "source_document": "plates_servo_assembled.FCStd",
   "output_document": "robot_body_wheels.FCStd",
@@ -188,6 +188,18 @@
           }
         }
       ],
+      "sts_mount_placement": {
+        "position": {
+          "x": -1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "rotation_ypr_deg": {
+          "yaw": 0.0,
+          "pitch": 0.0,
+          "roll": 0.0
+        }
+      },
       "notes": "Copied (not linked) from plates_servo_assembled.FCStd's PlateStack + STS3032_Mount groups -- see module docstring for the link-vs-copy rationale. Bounding box and volume above cover the copied PlateStack plates only (Part::Feature shapes); the copied STS3032_Mount servo meshes retain their original relative placement from the source document (see reused_pendulum_mesh_facet_counts in geometry_stats for their facet counts) and are not included in this link's volume/bbox figures since Mesh::Feature geometry isn't uniformly watertight/volumetric."
     },
     "Pendulum_Link_Right": {
@@ -272,6 +284,18 @@
           }
         }
       ],
+      "sts_mount_placement": {
+        "position": {
+          "x": -1.0,
+          "y": 51.0,
+          "z": 6.0
+        },
+        "rotation_ypr_deg": {
+          "yaw": 0.0,
+          "pitch": 0.0,
+          "roll": 180.0
+        }
+      },
       "notes": "NOT a geometric mirror of Pendulum_Link -- see build_pendulum_link_right()'s docstring. target_mass_kg reuses Pendulum_Link's own robot_parameters.yaml mapping (no separate 'Pendulum_Link_Right' entry exists yet)."
     }
   },
