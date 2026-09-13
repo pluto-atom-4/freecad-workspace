@@ -816,7 +816,9 @@ def main():
         root.append(wheel_r_link)
 
         # Pendulum_Link (plate stack + left servo)
-        pend_bbox = body_wheels['links']['Pendulum_Link']['bounding_box_mm']
+        # Use bounding_box_local_mm (pre-Placement, correct frame) instead of
+        # bounding_box_mm (post-Placement, world-frame) for box dimensions (Issue #130).
+        pend_bbox = body_wheels['links']['Pendulum_Link']['bounding_box_local_mm']
         pend_dims = [pend_bbox['x_max'] - pend_bbox['x_min'],
                      pend_bbox['y_max'] - pend_bbox['y_min'],
                      pend_bbox['z_max'] - pend_bbox['z_min']]
@@ -933,7 +935,9 @@ def main():
         root.append(pend_link)
 
         # Pendulum_Link_Right (plate stack + right servo)
-        pend_r_bbox = body_wheels['links']['Pendulum_Link_Right']['bounding_box_mm']
+        # Use bounding_box_local_mm (pre-Placement, correct frame) instead of
+        # bounding_box_mm (post-Placement, world-frame) for box dimensions (Issue #130).
+        pend_r_bbox = body_wheels['links']['Pendulum_Link_Right']['bounding_box_local_mm']
         pend_r_dims = [pend_r_bbox['x_max'] - pend_r_bbox['x_min'],
                        pend_r_bbox['y_max'] - pend_r_bbox['y_min'],
                        pend_r_bbox['z_max'] - pend_r_bbox['z_min']]
