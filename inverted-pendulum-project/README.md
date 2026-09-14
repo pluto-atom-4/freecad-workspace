@@ -123,6 +123,54 @@ This runs all phases (7-11) end-to-end, producing:
 
 See `03_Parts/Generators/README.md` for detailed phase-by-phase documentation.
 
+### Manual Visual-Alignment Correction Workflow (FCStd → URDF)
+
+Automated collision checks aren't a reliable gate for visual misalignment here — a
+human measuring real positions and re-checking the render is. Loop:
+
+1. Open a **fresh** `.FCStd` (never a stale session) and select the exact mesh
+   feature to fix (e.g. `feetech_STS3032_collision_proxy[_Right]`), not a parent
+   `App::Part` container.
+2. Read **Data tab → Placement → Position** (absolute X/Y/Z) — *Before*. Don't
+   use the Transform dialog's Translation (U/V/W): it's an incremental delta
+   that resets on reopen and has a Global/local toggle that's easy to
+   misconfigure.
+3. Nudge the object until visually correct, read Position again — *After*.
+   `delta = After − Before`, added to the matching constant in
+   `07_create_body_and_wheels.py`.
+4. Regenerate (`./run_urdf_export.sh` — Phase 8 needs the live MCP bridge once
+   first) and run the full test suite.
+5. Re-check both the `.FCStd` and a fresh `yourdfpy` render. Same wrongness in
+   both → re-measure from step 1. Disagreement between them → suspect the
+   export chain instead.
+
+```mermaid
+sequenceDiagram
+    actor Human
+    participant FCStd as FreeCAD GUI (.FCStd)
+    participant Script as 07_create_body_and_wheels.py
+    participant Pipeline as run_urdf_export.sh
+    participant Viewer as yourdfpy / Webots
+
+    Human->>FCStd: open fresh .FCStd, select mesh feature
+    Human->>FCStd: read Position (Before)
+    Human->>FCStd: nudge until visually correct
+    Human->>FCStd: read Position (After)
+    Human->>Script: delta = After - Before, add to constant
+    Script->>Pipeline: run (Phase 8 via MCP bridge once first)
+    Pipeline-->>Script: pytest suite pass/fail
+    Script->>Viewer: relaunch yourdfpy on fresh robot.urdf
+    Human->>FCStd: re-inspect
+    Human->>Viewer: re-inspect
+    alt disagree
+        Human->>Human: suspect export-chain bug
+    else same wrongness
+        Human->>Human: re-measure from step 1
+    else both correct
+        Script->>Script: commit, open/update PR
+    end
+```
+
 ### Export Simulation Results to FreeCAD
 
 ```python
