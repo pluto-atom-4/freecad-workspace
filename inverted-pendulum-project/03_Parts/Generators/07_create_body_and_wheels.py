@@ -127,6 +127,7 @@ Output:
 import sys
 import json
 import functools
+import yaml
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional
@@ -174,6 +175,8 @@ SOURCE_DOC_FILENAME = "plates_servo_assembled.FCStd"
 OUTPUT_DOC_NAME = "robot_body_wheels"
 OUTPUT_FCSTD_FILENAME = "robot_body_wheels.FCStd"
 METADATA_FILENAME = "07_body_wheels_metadata.json"
+PLACEMENT_OVERRIDES_FILENAME = "placement_overrides.yaml"
+KNOWN_OVERRIDE_KEYS = frozenset({"STS3032_Mount", "STS3032_Mount_Right", "PlateStack", "PlateStack_Right", "Base_Link"})
 
 # Tessellation deflection for triangle-count reporting -- matches the
 # project's established 1.0mm visual-mesh convention (see
@@ -395,6 +398,7 @@ class BodyWheelsGenerator:
         self.new_primitive_triangle_count = 0
         self.total_volume_mm3 = 0.0
         self.bottom_plate_right_name: Optional[str] = None
+        self.placement_overrides: Dict[str, Dict[str, Any]] = {}
 
     # ---------------------------------------------------------------
     # Setup
@@ -411,6 +415,45 @@ class BodyWheelsGenerator:
             return True
         except Exception as e:
             print(f"ERROR loading robot_parameters.yaml: {e}")
+            return False
+
+    def load_placement_overrides(self) -> bool:
+        """Load optional Placement.Base position overrides from YAML.
+
+        Missing file → no overrides (optional). Present but unparsable →
+        hard fail, same severity as malformed robot_parameters.yaml.
+        Unknown keys trigger a warning and are dropped (idempotent, typos
+        don't break the run).
+        """
+        try:
+            override_path = SCRIPT_DIR / PLACEMENT_OVERRIDES_FILENAME
+            if not override_path.exists():
+                print(f"Note: {PLACEMENT_OVERRIDES_FILENAME} not found (optional)")
+                self.placement_overrides = {}
+                return True
+
+            with open(override_path, "r") as f:
+                data = yaml.safe_load(f)
+
+            if not isinstance(data, dict):
+                print(f"ERROR: {PLACEMENT_OVERRIDES_FILENAME} top level is not a mapping")
+                return False
+
+            # Filter out unknown keys with a warning
+            filtered = {}
+            for key, value in data.items():
+                if key not in KNOWN_OVERRIDE_KEYS:
+                    print(f"WARNING: {PLACEMENT_OVERRIDES_FILENAME}: unknown key {key!r}, "
+                          f"no matching object -- skipping")
+                else:
+                    filtered[key] = value
+
+            self.placement_overrides = filtered
+            loaded_keys = ", ".join(sorted(filtered.keys())) if filtered else "(none)"
+            print(f"✓ Loaded placement overrides: {loaded_keys}")
+            return True
+        except Exception as e:
+            print(f"ERROR loading {PLACEMENT_OVERRIDES_FILENAME}: {e}")
             return False
 
     def open_source_document(self) -> bool:
@@ -434,6 +477,42 @@ class BodyWheelsGenerator:
         except Exception as e:
             print(f"ERROR creating output document: {e}")
             return False
+
+    def _apply_placement_override(self, obj, name: str) -> None:
+        """Apply a position-only override from placement_overrides.yaml if present.
+
+        If no override exists for this object name, returns without action (no-op,
+        allowing "only supply the parts you're adjusting" semantics). If an override
+        entry is present but malformed (missing 'adjust' or wrong shape), raises
+        RuntimeError (authoring mistake, loud fail). Validates 'original' against
+        the object's current position with a tolerance (warn-only mismatch).
+        Rotation is NOT overridden -- only position. Prints confirmation lines.
+        """
+        override = self.placement_overrides.get(name)
+        if override is None:
+            return  # No override for this object; no-op
+
+        adjust = override.get("adjust")
+        if adjust is None or len(adjust) != 3:
+            raise RuntimeError(
+                f"Malformed override for {name!r}: 'adjust' key missing or "
+                f"not a length-3 list (got {adjust!r})"
+            )
+
+        # Warn-only original check: compare current position to the recorded 'original'
+        original = override.get("original")
+        if original is not None and len(original) == 3:
+            current_pos = (obj.Placement.Base.x, obj.Placement.Base.y, obj.Placement.Base.z)
+            tolerance = 1e-3  # mm
+            if not all(abs(c - o) < tolerance for c, o in zip(current_pos, original)):
+                print(f"WARNING: {name} position mismatch:")
+                print(f"  original (expected): {original}")
+                print(f"  current (actual):    {list(current_pos)}")
+
+        # Apply position only; keep existing rotation
+        old_pos = (obj.Placement.Base.x, obj.Placement.Base.y, obj.Placement.Base.z)
+        obj.Placement = Placement(Vector(*adjust), obj.Placement.Rotation)
+        print(f"  ✓ {name}: position override {list(old_pos)} → {adjust}")
 
     # ---------------------------------------------------------------
     # Geometry: chassis + wheels
@@ -680,6 +759,10 @@ class BodyWheelsGenerator:
                 Rotation(Vector(1, 0, 0), PENDULUM_LINK_STS_MOUNT_TILT_DEG),
             )
 
+            # Apply placement overrides if present (Issue #146)
+            self._apply_placement_override(sts_mount, "STS3032_Mount")
+            self._apply_placement_override(plate_stack, "PlateStack")
+
             if not plate_children:
                 print("ERROR: No plate objects copied from PlateStack")
                 return False
@@ -897,6 +980,10 @@ class BodyWheelsGenerator:
                 Vector(*PENDULUM_LINK_RIGHT_STS_MOUNT_POSITION_MM),
                 Rotation(Vector(1, 0, 0), PENDULUM_LINK_RIGHT_STS_MOUNT_TILT_DEG),
             )
+
+            # Apply placement overrides if present (Issue #146)
+            self._apply_placement_override(sts_mount, "STS3032_Mount_Right")
+            self._apply_placement_override(plate_stack, "PlateStack_Right")
 
             if not plate_children:
                 print("ERROR: No plate objects copied into PlateStack_Right")
@@ -1151,6 +1238,9 @@ class BodyWheelsGenerator:
             base_link.Placement = Placement(
                 base_link.Placement.Base + delta, base_link.Placement.Rotation
             )
+
+            # Apply placement override if present (Issue #146)
+            self._apply_placement_override(base_link, "Base_Link")
 
             self._chassis_top_z = target_top_z
             self._chassis_bottom_z = target_top_z - (local_bbox.ZMax - local_bbox.ZMin)
@@ -1481,6 +1571,10 @@ class BodyWheelsGenerator:
         print()
 
         if not self.load_parameters():
+            return False
+        print()
+
+        if not self.load_placement_overrides():
             return False
         print()
 

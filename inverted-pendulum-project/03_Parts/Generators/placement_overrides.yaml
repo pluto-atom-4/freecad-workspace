@@ -1,0 +1,28 @@
+# Optional per-object Placement.Base (position, mm) overrides for
+# 07_create_body_and_wheels.py. Key = exact object Name. Omit a key, or
+# omit this whole file, to keep that object's hardcoded script-constant
+# default -- this file only overrides, never the sole source of truth.
+# A human measures `original`/`adjust` directly off the live FCStd's
+# Data tab -> Placement -> Position for that exact object (see
+# inverted-pendulum-project/README.md's alignment workflow section).
+# Only the keys being changed need to be present; the file accumulates
+# across correction rounds.
+
+STS3032_Mount:
+  original: [-1.0, -0.40, -7.00]
+  adjust:   [-1.0, -0.40, -7.00]
+
+STS3032_Mount_Right:
+  original: [-1.0, 54.02, 13.05]
+  adjust:   [-1.0, 54.02, 13.05]
+
+# PlateStack / PlateStack_Right / Base_Link: uncomment to override.
+# PlateStack:
+#   original: [0.0, 0.0, 0.0]
+#   adjust:   [0.0, 0.0, 0.0]
+# PlateStack_Right:
+#   original: [0.0, 0.0, 0.0]
+#   adjust:   [0.0, 0.0, 0.0]
+# Base_Link:
+#   original: [15.40, 19.00, 0.0]
+#   adjust:   [15.40, 19.00, 0.0]
