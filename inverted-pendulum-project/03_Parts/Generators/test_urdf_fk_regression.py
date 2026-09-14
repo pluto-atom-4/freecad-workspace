@@ -466,8 +466,19 @@ class TestServoMeshComposition:
             ]
             expected_com_xyz = _mm_to_m(expected_com_mm)
 
-            # Visual mesh origin should be at mount position (Issue #148)
-            expected_mesh_xyz = _mm_to_m(mount_pos)
+            # Visual mesh origin: mount_pos + mount_rot·bbox_center (Issue #148)
+            servo_visual_bbox = body_wheels['links'][link_name].get('servo_visual_mesh_local_bbox_center')
+            if servo_visual_bbox:
+                servo_visual_bbox_list = [servo_visual_bbox['x'], servo_visual_bbox['y'], servo_visual_bbox['z']]
+                servo_visual_bbox_rotated = _apply_rotation_ypr(servo_visual_bbox_list, *mount_rot)
+                expected_mesh_mm = [
+                    mount_pos[0] + servo_visual_bbox_rotated[0],
+                    mount_pos[1] + servo_visual_bbox_rotated[1],
+                    mount_pos[2] + servo_visual_bbox_rotated[2],
+                ]
+                expected_mesh_xyz = _mm_to_m(expected_mesh_mm)
+            else:
+                expected_mesh_xyz = _mm_to_m(mount_pos)
 
             # Find link in URDF
             link_elem = urdf.find(f".//link[@name='{link_name}']")

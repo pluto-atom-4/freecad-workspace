@@ -1070,6 +1070,28 @@ def main():
             sts_mount_placement_l['rotation_ypr_deg']['roll'],
         ]  # yaw, pitch, roll in degrees
         servo_l_com_rotated = apply_rotation_to_vector(servo_l_com, *servo_l_mount_rot)
+
+        # Compose visual mesh origin: mount_pos + mount_rot·bbox_center (Issue #148)
+        servo_visual_mesh_bbox_l = body_wheels['links']['Pendulum_Link'].get('servo_visual_mesh_local_bbox_center')
+        if servo_visual_mesh_bbox_l:
+            servo_visual_mesh_bbox_l_list = [
+                servo_visual_mesh_bbox_l['x'],
+                servo_visual_mesh_bbox_l['y'],
+                servo_visual_mesh_bbox_l['z'],
+            ]
+            servo_visual_mesh_bbox_l_rotated = apply_rotation_to_vector(servo_visual_mesh_bbox_l_list, *servo_l_mount_rot)
+            servo_l_visual_origin = [
+                servo_l_mount_pos[0] + servo_visual_mesh_bbox_l_rotated[0],
+                servo_l_mount_pos[1] + servo_visual_mesh_bbox_l_rotated[1],
+                servo_l_mount_pos[2] + servo_visual_mesh_bbox_l_rotated[2],
+            ]
+        else:
+            servo_l_visual_origin = servo_l_mount_pos
+
+        # Convert mount rotation to URDF rpy (radians, roll-pitch-yaw order) for left servo
+        servo_l_rpy = ' '.join(f'{math.radians(servo_l_mount_rot[2]):.6f}'
+                               f' {math.radians(servo_l_mount_rot[1]):.6f}'
+                               f' {math.radians(servo_l_mount_rot[0]):.6f}'.split())
         servo_l_com_assembly = [
             servo_l_mount_pos[0] + servo_l_com_rotated[0],
             servo_l_mount_pos[1] + servo_l_com_rotated[1],
@@ -1096,12 +1118,12 @@ def main():
         plate_stack_placement_l = body_wheels['links']['Pendulum_Link'].get('plate_stack_placement')
         plate_visual_boxes = build_plate_visual_boxes(plate_shapes, plate_stack_placement_l) if plate_shapes else []
 
-        # Servo mesh visual
-        # Use mount position (not CoM) as mesh origin anchor (Issue #148)
+        # Servo mesh visual with composed origin (mount_pos + mount_rot·bbox_center)
         servo_l_visual_mesh = {
             'type': 'mesh',
             'filename': 'package://inverted_pendulum_robot/meshes/feetech-STS3032-visual.stl',
-            'origin': servo_l_mount_pos,
+            'origin': servo_l_visual_origin,
+            'rpy': servo_l_rpy,
             'scale': [0.001, 0.001, 0.001],
         }
 
@@ -1187,6 +1209,23 @@ def main():
         ]  # yaw, pitch, roll in degrees
         servo_r_com_rotated = apply_rotation_to_vector(servo_r_com, *servo_r_mount_rot)
 
+        # Compose visual mesh origin: mount_pos + mount_rot·bbox_center (Issue #148)
+        servo_visual_mesh_bbox_r = body_wheels['links']['Pendulum_Link_Right'].get('servo_visual_mesh_local_bbox_center')
+        if servo_visual_mesh_bbox_r:
+            servo_visual_mesh_bbox_r_list = [
+                servo_visual_mesh_bbox_r['x'],
+                servo_visual_mesh_bbox_r['y'],
+                servo_visual_mesh_bbox_r['z'],
+            ]
+            servo_visual_mesh_bbox_r_rotated = apply_rotation_to_vector(servo_visual_mesh_bbox_r_list, *servo_r_mount_rot)
+            servo_r_visual_origin = [
+                servo_r_mount_pos[0] + servo_visual_mesh_bbox_r_rotated[0],
+                servo_r_mount_pos[1] + servo_visual_mesh_bbox_r_rotated[1],
+                servo_r_mount_pos[2] + servo_visual_mesh_bbox_r_rotated[2],
+            ]
+        else:
+            servo_r_visual_origin = servo_r_mount_pos
+
         # Convert mount rotation to URDF rpy (radians, roll-pitch-yaw order)
         servo_r_rpy = ' '.join(f'{math.radians(servo_r_mount_rot[2]):.6f}'
                                f' {math.radians(servo_r_mount_rot[1]):.6f}'
@@ -1219,12 +1258,11 @@ def main():
         plate_stack_placement_r = body_wheels['links']['Pendulum_Link_Right'].get('plate_stack_placement')
         plate_visual_boxes_r = build_plate_visual_boxes(plate_shapes_r, plate_stack_placement_r) if plate_shapes_r else []
 
-        # Servo mesh visual with rotation
-        # Use mount position (not CoM) as mesh origin anchor (Issue #148)
+        # Servo mesh visual with composed origin (mount_pos + mount_rot·bbox_center)
         servo_r_visual_mesh = {
             'type': 'mesh',
             'filename': 'package://inverted_pendulum_robot/meshes/feetech-STS3032-visual.stl',
-            'origin': servo_r_mount_pos,
+            'origin': servo_r_visual_origin,
             'rpy': servo_r_rpy,
             'scale': [0.001, 0.001, 0.001],
         }

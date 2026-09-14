@@ -352,6 +352,7 @@ class LinkRecord:
     plate_shapes: Optional[List[Dict[str, Any]]] = None
     sts_mount_placement: Optional[Dict[str, Any]] = None
     plate_stack_placement: Optional[Dict[str, Any]] = None
+    servo_visual_mesh_local_bbox_center: Optional[Dict[str, float]] = None
     notes: Optional[str] = None
 
     def to_dict(self) -> dict:
@@ -794,6 +795,7 @@ class BodyWheelsGenerator:
 
             # Copy the servo meshes (Mesh::Feature: Mesh + Placement)
             mesh_children = []
+            servo_visual_mesh_local_bbox_center = None
             for child in source_sts_mount.Group:
                 if not hasattr(child, "Mesh"):
                     continue
@@ -805,6 +807,14 @@ class BodyWheelsGenerator:
                 mesh_children.append(new_obj)
                 facets = new_obj.Mesh.CountFacets
                 self.reused_mesh_facet_counts[child.Name] = facets
+                # Capture bbox center of the visual servo mesh for URDF composition (Issue #148)
+                if child.Name == "feetech_STS3032_visual_1_0mm":
+                    bbox_center = new_obj.Mesh.BoundBox.Center
+                    servo_visual_mesh_local_bbox_center = {
+                        "x": round(bbox_center.x, 4),
+                        "y": round(bbox_center.y, 4),
+                        "z": round(bbox_center.z, 4),
+                    }
                 print(f"  ✓ Copied {child.Name} into STS3032_Mount ({facets} facets)")
 
             # Human-tuned live (Issue #77): STS3032_Mount's own Placement,
@@ -914,6 +924,7 @@ class BodyWheelsGenerator:
                 plate_shapes=plate_shapes,
                 sts_mount_placement=sts_mount_placement,
                 plate_stack_placement=plate_stack_placement,
+                servo_visual_mesh_local_bbox_center=servo_visual_mesh_local_bbox_center,
                 notes=(
                     "Copied (not linked) from plates_servo_assembled.FCStd's "
                     "PlateStack + STS3032_Mount groups -- see module "
@@ -1013,6 +1024,7 @@ class BodyWheelsGenerator:
                       f"(Z override: {child.Name in z_overrides})")
 
             mesh_children = []
+            servo_visual_mesh_local_bbox_center = None
             for child in source_sts_mount.Group:
                 if not hasattr(child, "Mesh"):
                     continue
@@ -1031,6 +1043,14 @@ class BodyWheelsGenerator:
                 mesh_children.append(new_obj)
                 facets = new_obj.Mesh.CountFacets
                 self.reused_mesh_facet_counts[new_name] = facets
+                # Capture bbox center of the visual servo mesh for URDF composition (Issue #148)
+                if child.Name == "feetech_STS3032_visual_1_0mm":
+                    bbox_center = new_obj.Mesh.BoundBox.Center
+                    servo_visual_mesh_local_bbox_center = {
+                        "x": round(bbox_center.x, 4),
+                        "y": round(bbox_center.y, 4),
+                        "z": round(bbox_center.z, 4),
+                    }
                 print(f"  ✓ Copied {child.Name} into STS3032_Mount_Right as {new_name} ({facets} facets)")
 
             # Human-tuned live: STS3032_Mount_Right's own Placement (not
@@ -1146,6 +1166,7 @@ class BodyWheelsGenerator:
                 plate_shapes=plate_shapes,
                 sts_mount_placement=sts_mount_placement,
                 plate_stack_placement=plate_stack_placement,
+                servo_visual_mesh_local_bbox_center=servo_visual_mesh_local_bbox_center,
                 notes=(
                     "NOT a geometric mirror of Pendulum_Link -- see "
                     "build_pendulum_link_right()'s docstring. "
