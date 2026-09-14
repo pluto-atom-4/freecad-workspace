@@ -1,7 +1,7 @@
 {
   "phase": 7,
   "title": "Stage 1: Body + Wheel Geometry",
-  "timestamp": "2026-09-14T14:15:43.539887",
+  "timestamp": "2026-09-14T14:54:35.944758",
   "issue": 9,
   "source_document": "plates_servo_assembled.FCStd",
   "output_document": "robot_body_wheels.FCStd",
@@ -126,12 +126,12 @@
         }
       },
       "bounding_box_mm": {
-        "x_min": -29.9919,
-        "x_max": 29.9919,
+        "x_min": -30.9919,
+        "x_max": 28.9919,
         "y_min": -25.5258,
         "y_max": -20.0258,
-        "z_min": 49.0095,
-        "z_max": 129.0421
+        "z_min": 48.5095,
+        "z_max": 128.5421
       },
       "bounding_box_local_mm": {
         "x_min": -21.9905,
@@ -268,6 +268,18 @@
           "roll": 0.0
         }
       },
+      "plate_stack_placement": {
+        "position": {
+          "x": -1.0,
+          "y": -0.5,
+          "z": 0.0
+        },
+        "rotation_ypr_deg": {
+          "yaw": 0.0,
+          "pitch": 0.0,
+          "roll": 0.0
+        }
+      },
       "notes": "Copied (not linked) from plates_servo_assembled.FCStd's PlateStack + STS3032_Mount groups -- see module docstring for the link-vs-copy rationale. Bounding box and volume above cover the copied PlateStack plates only (Part::Feature shapes); the copied STS3032_Mount servo meshes retain their original relative placement from the source document (see reused_pendulum_mesh_facet_counts in geometry_stats for their facet counts) and are not included in this link's volume/bbox figures since Mesh::Feature geometry isn't uniformly watertight/volumetric."
     },
     "Pendulum_Link_Right": {
@@ -290,12 +302,12 @@
         }
       },
       "bounding_box_mm": {
-        "x_min": -29.9919,
-        "x_max": 29.9919,
-        "y_min": 55.0258,
-        "y_max": 60.5258,
-        "z_min": 46.5095,
-        "z_max": 126.5421
+        "x_min": -30.9919,
+        "x_max": 28.9919,
+        "y_min": 61.0258,
+        "y_max": 66.5258,
+        "z_min": 49.0095,
+        "z_max": 129.0421
       },
       "bounding_box_local_mm": {
         "x_min": -21.9905,
@@ -430,6 +442,18 @@
           "yaw": 0.0,
           "pitch": 0.0,
           "roll": 180.0
+        }
+      },
+      "plate_stack_placement": {
+        "position": {
+          "x": -1.0,
+          "y": 2.5,
+          "z": -6.0
+        },
+        "rotation_ypr_deg": {
+          "yaw": 0.0,
+          "pitch": 0.0,
+          "roll": 0.0
         }
       },
       "notes": "NOT a geometric mirror of Pendulum_Link -- see build_pendulum_link_right()'s docstring. target_mass_kg reuses Pendulum_Link's own robot_parameters.yaml mapping (no separate 'Pendulum_Link_Right' entry exists yet)."

@@ -351,6 +351,7 @@ class LinkRecord:
     triangle_count: Optional[int] = None
     plate_shapes: Optional[List[Dict[str, Any]]] = None
     sts_mount_placement: Optional[Dict[str, Any]] = None
+    plate_stack_placement: Optional[Dict[str, Any]] = None
     notes: Optional[str] = None
 
     def to_dict(self) -> dict:
@@ -818,6 +819,9 @@ class BodyWheelsGenerator:
             self._apply_placement_override(sts_mount, "STS3032_Mount")
             self._apply_placement_override(plate_stack, "PlateStack")
 
+            # Capture PlateStack placement for URDF composition (Issue #146 Amendment 3)
+            plate_stack_placement = _placement_to_dict(plate_stack.Placement)
+
             if not plate_children:
                 print("ERROR: No plate objects copied from PlateStack")
                 return False
@@ -873,7 +877,8 @@ class BodyWheelsGenerator:
             # WARNING: bounding_box_mm (post-Placement, world-frame) is NOT safe
             # to use directly as box dimensions in URDF when the link has rotation --
             # use bounding_box_local_mm instead.
-            plate_bbox_global = plate_bbox.transformed(pendulum_link.Placement.toMatrix())
+            # Compose PlateStack placement first, then Pendulum_Link placement (Issue #146 Amendment 3)
+            plate_bbox_global = plate_bbox.transformed(plate_stack.Placement.toMatrix()).transformed(pendulum_link.Placement.toMatrix())
 
             volume = sum(obj.Shape.Volume for obj in plate_children)
             self.total_volume_mm3 += volume
@@ -908,6 +913,7 @@ class BodyWheelsGenerator:
                 target_mass_kg=self.params.target_mass_for_link_kg("Pendulum_Link"),
                 plate_shapes=plate_shapes,
                 sts_mount_placement=sts_mount_placement,
+                plate_stack_placement=plate_stack_placement,
                 notes=(
                     "Copied (not linked) from plates_servo_assembled.FCStd's "
                     "PlateStack + STS3032_Mount groups -- see module "
@@ -1040,6 +1046,9 @@ class BodyWheelsGenerator:
             self._apply_placement_override(sts_mount, "STS3032_Mount_Right")
             self._apply_placement_override(plate_stack, "PlateStack_Right")
 
+            # Capture PlateStack_Right placement for URDF composition (Issue #146 Amendment 3)
+            plate_stack_placement = _placement_to_dict(plate_stack.Placement)
+
             if not plate_children:
                 print("ERROR: No plate objects copied into PlateStack_Right")
                 return False
@@ -1090,7 +1099,8 @@ class BodyWheelsGenerator:
             # WARNING: bounding_box_mm (post-Placement, world-frame) is NOT safe
             # to use directly as box dimensions in URDF when the link has rotation --
             # use bounding_box_local_mm instead.
-            plate_bbox_global = plate_bbox.transformed(pendulum_link_right.Placement.toMatrix())
+            # Compose PlateStack_Right placement first, then Pendulum_Link_Right placement (Issue #146 Amendment 3)
+            plate_bbox_global = plate_bbox.transformed(plate_stack.Placement.toMatrix()).transformed(pendulum_link_right.Placement.toMatrix())
 
             volume = sum(obj.Shape.Volume for obj in plate_children)
             self.total_volume_mm3 += volume
@@ -1135,6 +1145,7 @@ class BodyWheelsGenerator:
                 target_mass_kg=target_mass_kg,
                 plate_shapes=plate_shapes,
                 sts_mount_placement=sts_mount_placement,
+                plate_stack_placement=plate_stack_placement,
                 notes=(
                     "NOT a geometric mirror of Pendulum_Link -- see "
                     "build_pendulum_link_right()'s docstring. "

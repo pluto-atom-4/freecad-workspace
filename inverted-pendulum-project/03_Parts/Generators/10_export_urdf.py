@@ -42,7 +42,7 @@ import json
 import shutil
 import functools
 from pathlib import Path
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional
 from datetime import datetime
 import xml.etree.ElementTree as ET
 import math
@@ -226,15 +226,20 @@ def apply_rotation_to_vector(vector_mm: List[float], yaw_deg: float, pitch_deg: 
     return [x3, y3, z3]
 
 
-def build_plate_visual_boxes(plate_shapes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def build_plate_visual_boxes(plate_shapes: List[Dict[str, Any]], plate_stack_placement: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """Build separate URDF visual box elements for each plate (Issue #133).
 
     Each plate's box is placed in its own local frame (unrotated), then
-    positioned via its own Placement's origin+rpy.
+    positioned via its own Placement's origin+rpy, then composed with the
+    plate_stack's Placement to get the final position in the link frame
+    (Issue #146 Amendment 3).
 
     Args:
         plate_shapes: List of plate shape records from 07_body_wheels_metadata.json.
                      Each record has 'local_bbox_mm', 'own_placement' (Issue #133).
+        plate_stack_placement: PlateStack's Placement dict with 'position' and 'rotation_ypr_deg'
+                             for 3-level composition (Issue #146 Amendment 3). If None, no
+                             plate_stack composition is applied (fallback for older metadata).
 
     Returns:
         List of visual geometry dicts, one per plate, ready for build_urdf_link().
@@ -277,12 +282,148 @@ def build_plate_visual_boxes(plate_shapes: List[Dict[str, Any]]) -> List[Dict[st
             position['z'] + local_center_rotated[2],
         ]
 
-        # Convert yaw-pitch-roll (degrees) to rpy string (radians, roll-pitch-yaw order)
-        rpy_str = ' '.join([
-            f'{math.radians(roll):.6f}',
-            f'{math.radians(pitch):.6f}',
-            f'{math.radians(yaw):.6f}',
-        ])
+        # Compose with plate_stack's Placement if present (Issue #146 Amendment 3)
+        # Apply plate_stack rotation to the placed_center
+        if plate_stack_placement:
+            stack_ypr = plate_stack_placement['rotation_ypr_deg']
+            stack_position = plate_stack_placement['position']
+
+            placed_center_rotated_by_stack = apply_rotation_to_vector(
+                placed_center,
+                stack_ypr['yaw'],
+                stack_ypr['pitch'],
+                stack_ypr['roll']
+            )
+
+            # Add plate_stack position
+            final_center = [
+                stack_position['x'] + placed_center_rotated_by_stack[0],
+                stack_position['y'] + placed_center_rotated_by_stack[1],
+                stack_position['z'] + placed_center_rotated_by_stack[2],
+            ]
+
+            # Compose the rotations: apply plate rotation, then plate_stack rotation
+            # This requires composing the two YPR rotations.
+            # We need to compute the combined rotation by applying stack rotation to plate rotation.
+            # Create intermediate placement with plate's rotation, then apply stack rotation.
+            plate_rpy = [
+                f'{math.radians(roll):.6f}',
+                f'{math.radians(pitch):.6f}',
+                f'{math.radians(yaw):.6f}',
+            ]
+
+            # To compose rotations, we apply stack rotation to the plate rotation vector
+            # Convert back to a vector in the plate-stack frame: this is the direction of
+            # the plate's rotation axis, rotated by the stack rotation
+            # For URDF origin, we just use the composed position.
+            # For rotation, we need to compose: first rotate by plate (roll, pitch, yaw),
+            # then rotate by stack (stack_roll, stack_pitch, stack_yaw).
+            # This is non-trivial without matrix math. Use a simpler approach:
+            # Create a small test vector, rotate it twice, and derive the composed angles.
+            # Actually, for a box origin with just rotation, we can use matrix composition
+            # by creating rotation matrices and multiplying them.
+
+            # Simple approach: compute the composed rotation matrix approach
+            # by composing YPR angles. This is complex, so we'll use a numerical approach:
+            # Apply rotations sequentially to a reference vector to find the composed rotation.
+
+            # Better approach: store the rotation as matrices internally
+            # For now, use a pragmatic approach: compose the rotation vectors
+            import math as math_module
+
+            # Helper to create rotation matrix from YPR
+            def ypr_to_matrix(y, p, r):
+                """Convert YPR (degrees) to 3x3 rotation matrix."""
+                y_rad = math_module.radians(y)
+                p_rad = math_module.radians(p)
+                r_rad = math_module.radians(r)
+
+                # Rotation matrices
+                Rz = [
+                    [math_module.cos(y_rad), -math_module.sin(y_rad), 0],
+                    [math_module.sin(y_rad), math_module.cos(y_rad), 0],
+                    [0, 0, 1],
+                ]
+
+                Ry = [
+                    [math_module.cos(p_rad), 0, math_module.sin(p_rad)],
+                    [0, 1, 0],
+                    [-math_module.sin(p_rad), 0, math_module.cos(p_rad)],
+                ]
+
+                Rx = [
+                    [1, 0, 0],
+                    [0, math_module.cos(r_rad), -math_module.sin(r_rad)],
+                    [0, math_module.sin(r_rad), math_module.cos(r_rad)],
+                ]
+
+                # Multiply matrices: Rz * Ry * Rx (ZYX order)
+                temp = [[0]*3 for _ in range(3)]
+                for i in range(3):
+                    for j in range(3):
+                        temp[i][j] = sum(Ry[i][k] * Rx[k][j] for k in range(3))
+
+                result = [[0]*3 for _ in range(3)]
+                for i in range(3):
+                    for j in range(3):
+                        result[i][j] = sum(Rz[i][k] * temp[k][j] for k in range(3))
+
+                return result
+
+            # Helper to extract YPR from rotation matrix
+            def matrix_to_ypr(R):
+                """Extract YPR (degrees) from rotation matrix."""
+                # Extract pitch
+                pitch_rad = math_module.asin(-R[2][0])
+
+                # Extract yaw and roll (handling gimbal lock)
+                if math_module.cos(pitch_rad) > 1e-6:
+                    yaw_rad = math_module.atan2(R[1][0], R[0][0])
+                    roll_rad = math_module.atan2(R[2][1], R[2][2])
+                else:
+                    # Gimbal lock: set yaw=0, solve for roll
+                    yaw_rad = 0
+                    roll_rad = math_module.atan2(-R[0][1], R[1][1])
+
+                return (
+                    math_module.degrees(yaw_rad),
+                    math_module.degrees(pitch_rad),
+                    math_module.degrees(roll_rad),
+                )
+
+            # Get plate and stack rotation matrices
+            plate_matrix = ypr_to_matrix(yaw, pitch, roll)
+            stack_matrix = ypr_to_matrix(
+                stack_ypr['yaw'],
+                stack_ypr['pitch'],
+                stack_ypr['roll']
+            )
+
+            # Compose: stack rotation applied to plate rotation
+            # In FreeCAD convention, this is stack * plate (stack applied first in the composed transform)
+            composed_matrix = [[0]*3 for _ in range(3)]
+            for i in range(3):
+                for j in range(3):
+                    composed_matrix[i][j] = sum(stack_matrix[i][k] * plate_matrix[k][j] for k in range(3))
+
+            # Extract composed YPR
+            composed_ypr = matrix_to_ypr(composed_matrix)
+
+            rpy_str = ' '.join([
+                f'{math_module.radians(composed_ypr[2]):.6f}',  # roll
+                f'{math_module.radians(composed_ypr[1]):.6f}',  # pitch
+                f'{math_module.radians(composed_ypr[0]):.6f}',  # yaw
+            ])
+        else:
+            # No plate_stack composition (fallback for older metadata)
+            final_center = placed_center
+
+            # Convert yaw-pitch-roll (degrees) to rpy string (radians, roll-pitch-yaw order)
+            rpy_str = ' '.join([
+                f'{math.radians(roll):.6f}',
+                f'{math.radians(pitch):.6f}',
+                f'{math.radians(yaw):.6f}',
+            ])
 
         visual_boxes.append({
             'type': 'box',
@@ -291,7 +432,7 @@ def build_plate_visual_boxes(plate_shapes: List[Dict[str, Any]]) -> List[Dict[st
                 'width': dims[1],
                 'height': dims[2],
             },
-            'origin': placed_center,
+            'origin': final_center,
             'rpy': rpy_str,
         })
 
@@ -951,13 +1092,16 @@ def main():
         ]
 
         # Build separate visual boxes for each plate (Issue #133)
-        plate_visual_boxes = build_plate_visual_boxes(plate_shapes) if plate_shapes else []
+        # Get plate_stack_placement for composition (Issue #146 Amendment 3)
+        plate_stack_placement_l = body_wheels['links']['Pendulum_Link'].get('plate_stack_placement')
+        plate_visual_boxes = build_plate_visual_boxes(plate_shapes, plate_stack_placement_l) if plate_shapes else []
 
         # Servo mesh visual
+        # Use mount position (not CoM) as mesh origin anchor (Issue #148)
         servo_l_visual_mesh = {
             'type': 'mesh',
             'filename': 'package://inverted_pendulum_robot/meshes/feetech-STS3032-visual.stl',
-            'origin': servo_l_com_assembly,
+            'origin': servo_l_mount_pos,
             'scale': [0.001, 0.001, 0.001],
         }
 
@@ -1071,13 +1215,16 @@ def main():
         ]
 
         # Build separate visual boxes for each plate (Issue #133)
-        plate_visual_boxes_r = build_plate_visual_boxes(plate_shapes_r) if plate_shapes_r else []
+        # Get plate_stack_placement for composition (Issue #146 Amendment 3)
+        plate_stack_placement_r = body_wheels['links']['Pendulum_Link_Right'].get('plate_stack_placement')
+        plate_visual_boxes_r = build_plate_visual_boxes(plate_shapes_r, plate_stack_placement_r) if plate_shapes_r else []
 
         # Servo mesh visual with rotation
+        # Use mount position (not CoM) as mesh origin anchor (Issue #148)
         servo_r_visual_mesh = {
             'type': 'mesh',
             'filename': 'package://inverted_pendulum_robot/meshes/feetech-STS3032-visual.stl',
-            'origin': servo_r_com_assembly,
+            'origin': servo_r_mount_pos,
             'rpy': servo_r_rpy,
             'scale': [0.001, 0.001, 0.001],
         }

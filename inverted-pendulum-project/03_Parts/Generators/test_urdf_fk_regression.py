@@ -18,7 +18,7 @@ import sys
 import importlib.util
 from pathlib import Path
 from xml.etree import ElementTree as ET
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional
 
 import numpy as np
 import pytest
@@ -122,17 +122,19 @@ def _compute_plate_com(plate_shapes: List[Dict[str, Any]], target_mass_kg: float
     return [c / target_mass_kg for c in weighted_com]
 
 
-def _compute_first_plate_placed_center(plate_shapes: List[Dict[str, Any]]) -> List[float]:
-    """Compute the first plate's placed center in its own frame (Issue #133).
+def _compute_first_plate_placed_center(plate_shapes: List[Dict[str, Any]], plate_stack_placement: Optional[Dict[str, Any]] = None) -> List[float]:
+    """Compute the first plate's placed center in the link frame (Issue #133, #146 Amendment 3).
 
     The first plate (index 0) has its own local_bbox_mm and own_placement.
     Compute the local center (from bbox), apply its own rotation, add position.
+    Then if plate_stack_placement is provided, compose with it (Issue #146 Amendment 3).
 
     Args:
         plate_shapes: List of per-plate dicts from LinkRecord['plate_shapes']
+        plate_stack_placement: PlateStack placement dict for composition (Issue #146 Amendment 3)
 
     Returns:
-        [x, y, z] placed center in mm (in the plate's own local frame)
+        [x, y, z] placed center in mm (in the link frame)
     """
     if not plate_shapes:
         raise ValueError("plate_shapes cannot be empty")
@@ -164,6 +166,26 @@ def _compute_first_plate_placed_center(plate_shapes: List[Dict[str, Any]]) -> Li
         position['y'] + local_center_rotated[1],
         position['z'] + local_center_rotated[2],
     ]
+
+    # Compose with plate_stack placement if provided (Issue #146 Amendment 3)
+    if plate_stack_placement:
+        stack_ypr = plate_stack_placement['rotation_ypr_deg']
+        stack_position = plate_stack_placement['position']
+
+        # Apply plate_stack rotation to the placed_center
+        placed_center_rotated_by_stack = _apply_rotation_ypr(
+            placed_center,
+            stack_ypr['yaw'],
+            stack_ypr['pitch'],
+            stack_ypr['roll']
+        )
+
+        # Add plate_stack position
+        placed_center = [
+            stack_position['x'] + placed_center_rotated_by_stack[0],
+            stack_position['y'] + placed_center_rotated_by_stack[1],
+            stack_position['z'] + placed_center_rotated_by_stack[2],
+        ]
 
     return placed_center
 
@@ -345,12 +367,13 @@ class TestPendulumPlateCoM:
         for link_name in links_to_test:
             link_data = body_wheels['links'][link_name]
             plate_shapes = link_data.get('plate_shapes')
+            plate_stack_placement = link_data.get('plate_stack_placement')
 
             if not plate_shapes:
                 pytest.skip(f"No plate_shapes found for {link_name}")
 
-            # Independently recompute first plate's placed center (Issue #133)
-            computed_first_plate_center = _compute_first_plate_placed_center(plate_shapes)
+            # Independently recompute first plate's placed center (Issue #133, #146 Amendment 3)
+            computed_first_plate_center = _compute_first_plate_placed_center(plate_shapes, plate_stack_placement)
             expected_xyz = _mm_to_m(computed_first_plate_center)
 
             # Find link and first visual (first plate box)
@@ -441,7 +464,10 @@ class TestServoMeshComposition:
                 mount_pos[1] + servo_com_rotated[1],
                 mount_pos[2] + servo_com_rotated[2],
             ]
-            expected_xyz = _mm_to_m(expected_com_mm)
+            expected_com_xyz = _mm_to_m(expected_com_mm)
+
+            # Visual mesh origin should be at mount position (Issue #148)
+            expected_mesh_xyz = _mm_to_m(mount_pos)
 
             # Find link in URDF
             link_elem = urdf.find(f".//link[@name='{link_name}']")
@@ -466,14 +492,14 @@ class TestServoMeshComposition:
             assert origin_elem is not None, f"No origin in servo visual of {link_name}"
             urdf_xyz = _parse_xyz(origin_elem.get('xyz'))
 
-            # Compare visual mesh origin
-            for i, (name, urdf_val, exp_val) in enumerate(zip(['x', 'y', 'z'], urdf_xyz, expected_xyz)):
+            # Compare visual mesh origin (should be at mount position, Issue #148)
+            for i, (name, urdf_val, exp_val) in enumerate(zip(['x', 'y', 'z'], urdf_xyz, expected_mesh_xyz)):
                 assert abs(urdf_val - exp_val) < TOLERANCE_M, (
                     f"Servo mesh {link_name} visual {name}: URDF={urdf_val:.9f} m, "
                     f"expected={exp_val:.9f} m, diff={abs(urdf_val - exp_val):.2e} m"
                 )
 
-            # Also check servo box collision geometry (should have same origin)
+            # Also check servo box collision geometry (should use CoM, not mount position)
             # The servo box is the second collision element (index 1: plate box is index 0)
             collision_elems = link_elem.findall('collision')
             assert len(collision_elems) >= 2, f"Expected >= 2 collisions in {link_name}, found {len(collision_elems)}"
@@ -483,8 +509,8 @@ class TestServoMeshComposition:
             assert origin_elem is not None, f"No origin in servo box collision of {link_name}"
             urdf_xyz = _parse_xyz(origin_elem.get('xyz'))
 
-            # Compare collision box origin
-            for i, (name, urdf_val, exp_val) in enumerate(zip(['x', 'y', 'z'], urdf_xyz, expected_xyz)):
+            # Compare collision box origin (should be at CoM for inertia calculations)
+            for i, (name, urdf_val, exp_val) in enumerate(zip(['x', 'y', 'z'], urdf_xyz, expected_com_xyz)):
                 assert abs(urdf_val - exp_val) < TOLERANCE_M, (
                     f"Servo box {link_name} collision {name}: URDF={urdf_val:.9f} m, "
                     f"expected={exp_val:.9f} m, diff={abs(urdf_val - exp_val):.2e} m"
