@@ -176,7 +176,7 @@ OUTPUT_DOC_NAME = "robot_body_wheels"
 OUTPUT_FCSTD_FILENAME = "robot_body_wheels.FCStd"
 METADATA_FILENAME = "07_body_wheels_metadata.json"
 PLACEMENT_OVERRIDES_FILENAME = "placement_overrides.yaml"
-KNOWN_OVERRIDE_KEYS = frozenset({"STS3032_Mount", "STS3032_Mount_Right", "PlateStack", "PlateStack_Right", "Base_Link"})
+KNOWN_OVERRIDE_KEYS = frozenset({"STS3032_Mount", "STS3032_Mount_Right", "PlateStack", "PlateStack_Right", "Base_Link", "Wheel_Left", "Wheel_Right"})
 
 # Tessellation deflection for triangle-count reporting -- matches the
 # project's established 1.0mm visual-mesh convention (see
@@ -513,6 +513,39 @@ class BodyWheelsGenerator:
         old_pos = (obj.Placement.Base.x, obj.Placement.Base.y, obj.Placement.Base.z)
         obj.Placement = Placement(Vector(*adjust), obj.Placement.Rotation)
         print(f"  ✓ {name}: position override {list(old_pos)} → {adjust}")
+
+    def _verify_wheel_expected_position(self, obj, name: str) -> None:
+        """Verify a wheel's hole-derived position against YAML expected value (verify-only, never applies).
+
+        If no override entry exists for this wheel, returns without action (no-op).
+        If an override entry is present but malformed (missing 'adjust' or wrong shape),
+        raises RuntimeError (authoring mistake, loud fail). Compares actual position to
+        expected value with tolerance, prints confirmation or warning accordingly.
+        NOTE: This method NEVER modifies obj.Placement -- wheels stay purely hole-derived,
+        this is verification-only.
+        """
+        override = self.placement_overrides.get(name)
+        if override is None:
+            return  # No override for this wheel; no-op
+
+        expected = override.get("adjust")
+        if expected is None or len(expected) != 3:
+            raise RuntimeError(
+                f"Malformed override for {name!r}: 'adjust' key missing or "
+                f"not a length-3 list (got {expected!r})"
+            )
+
+        # Compare actual position (hole-derived) to expected, non-fatal mismatch
+        actual_pos = (obj.Placement.Base.x, obj.Placement.Base.y, obj.Placement.Base.z)
+        tolerance = 1e-2  # mm
+        matches = all(abs(a - e) < tolerance for a, e in zip(actual_pos, expected))
+
+        if matches:
+            print(f"  ✓ {name}: hole-derived position matches expected {list(expected)} (hole-derived, not overridden)")
+        else:
+            print(f"WARNING: {name} hole-derived position mismatch (hole-derived, not overridden):")
+            print(f"  actual (hole-derived):   {list(actual_pos)}")
+            print(f"  expected:                {expected}")
 
     # ---------------------------------------------------------------
     # Geometry: chassis + wheels
@@ -1612,6 +1645,9 @@ class BodyWheelsGenerator:
         print("-" * 70)
         if not self._mount_wheel_on_pendulum_plate("Wheel_Left"):
             return False
+        wheel_left = self.output_doc.getObject("Wheel_Left")
+        if wheel_left:
+            self._verify_wheel_expected_position(wheel_left, "Wheel_Left")
         print()
 
         print("Re-mounting Wheel_Right on Pendulum_Link_Right's Bottom_Plate_Right...")
@@ -1620,6 +1656,9 @@ class BodyWheelsGenerator:
             "Wheel_Right", self.bottom_plate_right_name, Vector(*WHEEL_RIGHT_HOLE_OFFSET_MM)
         ):
             return False
+        wheel_right = self.output_doc.getObject("Wheel_Right")
+        if wheel_right:
+            self._verify_wheel_expected_position(wheel_right, "Wheel_Right")
         print()
 
         print("Repositioning Base_Link under Pendulum_Link/STS3032_Mount...")
