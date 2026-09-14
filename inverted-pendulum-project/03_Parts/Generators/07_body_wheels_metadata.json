@@ -1,7 +1,7 @@
 {
   "phase": 7,
   "title": "Stage 1: Body + Wheel Geometry",
-  "timestamp": "2026-09-14T13:41:02.764168",
+  "timestamp": "2026-09-14T14:15:43.539887",
   "issue": 9,
   "source_document": "plates_servo_assembled.FCStd",
   "output_document": "robot_body_wheels.FCStd",
@@ -52,7 +52,7 @@
         "position": {
           "x": 14.0007,
           "y": -28.5258,
-          "z": 53.5095
+          "z": 54.01
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
@@ -85,7 +85,7 @@
         "position": {
           "x": 14.0007,
           "y": 73.0258,
-          "z": 53.5095
+          "z": 54.01
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
@@ -477,12 +477,12 @@
     {
       "check": "Wheels share identical Z placement",
       "passed": true,
-      "details": "Wheel_Left Z=[38.51,68.51], Wheel_Right Z=[38.51,68.51]"
+      "details": "Wheel_Left Z=[39.01,69.01], Wheel_Right Z=[39.01,69.01]"
     },
     {
       "check": "Ground clearance (chassis above Z=0, wheels resting on Z=0)",
       "passed": false,
-      "details": "Base_Link bottom Z=87.40 mm, wheel bottom Z=38.51 mm",
+      "details": "Base_Link bottom Z=87.40 mm, wheel bottom Z=39.01 mm",
       "known_transitional": true
     },
     {

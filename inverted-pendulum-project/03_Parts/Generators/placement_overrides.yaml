@@ -8,10 +8,11 @@
 # Only the keys being changed need to be present; the file accumulates
 # across correction rounds.
 #
-# Wheel_Left / Wheel_Right: VERIFY-ONLY. adjust is never written to
-# .Placement -- wheel position stays purely hole-derived (physical
-# hardware fit). This is only compared against the actual post-remount
-# position and warns (non-fatal) on mismatch.
+# Wheel_Left / Wheel_Right: SPLIT-AXIS (Issue #146 Amendment 2).
+# X/Y axes: VERIFY-ONLY (hole-derived, physical hardware fit -- never written).
+#           Compared against actual post-remount position, warns (non-fatal) on mismatch.
+# Z axis:   APPLIED (written if it differs from adjust[2] beyond tolerance).
+#           Allows vertical offset correction while preserving hole-fit on X/Y.
 
 STS3032_Mount:
   original: [-1.0, -0.40, -7.00]

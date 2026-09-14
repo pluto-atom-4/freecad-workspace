@@ -323,12 +323,13 @@ class TestPlacementOverridesSubprocess:
             with open(OVERRIDES_FILE, "wb") as f:
                 f.write(original_bytes)
 
-    def test_wheel_verify_only_mechanism_runs(self) -> None:
-        """Verify that wheel verify-only mechanism runs and produces confirmation messages.
+    def test_wheel_split_axis_mechanism_runs(self) -> None:
+        """Verify that wheel split-axis mechanism runs and produces confirmation messages.
 
-        Approach: regenerate, check that the generator completed, then verify
-        that console output contains the wheel verify messages with '(hole-derived'
-        mention to confirm they were verified, not applied.
+        Amendment 2: X/Y stay verify-only (hole-derived), Z is applied.
+        Console output should show both:
+        - X/Y verification messages with '(hole-derived' marker
+        - Z correction message (if Z differs) or Z-matches message
         """
         if not METADATA_JSON.exists():
             pytest.skip("Metadata JSON not available; run generator first")
@@ -350,56 +351,76 @@ class TestPlacementOverridesSubprocess:
         # Generator should complete
         assert "Stage 1 Complete" in output, f"Generator did not complete: {output[-2000:]}"
 
-        # Verify wheel messages should appear in output, containing '(hole-derived'
-        # to distinguish them from applied overrides
+        # Verify wheel messages should appear in output
         assert "Wheel_Left" in output, "Wheel_Left not mentioned in generator output"
         assert "Wheel_Right" in output, "Wheel_Right not mentioned in generator output"
-        assert "(hole-derived" in output, "Verification marker '(hole-derived' not found in output"
 
-    def test_wheels_remain_hole_derived_not_applied(self) -> None:
-        """Verify wheels are NOT modified by override mechanism (remain hole-derived).
+        # X/Y verification marker (hole-derived, not overridden)
+        assert "(hole-derived" in output, "X/Y verification marker '(hole-derived' not found in output"
 
-        The wheels' actual position should be determined purely by hole-fit
-        calculation, not by the YAML's 'adjust' value being applied to Placement.
-        This test confirms the mechanism ran but did not apply the override.
+        # Z correction/match marker (Amendment 2: Z is now applied)
+        # Should see either "Z corrected" or "Z matches expected"
+        assert "Z corrected" in output or "Z matches expected" in output, (
+            "Z axis handling marker ('Z corrected' or 'Z matches expected') not found in output"
+        )
+
+    def test_wheels_split_axis_z_applied_xy_hole_derived(self) -> None:
+        """Verify wheels implement split-axis handling (Issue #146 Amendment 2):
+        X/Y remain hole-derived, Z is applied from YAML.
+
+        After remount, each wheel's Z should match adjust[2] (now applied),
+        while X/Y remain hole-derived (differ from adjust[0]/adjust[1]).
         """
         if not METADATA_JSON.exists():
             pytest.skip("Metadata JSON not available; run generator first")
 
-        # Read the actual wheel positions from metadata (these are hole-derived)
+        # Read the actual wheel positions from metadata
         try:
             actual_left = self._read_wheel_position("Wheel_Left")
             actual_right = self._read_wheel_position("Wheel_Right")
         except RuntimeError as e:
             pytest.skip(f"Could not read wheel positions: {e}")
 
-        # The hole-derived actual positions should NOT be identical to the
-        # YAML's 'adjust' values (that would indicate the override was
-        # applied, which violates the verify-only invariant). Some tolerance
-        # for coincidence (1e-2 mm), but they should generally differ.
-        tolerance = 1e-2
+        tolerance = 1e-2  # mm
 
-        # Wheels are typically different from the target due to hole geometry,
-        # so this is just a sanity check that they're not trivially equal
-        # (which would be suspicious and suggest the verify-only mechanism
-        # somehow became an apply mechanism).
-        left_matches_adjust = all(
+        # Z axis: must match adjust[2] (now APPLIED, Amendment 2)
+        assert (
+            abs(actual_left[2] - SEEDED_WHEEL_LEFT_POS[2]) < tolerance
+        ), (
+            f"Wheel_Left Z: expected {SEEDED_WHEEL_LEFT_POS[2]}, "
+            f"got {actual_left[2]} (Z should be applied per Amendment 2)"
+        )
+
+        assert (
+            abs(actual_right[2] - SEEDED_WHEEL_RIGHT_POS[2]) < tolerance
+        ), (
+            f"Wheel_Right Z: expected {SEEDED_WHEEL_RIGHT_POS[2]}, "
+            f"got {actual_right[2]} (Z should be applied per Amendment 2)"
+        )
+
+        # X/Y axes: remain hole-derived (physical hole-fit invariant),
+        # so should NOT equal the YAML adjust values (which differ from
+        # hole-derived due to the nature of hole-fitting)
+        # Just confirm they're not trivially matching all 3 axes
+        # (which would indicate broken split-axis logic)
+        left_all_match = all(
             abs(actual_left[i] - SEEDED_WHEEL_LEFT_POS[i]) < tolerance
-            for i in range(3)
+            for i in range(2)  # Only check X/Y, not Z
         )
-        right_matches_adjust = all(
+        right_all_match = all(
             abs(actual_right[i] - SEEDED_WHEEL_RIGHT_POS[i]) < tolerance
-            for i in range(3)
+            for i in range(2)  # Only check X/Y, not Z
         )
 
-        # At least one wheel should have some mismatch (they're hole-derived),
-        # confirming the override was not applied. If both match exactly,
-        # something is wrong with the mechanism.
-        if left_matches_adjust and right_matches_adjust:
+        # At least one wheel's X/Y should differ from adjust (hole-derived),
+        # otherwise the split-axis logic is broken
+        if left_all_match and right_all_match:
             pytest.skip(
-                f"Both wheels match adjust values exactly (hole-derived mechanism may be broken):\n"
-                f"  Wheel_Left actual={actual_left}, expected={SEEDED_WHEEL_LEFT_POS}\n"
-                f"  Wheel_Right actual={actual_right}, expected={SEEDED_WHEEL_RIGHT_POS}"
+                f"Both wheels' X/Y match adjust values (hole-derived mechanism broken):\n"
+                f"  Wheel_Left actual=({actual_left[0]}, {actual_left[1]}), "
+                f"adjust=({SEEDED_WHEEL_LEFT_POS[0]}, {SEEDED_WHEEL_LEFT_POS[1]})\n"
+                f"  Wheel_Right actual=({actual_right[0]}, {actual_right[1]}), "
+                f"adjust=({SEEDED_WHEEL_RIGHT_POS[0]}, {SEEDED_WHEEL_RIGHT_POS[1]})"
             )
 
     def test_unknown_key_and_mismatch_original_are_non_fatal(self) -> None:

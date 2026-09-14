@@ -515,14 +515,14 @@ class BodyWheelsGenerator:
         print(f"  ✓ {name}: position override {list(old_pos)} → {adjust}")
 
     def _verify_wheel_expected_position(self, obj, name: str) -> None:
-        """Verify a wheel's hole-derived position against YAML expected value (verify-only, never applies).
+        """Split-axis verification + Z application for wheels (Issue #146, Amendment 2).
+
+        X/Y stay verify-only (hole-derived, never written). Z is now APPLIED if it
+        differs from the YAML's adjust[2] beyond tolerance.
 
         If no override entry exists for this wheel, returns without action (no-op).
         If an override entry is present but malformed (missing 'adjust' or wrong shape),
-        raises RuntimeError (authoring mistake, loud fail). Compares actual position to
-        expected value with tolerance, prints confirmation or warning accordingly.
-        NOTE: This method NEVER modifies obj.Placement -- wheels stay purely hole-derived,
-        this is verification-only.
+        raises RuntimeError (authoring mistake, loud fail).
         """
         override = self.placement_overrides.get(name)
         if override is None:
@@ -535,17 +535,39 @@ class BodyWheelsGenerator:
                 f"not a length-3 list (got {expected!r})"
             )
 
-        # Compare actual position (hole-derived) to expected, non-fatal mismatch
         actual_pos = (obj.Placement.Base.x, obj.Placement.Base.y, obj.Placement.Base.z)
         tolerance = 1e-2  # mm
-        matches = all(abs(a - e) < tolerance for a, e in zip(actual_pos, expected))
 
-        if matches:
-            print(f"  ✓ {name}: hole-derived position matches expected {list(expected)} (hole-derived, not overridden)")
+        # X/Y: verify only, never write (hole-derived, physical invariant)
+        x_match = abs(actual_pos[0] - expected[0]) < tolerance
+        y_match = abs(actual_pos[1] - expected[1]) < tolerance
+
+        if x_match and y_match:
+            print(f"  ✓ {name}: X/Y match expected ({expected[0]:.4f}, {expected[1]:.4f}) (hole-derived, not overridden)")
         else:
-            print(f"WARNING: {name} hole-derived position mismatch (hole-derived, not overridden):")
-            print(f"  actual (hole-derived):   {list(actual_pos)}")
-            print(f"  expected:                {expected}")
+            print(f"WARNING: {name} X/Y mismatch (hole-derived, not overridden):")
+            print(f"  actual (hole-derived):   ({actual_pos[0]:.4f}, {actual_pos[1]:.4f})")
+            print(f"  expected:                ({expected[0]:.4f}, {expected[1]:.4f})")
+
+        # Z: apply if it differs beyond tolerance (Amendment 2 split-axis handling)
+        old_z = actual_pos[2]
+        z_match = abs(old_z - expected[2]) < tolerance
+
+        if z_match:
+            print(f"  ✓ {name}: Z matches expected {expected[2]:.4f} (no correction needed)")
+        else:
+            # Write Z, keep X/Y unchanged
+            obj.Placement = Placement(
+                Vector(obj.Placement.Base.x, obj.Placement.Base.y, expected[2]),
+                obj.Placement.Rotation,
+            )
+            print(f"  ⚙ {name}: Z corrected {old_z:.4f} -> {expected[2]:.4f} (X/Y stay hole-derived)")
+
+        # Update metadata record with final placement (after Z correction if applied)
+        for record in self.links:
+            if record.name == name:
+                record.placement = _placement_to_dict(obj.Placement)
+                break
 
     # ---------------------------------------------------------------
     # Geometry: chassis + wheels
