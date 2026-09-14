@@ -1,7 +1,7 @@
 {
   "phase": 7,
   "title": "Stage 1: Body + Wheel Geometry",
-  "timestamp": "2026-09-13T06:45:05.466551",
+  "timestamp": "2026-09-13T20:56:40.481852",
   "issue": 9,
   "source_document": "plates_servo_assembled.FCStd",
   "output_document": "robot_body_wheels.FCStd",
@@ -85,7 +85,7 @@
         "position": {
           "x": 15.0007,
           "y": 67.0258,
-          "z": 54.0095
+          "z": 51.0095
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
@@ -104,7 +104,7 @@
       "volume_mm3": 4241.1501,
       "target_mass_kg": 0.03,
       "triangle_count": 100,
-      "notes": "Re-mounted on Bottom_Plate_Right's Edge27 hole (hole_center=(15.001, 58.026, 54.509)), offset (0.000, 9.000, -0.500)"
+      "notes": "Re-mounted on Bottom_Plate_Right's Edge27 hole (hole_center=(15.001, 58.026, 51.509)), offset (0.000, 9.000, -0.500)"
     },
     "Pendulum_Link": {
       "name": "Pendulum_Link",
@@ -259,8 +259,8 @@
       "sts_mount_placement": {
         "position": {
           "x": -1.0,
-          "y": 0.0,
-          "z": 0.0
+          "y": -0.4,
+          "z": -7.0
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
@@ -281,7 +281,7 @@
         "position": {
           "x": -8.0014,
           "y": 62.2758,
-          "z": 71.25
+          "z": 68.25
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
@@ -292,18 +292,18 @@
       "bounding_box_mm": {
         "x_min": -29.9919,
         "x_max": 29.9919,
-        "y_min": 58.0258,
-        "y_max": 63.5258,
-        "z_min": 49.5095,
-        "z_max": 129.5421
+        "y_min": 55.0258,
+        "y_max": 60.5258,
+        "z_min": 46.5095,
+        "z_max": 126.5421
       },
       "bounding_box_local_mm": {
         "x_min": -21.9905,
         "x_max": 37.9933,
         "y_min": -21.7405,
         "y_max": 58.2921,
-        "z_min": -1.25,
-        "z_max": 4.25
+        "z_min": 1.75,
+        "z_max": 7.25
       },
       "volume_mm3": 3863.4369,
       "target_mass_kg": 0.12,
@@ -314,15 +314,15 @@
           "center_of_mass_mm": {
             "x": -1.98,
             "y": 33.3,
-            "z": -0.0
+            "z": 6.0
           },
           "inertia_unit_density_kg_mm2": {
             "ixx": 224628.2955447443,
             "iyy": 131949.52445958043,
             "izz": 355173.4712851323,
             "ixy": -159501.21122654586,
-            "ixz": -2.8421709430403938e-14,
-            "iyz": -2.55795384873636e-13
+            "ixz": 8.52651282912121e-14,
+            "iyz": -8.526512829121198e-14
           },
           "local_bbox_mm": {
             "x_min": -30.0,
@@ -336,7 +336,7 @@
             "position": {
               "x": -1.98,
               "y": 33.3,
-              "z": 0.0
+              "z": 6.0
             },
             "rotation_ypr_deg": {
               "yaw": 53.1,
@@ -351,15 +351,15 @@
           "center_of_mass_mm": {
             "x": 13.0,
             "y": 15.76,
-            "z": 0.0
+            "z": 6.0
           },
           "inertia_unit_density_kg_mm2": {
             "ixx": 60087.965889519604,
             "iyy": 206682.8608986989,
             "izz": 265503.97806902614,
             "ixy": -97978.72032559961,
-            "ixz": -2.8421709430404004e-14,
-            "iyz": 4.566433137579927e-30
+            "ixz": 2.5579538487363607e-13,
+            "iyz": 9.947598300641404e-14
           },
           "local_bbox_mm": {
             "x_min": -27.36,
@@ -373,7 +373,7 @@
             "position": {
               "x": 13.0,
               "y": 15.76,
-              "z": 0.0
+              "z": 6.0
             },
             "rotation_ypr_deg": {
               "yaw": 26.6,
@@ -423,8 +423,8 @@
       "sts_mount_placement": {
         "position": {
           "x": -1.0,
-          "y": 51.0,
-          "z": 6.0
+          "y": 54.02,
+          "z": 13.05
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
@@ -476,13 +476,13 @@
     },
     {
       "check": "Wheels share identical Z placement",
-      "passed": true,
-      "details": "Wheel_Left Z=[39.01,69.01], Wheel_Right Z=[39.01,69.01]"
+      "passed": false,
+      "details": "Wheel_Left Z=[39.01,69.01], Wheel_Right Z=[36.01,66.01]"
     },
     {
       "check": "Ground clearance (chassis above Z=0, wheels resting on Z=0)",
       "passed": false,
-      "details": "Base_Link bottom Z=87.90 mm, wheel bottom Z=39.01 mm",
+      "details": "Base_Link bottom Z=87.90 mm, wheel bottom Z=36.01 mm",
       "known_transitional": true
     },
     {
@@ -505,5 +505,5 @@
     }
   ],
   "all_validations_passed": false,
-  "all_required_validations_passed": true
+  "all_required_validations_passed": false
 }
