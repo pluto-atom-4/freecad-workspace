@@ -1,7 +1,7 @@
 {
   "phase": 7,
   "title": "Stage 1: Body + Wheel Geometry",
-  "timestamp": "2026-09-13T20:56:40.481852",
+  "timestamp": "2026-09-14T13:41:02.764168",
   "issue": 9,
   "source_document": "plates_servo_assembled.FCStd",
   "output_document": "robot_body_wheels.FCStd",
@@ -19,7 +19,7 @@
         "position": {
           "x": 15.4,
           "y": 19.0,
-          "z": 77.9
+          "z": 77.4
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
@@ -32,13 +32,13 @@
         "x_max": 35.4,
         "y_min": -21.0,
         "y_max": 59.0,
-        "z_min": 87.9,
-        "z_max": 90.4
+        "z_min": 87.4,
+        "z_max": 89.9
       },
       "volume_mm3": 8000.0,
       "target_mass_kg": 0.25,
       "triangle_count": 12,
-      "notes": "Redesigned as a flat plate (was a solid chassis.length_mm=120.0mm x chassis.height_mm=40.0mm box) -- length is now BASE_LINK_LENGTH_MM and thickness is now BASE_LINK_PLATE_THICKNESS_MM, not robot_parameters.yaml's chassis.length_mm/chassis.height_mm. Repositioned near Bottom_Plate's top (Z=90.40mm, Bottom_Plate top + -0.631mm), X=15.4mm, Y=19.0mm (human-tuned, fixed) -- instead of CHASSIS_GROUND_CLEARANCE_MM above the ground plane."
+      "notes": "Redesigned as a flat plate (was a solid chassis.length_mm=120.0mm x chassis.height_mm=40.0mm box) -- length is now BASE_LINK_LENGTH_MM and thickness is now BASE_LINK_PLATE_THICKNESS_MM, not robot_parameters.yaml's chassis.length_mm/chassis.height_mm. Repositioned near Bottom_Plate's top (Z=89.90mm, Bottom_Plate top + -0.631mm), X=15.4mm, Y=19.0mm (human-tuned, fixed) -- instead of CHASSIS_GROUND_CLEARANCE_MM above the ground plane."
     },
     "Wheel_Left": {
       "name": "Wheel_Left",
@@ -50,9 +50,9 @@
       },
       "placement": {
         "position": {
-          "x": 15.0007,
+          "x": 14.0007,
           "y": -28.5258,
-          "z": 54.0095
+          "z": 53.5095
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
@@ -71,7 +71,7 @@
       "volume_mm3": 4241.1501,
       "target_mass_kg": 0.03,
       "triangle_count": 100,
-      "notes": "Re-mounted on Bottom_Plate's Edge27 hole (hole_center=(15.001, -22.526, 54.009)), offset (0.000, -6.000, 0.000)"
+      "notes": "Re-mounted on Bottom_Plate's Edge27 hole (hole_center=(14.001, -22.526, 53.509)), offset (0.000, -6.000, 0.000)"
     },
     "Wheel_Right": {
       "name": "Wheel_Right",
@@ -83,9 +83,9 @@
       },
       "placement": {
         "position": {
-          "x": 15.0007,
-          "y": 67.0258,
-          "z": 51.0095
+          "x": 14.0007,
+          "y": 73.0258,
+          "z": 53.5095
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
@@ -104,7 +104,7 @@
       "volume_mm3": 4241.1501,
       "target_mass_kg": 0.03,
       "triangle_count": 100,
-      "notes": "Re-mounted on Bottom_Plate_Right's Edge27 hole (hole_center=(15.001, 58.026, 51.509)), offset (0.000, 9.000, -0.500)"
+      "notes": "Re-mounted on Bottom_Plate_Right's Edge27 hole (hole_center=(14.001, 64.026, 54.009)), offset (0.000, 9.000, -0.500)"
     },
     "Pendulum_Link": {
       "name": "Pendulum_Link",
@@ -260,7 +260,7 @@
         "position": {
           "x": -1.0,
           "y": -0.4,
-          "z": -7.0
+          "z": 0.0
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
@@ -424,7 +424,7 @@
         "position": {
           "x": -1.0,
           "y": 54.02,
-          "z": 13.05
+          "z": 6.05
         },
         "rotation_ypr_deg": {
           "yaw": 0.0,
@@ -469,31 +469,31 @@
     {
       "check": "Wheel track width and symmetry",
       "passed": false,
-      "details": "track=95.55 mm (expected 110.0 mm), centers=(-28.53, 67.03) mm (symmetric about Y=0)",
-      "value": 95.5516,
+      "details": "track=101.55 mm (expected 110.0 mm), centers=(-28.53, 73.03) mm (symmetric about Y=0)",
+      "value": 101.5516,
       "tolerance": 110.0,
       "known_transitional": true
     },
     {
       "check": "Wheels share identical Z placement",
-      "passed": false,
-      "details": "Wheel_Left Z=[39.01,69.01], Wheel_Right Z=[36.01,66.01]"
+      "passed": true,
+      "details": "Wheel_Left Z=[38.51,68.51], Wheel_Right Z=[38.51,68.51]"
     },
     {
       "check": "Ground clearance (chassis above Z=0, wheels resting on Z=0)",
       "passed": false,
-      "details": "Base_Link bottom Z=87.90 mm, wheel bottom Z=36.01 mm",
+      "details": "Base_Link bottom Z=87.40 mm, wheel bottom Z=38.51 mm",
       "known_transitional": true
     },
     {
       "check": "No Base_Link / wheel interpenetration",
       "passed": true,
-      "details": "Base_Link Y=[-21.00,59.00], Wheel_Left Y=[-31.53,-25.53], Wheel_Right Y=[64.03,70.03]"
+      "details": "Base_Link Y=[-21.00,59.00], Wheel_Left Y=[-31.53,-25.53], Wheel_Right Y=[70.03,76.03]"
     },
     {
       "check": "Pendulum_Link positioned above Base_Link",
       "passed": false,
-      "details": "PlateStack global bottom Z=49.01 mm vs Base_Link top Z=90.40 mm",
+      "details": "PlateStack global bottom Z=49.01 mm vs Base_Link top Z=89.90 mm",
       "known_transitional": true
     },
     {
@@ -505,5 +505,5 @@
     }
   ],
   "all_validations_passed": false,
-  "all_required_validations_passed": false
+  "all_required_validations_passed": true
 }
