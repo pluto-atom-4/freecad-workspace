@@ -29,11 +29,42 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 OVERRIDES_FILE = SCRIPT_DIR / "placement_overrides.yaml"
 GENERATOR_SCRIPT = SCRIPT_DIR / "07_create_body_and_wheels.py"
 OUTPUT_FCSTD = SCRIPT_DIR / "robot_body_wheels.FCStd"
+METADATA_JSON = SCRIPT_DIR / "07_body_wheels_metadata.json"
 FREECAD_BIN = os.environ.get("FREECAD_BIN", "freecadcmd")
+
+# Which link's metadata carries each override-able object's placement --
+# see 07_create_body_and_wheels.py's sts_mount_placement field (Issue #120).
+STS_MOUNT_METADATA_LINK = {
+    "STS3032_Mount": "Pendulum_Link",
+    "STS3032_Mount_Right": "Pendulum_Link_Right",
+}
 
 # Seeded values from the YAML
 SEEDED_STS_MOUNT_POS = [-1.0, -0.40, -7.00]
 SEEDED_STS_MOUNT_RIGHT_POS = [-1.0, 54.02, 13.05]
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _restore_tracked_artifacts():
+    """This module's subprocess tests regenerate the git-tracked
+    robot_body_wheels.FCStd / 07_body_wheels_metadata.json as a side
+    effect of actually running the generator. Back them up before any
+    test in this module runs and restore after the last one, so a full
+    suite run doesn't leave those tracked artifacts out of sync with
+    06_Exports/urdf/robot.urdf for other test files collected in the
+    same pytest session (e.g. test_urdf_fk_regression.py, which reads
+    the checked-in URDF and expects it to match the checked-in
+    metadata)."""
+    backups = {}
+    for path in (OUTPUT_FCSTD, METADATA_JSON):
+        if path.exists():
+            backups[path] = path.read_bytes()
+    yield
+    for path in (OUTPUT_FCSTD, METADATA_JSON):
+        if path in backups:
+            path.write_bytes(backups[path])
+        elif path.exists():
+            path.unlink()
 
 
 class TestPlacementOverridesYAML:
@@ -124,45 +155,54 @@ class TestPlacementOverridesSubprocess:
 
     @staticmethod
     def _run_generator() -> bool:
-        """Run the generator script via freecadcmd, return success."""
+        """Run the generator script via freecadcmd, return success.
+
+        NOTE: freecadcmd -c's exit code is unreliable (it drops into an
+        interactive REPL after the script runs -- see root CLAUDE.md /
+        run_urdf_export.sh's documented convention). Delete the metadata
+        file first, then treat its (re-)existence as the success signal,
+        same pattern as test_07_body_wheels_geometry.py's
+        test_freecadcmd_run_produces_valid_output.
+        """
+        if METADATA_JSON.exists():
+            METADATA_JSON.unlink()
         try:
             cmd = [
                 FREECAD_BIN,
                 "-c",
             ]
             code = f"exec(open({str(GENERATOR_SCRIPT)!r}).read())"
-            result = subprocess.run(
+            subprocess.run(
                 cmd,
                 input=code,
                 text=True,
-                capture_output=False,
+                capture_output=True,
                 timeout=120,
             )
-            return result.returncode == 0
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return False
+        return METADATA_JSON.exists()
 
     @staticmethod
-    def _open_fcstd_and_get_placement(fcstd_path: str, obj_name: str) -> tuple:
-        """Open a .FCStd file headlessly and read an object's Placement.Base.
+    def _read_sts_mount_position(obj_name: str) -> tuple:
+        """Read an STS mount's Placement.Base via the generator's own JSON
+        metadata output, NOT by importing FreeCAD in this process -- FreeCAD
+        and this env's CadQuery/OCP must never share a process (root
+        CLAUDE.md / README.md's architecture note), so this test process
+        (running under pendulum-tools) can never `import FreeCAD` directly.
 
-        Returns: (x, y, z) tuple or raises exception.
+        Returns: (x, y, z) tuple or raises RuntimeError.
         """
+        link_name = STS_MOUNT_METADATA_LINK.get(obj_name)
+        if link_name is None:
+            raise RuntimeError(f"No metadata link mapping for {obj_name!r}")
         try:
-            import FreeCAD as App
-        except ImportError:
-            pytest.skip("FreeCAD not available")
-
-        try:
-            doc = App.openDocument(fcstd_path)
-            obj = doc.getObject(obj_name)
-            if obj is None:
-                raise ValueError(f"Object {obj_name!r} not found in {fcstd_path}")
-            x, y, z = obj.Placement.Base.x, obj.Placement.Base.y, obj.Placement.Base.z
-            App.closeDocument(fcstd_path)
-            return (x, y, z)
+            with open(METADATA_JSON, "r") as f:
+                data = json.load(f)
+            pos = data["links"][link_name]["sts_mount_placement"]["position"]
+            return (pos["x"], pos["y"], pos["z"])
         except Exception as e:
-            raise RuntimeError(f"Error reading {obj_name} from {fcstd_path}: {e}") from e
+            raise RuntimeError(f"Error reading {obj_name} from {METADATA_JSON}: {e}") from e
 
     def test_generator_runs_with_real_overrides(self) -> None:
         """Run generator with real placement_overrides.yaml in place."""
@@ -172,19 +212,19 @@ class TestPlacementOverridesSubprocess:
         assert OUTPUT_FCSTD.exists(), f"Generator did not produce {OUTPUT_FCSTD}"
 
     def test_output_fcstd_has_seeded_placements(self) -> None:
-        """Verify output FCStd reflects seeded YAML positions."""
-        if not OUTPUT_FCSTD.exists():
-            pytest.skip("Output FCStd not available; run generator first")
+        """Verify generator output reflects seeded YAML positions."""
+        if not METADATA_JSON.exists():
+            pytest.skip("Metadata JSON not available; run generator first")
 
         tolerance = 1e-2  # mm, allow small noise
         try:
-            actual_sts = self._open_fcstd_and_get_placement(str(OUTPUT_FCSTD), "STS3032_Mount")
+            actual_sts = self._read_sts_mount_position("STS3032_Mount")
             for i, expected in enumerate(SEEDED_STS_MOUNT_POS):
                 assert (
                     abs(actual_sts[i] - expected) < tolerance
                 ), f"STS3032_Mount[{i}]: expected {expected}, got {actual_sts[i]}"
 
-            actual_sts_right = self._open_fcstd_and_get_placement(str(OUTPUT_FCSTD), "STS3032_Mount_Right")
+            actual_sts_right = self._read_sts_mount_position("STS3032_Mount_Right")
             for i, expected in enumerate(SEEDED_STS_MOUNT_RIGHT_POS):
                 assert (
                     abs(actual_sts_right[i] - expected) < tolerance
@@ -198,8 +238,8 @@ class TestPlacementOverridesSubprocess:
         Approach: temporarily modify the YAML with a new position for STS3032_Mount,
         regenerate, verify the change is applied, then restore the original YAML.
         """
-        if not OUTPUT_FCSTD.exists():
-            pytest.skip("Output FCStd not available")
+        if not METADATA_JSON.exists():
+            pytest.skip("Metadata JSON not available")
 
         # Back up the real file
         with open(OVERRIDES_FILE, "rb") as f:
@@ -220,7 +260,7 @@ class TestPlacementOverridesSubprocess:
 
             # Verify the new position is applied
             try:
-                actual = self._open_fcstd_and_get_placement(str(OUTPUT_FCSTD), "STS3032_Mount")
+                actual = self._read_sts_mount_position("STS3032_Mount")
                 tolerance = 1e-2
                 for i, expected in enumerate(test_position):
                     assert (
@@ -269,11 +309,15 @@ class TestPlacementOverridesSubprocess:
                 pytest.skip(f"FREECAD_BIN ({FREECAD_BIN}) not found")
                 return
 
-            # Check that the run succeeded
-            assert result.returncode == 0, f"Generator failed: {result.stderr}"
+            # Check that the run succeeded. NOTE: freecadcmd -c's exit code is
+            # unreliable (it drops into an interactive REPL after the script
+            # runs, per root CLAUDE.md / run_urdf_export.sh's documented
+            # convention) -- check for the script's own success marker in
+            # stdout instead of trusting returncode.
+            output = result.stdout + result.stderr
+            assert "Stage 1 Complete" in output, f"Generator did not complete: {output[-2000:]}"
 
             # Check that expected warnings appear in output
-            output = result.stdout + result.stderr
             assert "unknown key" in output.lower() or "STS3032_Mount_Typo" in output, (
                 "Expected 'unknown key' warning not found in output"
             )
