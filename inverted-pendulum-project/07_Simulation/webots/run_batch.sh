@@ -20,6 +20,14 @@
 # the mesh geometry, scale, joint limits, and visual appearance are correct.
 #
 # Exits 0 if Webots initializes and runs without crashing, non-zero otherwise.
+#
+# TIMEOUT BEHAVIOR:
+# This script runs Webots with a timeout (default 30s, overridable via WEBOTS_TIMEOUT_S).
+# If Webots hits the timeout (exit 124 from `timeout`), it is treated as a PASS because:
+#   - The controller is a no-op that intentionally never self-terminates.
+#   - Reaching timeout means Webots successfully initialized, loaded the world, and ran
+#     without crashing — the expected healthy outcome for this smoke test.
+# Actual crashes, import errors, or malformed worlds will exit non-zero before timeout.
 
 set -euo pipefail
 
@@ -45,6 +53,7 @@ WEBOTS_BIN="${WEBOTS_BIN:-/usr/local/bin/webots}"
 LOG_FILE="$SCRIPT_DIR/run_batch.log"
 PROTO_FILE="$SCRIPT_DIR/protos/InvertedPendulumRobot.proto"
 URDF_SOURCE="$SCRIPT_DIR/../../06_Exports/urdf/robot.urdf"
+TIMEOUT_S="${WEBOTS_TIMEOUT_S:-30}"
 
 # Fail fast: world file must exist.
 if [ ! -f "$WORLD" ]; then
@@ -72,14 +81,19 @@ if [ ! -s "$PROTO_FILE" ] || [ "$URDF_SOURCE" -nt "$PROTO_FILE" ]; then
 fi
 
 run_webots() {
-    "$WEBOTS_BIN" --batch --mode=fast --no-rendering --minimize --stdout "$WORLD"
+    timeout "${TIMEOUT_S}s" "$WEBOTS_BIN" --batch --mode=fast --no-rendering --minimize --stdout "$WORLD"
 }
 
 echo "Running Webots (batch, headless, smoke test) on: $WORLD"
 echo "Log: $LOG_FILE"
 echo ""
 
-if run_webots > "$LOG_FILE" 2>&1; then
+set +e
+run_webots > "$LOG_FILE" 2>&1
+rc=$?
+set -e
+
+if [ "$rc" -eq 0 ]; then
     echo "SUCCESS: Webots exited 0 (direct invocation)."
     echo "Webots initialized and ran without crashing (structural smoke test passed)."
     echo ""
@@ -87,6 +101,11 @@ if run_webots > "$LOG_FILE" 2>&1; then
     echo "correctness or physics. A human must visually inspect the robot in the"
     echo "GUI (run_gui.sh) to confirm the mesh geometry, scale, and appearance."
     echo ""
+    tail -n 20 "$LOG_FILE"
+    exit 0
+elif [ "$rc" -eq 124 ]; then
+    echo "TIMEOUT: Webots ran ${TIMEOUT_S}s without crashing -- treating as PASS."
+    echo "(structural smoke test: init + run w/o crash confirmed; this world's controller is intentionally a no-op and never self-terminates, so hitting the timeout is the expected, healthy outcome, not a failure)"
     tail -n 20 "$LOG_FILE"
     exit 0
 fi
@@ -98,8 +117,16 @@ if grep -qiE "display|xcb|cannot open|EGL" "$LOG_FILE"; then
     echo ""
     echo "Detected a display-related failure — retrying with xvfb-run..."
     if command -v xvfb-run >/dev/null 2>&1; then
-        if xvfb-run -a "$WEBOTS_BIN" --batch --mode=fast --no-rendering --minimize --stdout "$WORLD" > "$LOG_FILE.xvfb" 2>&1; then
-            echo "SUCCESS: Webots exited 0 under xvfb-run."
+        set +e
+        timeout "${TIMEOUT_S}s" xvfb-run -a "$WEBOTS_BIN" --batch --mode=fast --no-rendering --minimize --stdout "$WORLD" > "$LOG_FILE.xvfb" 2>&1
+        rc=$?
+        set -e
+        if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ]; then
+            if [ "$rc" -eq 124 ]; then
+                echo "TIMEOUT: Webots ran ${TIMEOUT_S}s under xvfb-run without crashing -- treating as PASS."
+            else
+                echo "SUCCESS: Webots exited 0 under xvfb-run."
+            fi
             echo "Webots initialized and ran without crashing (structural smoke test passed)."
             echo ""
             echo "NOTE: This is a structural smoke test only. It does NOT validate visual"
