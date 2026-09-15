@@ -28,9 +28,15 @@ CRITICAL DESIGN DECISIONS:
      implicitly treats Base_Link as the root/fixed frame.
 
 Output:
-    - 06_Exports/urdf/robot.urdf (URDF XML)
+    - 06_Exports/urdf/robot.urdf (URDF XML with package:// mesh URIs)
     - 06_Exports/urdf/meshes/feetech-STS3032-visual.stl (copied visual mesh)
     - 03_Parts/Generators/10_urdf_export_metadata.json (validation + export log)
+
+NOTE on Webots Export:
+    The raw package:// mesh URIs in robot.urdf are NOT Webots-ready. The Webots
+    integration script (07_Simulation/webots/prepare_urdf_for_webots.sh) post-processes
+    this URDF to rewrite mesh paths to Webots-relative URLs, producing robot_webots.urdf.
+    Always use that downstream URDF for Webots simulation, not this one.
 
 Usage:
     # Pure Python, no FreeCAD required.
@@ -181,6 +187,58 @@ def compute_box_inertia(mass_kg: float, dx: float, dy: float, dz: float) -> Dict
         'ixz': 0.0,
         'iyz': 0.0,
     }
+
+
+def ypr_deg_to_rotation_matrix(yaw_deg: float, pitch_deg: float, roll_deg: float):
+    """Convert YPR angles (degrees) to a 3x3 rotation matrix (numpy).
+
+    Rotations are applied in order: Yaw (Z), Pitch (Y), Roll (X).
+    This matches the convention in apply_rotation_to_vector().
+
+    Args:
+        yaw_deg, pitch_deg, roll_deg: rotation angles in degrees
+
+    Returns:
+        3x3 numpy array representing the rotation matrix
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        raise ImportError("NumPy required for rotation matrix computation")
+
+    # Convert to radians
+    yaw = math.radians(yaw_deg)
+    pitch = math.radians(pitch_deg)
+    roll = math.radians(roll_deg)
+
+    # Rotation matrices for each axis (intrinsic ZYX order)
+    # Yaw (Z-axis)
+    cos_y, sin_y = math.cos(yaw), math.sin(yaw)
+    Rz = np.array([
+        [cos_y, -sin_y, 0],
+        [sin_y, cos_y, 0],
+        [0, 0, 1]
+    ])
+
+    # Pitch (Y-axis)
+    cos_p, sin_p = math.cos(pitch), math.sin(pitch)
+    Ry = np.array([
+        [cos_p, 0, sin_p],
+        [0, 1, 0],
+        [-sin_p, 0, cos_p]
+    ])
+
+    # Roll (X-axis)
+    cos_r, sin_r = math.cos(roll), math.sin(roll)
+    Rx = np.array([
+        [1, 0, 0],
+        [0, cos_r, -sin_r],
+        [0, sin_r, cos_r]
+    ])
+
+    # Compose: R = Rx @ Ry @ Rz (apply Yaw first, then Pitch, then Roll)
+    R = Rx @ Ry @ Rz
+    return R
 
 
 def apply_rotation_to_vector(vector_mm: List[float], yaw_deg: float, pitch_deg: float, roll_deg: float) -> List[float]:
@@ -1325,14 +1383,17 @@ def main():
             child = ref1.rsplit('_Link', 1)[0] if ref1.endswith('_Link') else ref1
 
             # Parse axis from config (format: "global Y (0,1,0)" or similar)
+            # NOTE: This axis is stored in GLOBAL coordinates, but URDF <axis> must be
+            # expressed in the child/joint's LOCAL frame (after rpy is applied).
+            # Issue #156: compose the global axis with the inverse rotation to express it locally.
             axis_str = joint_data.get('axis', 'global Y (0,1,0)')
             # Extract the (x,y,z) tuple from the string
             try:
                 axis_part = axis_str[axis_str.find('(') + 1:axis_str.find(')')]
-                axis = [float(x.strip()) for x in axis_part.split(',')]
+                axis_global = [float(x.strip()) for x in axis_part.split(',')]
             except (ValueError, IndexError):
                 # Fallback to default
-                axis = [0, 1, 0]
+                axis_global = [0, 1, 0]
                 print(f"   WARNING: Could not parse axis for {joint_name}, using [0, 1, 0]")
 
             # Extract and convert rotation from joint_config
@@ -1344,6 +1405,31 @@ def main():
             roll_deg = rotation_ypr_deg.get('roll', 0.0)
             # Convert to radians and reorder: URDF uses [roll, pitch, yaw]
             rpy_rad = [math.radians(roll_deg), math.radians(pitch_deg), math.radians(yaw_deg)]
+
+            # Compose global axis with inverse rotation to express in child/local frame.
+            # The rotation matrix transforms from child→parent, so its inverse transforms parent→child.
+            # Apply R^-1 (= R^T for orthonormal matrices) to the global axis.
+            try:
+                import numpy as np
+                R = ypr_deg_to_rotation_matrix(yaw_deg, pitch_deg, roll_deg)
+                R_inv = R.T  # Inverse of orthonormal matrix is its transpose
+                axis_local = np.dot(R_inv, np.array(axis_global)).tolist()
+                # Normalize the result (should already be ~1.0, but round floating point)
+                axis_norm = math.sqrt(sum(x*x for x in axis_local))
+                if axis_norm > 1e-9:
+                    axis = [x / axis_norm for x in axis_local]
+                else:
+                    axis = [0, 1, 0]
+                    print(f"   WARNING: axis norm near zero for {joint_name}, using [0, 1, 0]")
+            except ImportError:
+                axis = axis_global
+                print(f"   WARNING: NumPy unavailable for axis composition, using global axis for {joint_name}")
+
+            # Sanity check: axis should be a unit vector
+            axis_norm = math.sqrt(sum(x*x for x in axis))
+            assert abs(axis_norm - 1.0) < 1e-6, (
+                f"Joint {joint_name} axis {axis} is not a unit vector (norm={axis_norm:.6f})"
+            )
 
             joint_elem = build_urdf_joint(
                 joint_name,
