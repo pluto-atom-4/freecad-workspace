@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-15T16:25:32.307463+00:00",
+  "timestamp": "2026-09-15T16:30:48.616460+00:00",
   "urdf_file": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/06_Exports/urdf/robot.urdf",
   "checks": [
     {
@@ -20,7 +20,7 @@
     {
       "check": "joint_axes",
       "passed": true,
-      "details": "All joint axes are unit vectors"
+      "details": "All joint axes are unit vectors (includes direction check from joint_config.json)"
     }
   ],
   "summary": {

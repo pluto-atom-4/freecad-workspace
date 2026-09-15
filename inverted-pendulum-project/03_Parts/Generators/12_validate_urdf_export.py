@@ -44,6 +44,7 @@ _EXPORTS_DIR = SCRIPT_DIR.parent.parent / "06_Exports"
 
 # File paths
 URDF_FILE = _EXPORTS_DIR / "urdf" / "robot.urdf"
+JOINT_CONFIG_FILE = SCRIPT_DIR / "joint_config.json"
 OUTPUT_REPORT_FILE = SCRIPT_DIR / "12_urdf_export_validation_report.json"
 
 
@@ -209,6 +210,111 @@ def validate_unit_consistency(urdf_root: ET.Element) -> List[Dict[str, Any]]:
         }]
 
 
+def ypr_deg_to_rotation_matrix(yaw_deg: float, pitch_deg: float, roll_deg: float):
+    """Convert YPR angles (degrees) to a 3x3 rotation matrix.
+
+    Rotations are applied in order: Yaw (Z), Pitch (Y), Roll (X).
+    This matches the convention in 10_export_urdf.py.
+
+    Args:
+        yaw_deg, pitch_deg, roll_deg: rotation angles in degrees
+
+    Returns:
+        3x3 list-of-lists representing the rotation matrix
+    """
+    # Convert to radians
+    yaw = math.radians(yaw_deg)
+    pitch = math.radians(pitch_deg)
+    roll = math.radians(roll_deg)
+
+    cos_y, sin_y = math.cos(yaw), math.sin(yaw)
+    cos_p, sin_p = math.cos(pitch), math.sin(pitch)
+    cos_r, sin_r = math.cos(roll), math.sin(roll)
+
+    # Rotation matrices
+    # Yaw (Z-axis)
+    Rz = [
+        [cos_y, -sin_y, 0],
+        [sin_y, cos_y, 0],
+        [0, 0, 1]
+    ]
+
+    # Pitch (Y-axis)
+    Ry = [
+        [cos_p, 0, sin_p],
+        [0, 1, 0],
+        [-sin_p, 0, cos_p]
+    ]
+
+    # Roll (X-axis)
+    Rx = [
+        [1, 0, 0],
+        [0, cos_r, -sin_r],
+        [0, sin_r, cos_r]
+    ]
+
+    # Compose: R = Rx @ Ry @ Rz
+    def matmul(A, B):
+        """Simple 3x3 matrix multiplication."""
+        result = [[0]*3 for _ in range(3)]
+        for i in range(3):
+            for j in range(3):
+                for k in range(3):
+                    result[i][j] += A[i][k] * B[k][j]
+        return result
+
+    RyRz = matmul(Ry, Rz)
+    R = matmul(Rx, RyRz)
+    return R
+
+
+def compose_axis(axis_global: List[float], rotation_ypr_deg: Dict[str, float]) -> Optional[List[float]]:
+    """Compose global axis with inverse rotation to express in local/child frame.
+
+    The rotation matrix transforms from child→parent, so its inverse transforms
+    parent→child. Apply R^-1 (= R^T for orthonormal matrices) to the global axis.
+
+    Args:
+        axis_global: Global axis as [x, y, z]
+        rotation_ypr_deg: Dict with keys 'yaw', 'pitch', 'roll' (in degrees)
+
+    Returns:
+        Composed and normalized axis, or None if norm too small
+    """
+    yaw_deg = rotation_ypr_deg.get('yaw', 0.0)
+    pitch_deg = rotation_ypr_deg.get('pitch', 0.0)
+    roll_deg = rotation_ypr_deg.get('roll', 0.0)
+
+    R = ypr_deg_to_rotation_matrix(yaw_deg, pitch_deg, roll_deg)
+
+    # R_inv = R^T for orthonormal matrix
+    R_inv = [[R[j][i] for j in range(3)] for i in range(3)]
+
+    # Apply R_inv to axis_global
+    axis_local = [0, 0, 0]
+    for i in range(3):
+        for j in range(3):
+            axis_local[i] += R_inv[i][j] * axis_global[j]
+
+    # Normalize
+    axis_norm = math.sqrt(sum(x*x for x in axis_local))
+    if axis_norm > 1e-9:
+        return [x / axis_norm for x in axis_local]
+    else:
+        return None
+
+
+def load_joint_config() -> Optional[Dict[str, Any]]:
+    """Load joint_config.json if available."""
+    if not JOINT_CONFIG_FILE.exists():
+        return None
+    try:
+        with open(JOINT_CONFIG_FILE, 'r') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return None
+
+
 def validate_link_connectivity(urdf_root: ET.Element) -> List[Dict[str, Any]]:
     """Validate URDF link connectivity: single root, all reachable, no cycles.
 
@@ -320,7 +426,12 @@ def validate_link_connectivity(urdf_root: ET.Element) -> List[Dict[str, Any]]:
 
 
 def validate_joint_axes(urdf_root: ET.Element) -> List[Dict[str, Any]]:
-    """Validate that joint axes are unit vectors (norm ≈ 1.0).
+    """Validate that joint axes are unit vectors and have correct direction.
+
+    Checks:
+      1. Axis norm is approximately 1.0 (unit vector check)
+      2. If joint_config.json is available, axis direction matches the expected
+         composed value computed from the global axis and RPY rotation.
 
     Args:
         urdf_root: Parsed URDF XML root element
@@ -330,6 +441,10 @@ def validate_joint_axes(urdf_root: ET.Element) -> List[Dict[str, Any]]:
     """
     TOLERANCE = 1e-3
     errors = []
+
+    # Load joint config for direction validation
+    joint_config = load_joint_config()
+    has_direction_check = joint_config is not None
 
     for joint in urdf_root.findall('joint'):
         joint_name = joint.get('name', 'unknown')
@@ -349,14 +464,42 @@ def validate_joint_axes(urdf_root: ET.Element) -> List[Dict[str, Any]]:
                 })
                 continue
 
+            # Check 1: Unit vector norm
             norm = math.sqrt(sum(x*x for x in axis))
             if abs(norm - 1.0) > TOLERANCE:
                 errors.append({
                     'joint': joint_name,
                     'axis': axis,
                     'norm': norm,
+                    'check_type': 'norm',
                     'message': f'Axis {axis} has norm {norm:.6f}, expected ~1.0'
                 })
+
+            # Check 2: Axis direction (if joint_config available)
+            if has_direction_check and 'joints' in joint_config:
+                joint_data = joint_config['joints'].get(joint_name)
+                if joint_data:
+                    axis_global = joint_data.get('axis_global', [0, 1, 0])
+                    rotation_ypr_deg = joint_data.get('rotation_ypr_deg', {
+                        'yaw': 0.0, 'pitch': 0.0, 'roll': 0.0
+                    })
+
+                    expected_axis = compose_axis(axis_global, rotation_ypr_deg)
+                    if expected_axis is not None:
+                        # Compare with computed direction
+                        direction_error = math.sqrt(sum((a - e)**2 for a, e in zip(axis, expected_axis)))
+                        if direction_error > TOLERANCE:
+                            errors.append({
+                                'joint': joint_name,
+                                'axis': axis,
+                                'expected_axis': expected_axis,
+                                'check_type': 'direction',
+                                'error': direction_error,
+                                'axis_global': axis_global,
+                                'rotation_ypr_deg': rotation_ypr_deg,
+                                'message': f'Axis direction mismatch: {axis} vs expected {expected_axis} (error={direction_error:.6f})'
+                            })
+
         except (ValueError, IndexError) as e:
             errors.append({
                 'joint': joint_name,
@@ -365,17 +508,19 @@ def validate_joint_axes(urdf_root: ET.Element) -> List[Dict[str, Any]]:
             })
 
     if errors:
+        direction_check_info = " (includes direction check from joint_config.json)" if has_direction_check else ""
         return [{
             'check': 'joint_axes',
             'passed': False,
-            'details': f'Found {len(errors)} axis validation issue(s)',
+            'details': f'Found {len(errors)} axis validation issue(s){direction_check_info}',
             'errors': errors,
         }]
     else:
+        direction_check_info = " (includes direction check from joint_config.json)" if has_direction_check else ""
         return [{
             'check': 'joint_axes',
             'passed': True,
-            'details': 'All joint axes are unit vectors',
+            'details': f'All joint axes are unit vectors{direction_check_info}',
         }]
 
 
