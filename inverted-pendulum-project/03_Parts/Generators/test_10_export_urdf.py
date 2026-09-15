@@ -806,7 +806,7 @@ def test_base_link_visual_collision_box_origin():
     Base_Link's bounding box in world frame is asymmetric:
       x: -4.6 to 35.4  (span 40.0mm, center 15.4)
       y: -21.0 to 59.0 (span 80.0mm, center 19.0)
-      z: 87.9 to 90.4  (span 2.5mm, center 89.15)
+      z: 87.4 to 89.9  (span 2.5mm, center 88.65)
 
     Both visual and collision geometry must have <origin xyz> set to the bbox center
     (in meters), otherwise the box renders as a thin sliver stuck at world origin,
@@ -873,4 +873,22 @@ def test_base_link_visual_collision_box_origin():
         assert abs(collision_xyz[i] - expected_center_m[i]) < tolerance, (
             f"Base_Link collision origin[{i}] = {collision_xyz[i]:.6f}m, "
             f"expected {expected_center_m[i]:.6f}m (bbox center)"
+        )
+
+    # Check inertial element has origin matching bbox center (Issue #125)
+    inertials = base_link.findall('inertial')
+    assert len(inertials) >= 1, "Base_Link should have at least one inertial element"
+
+    inertial = inertials[0]
+    inertial_origin = inertial.find('origin')
+    assert inertial_origin is not None, "Base_Link inertial should have origin element"
+
+    inertial_xyz_str = inertial_origin.get('xyz')
+    assert inertial_xyz_str is not None, "Base_Link inertial origin missing xyz"
+
+    inertial_xyz = [float(x) for x in inertial_xyz_str.split()]
+    for i in range(3):
+        assert abs(inertial_xyz[i] - expected_center_m[i]) < tolerance, (
+            f"Base_Link inertial origin[{i}] = {inertial_xyz[i]:.6f}m, "
+            f"expected {expected_center_m[i]:.6f}m (bbox center, prevents Issue #125 regression)"
         )

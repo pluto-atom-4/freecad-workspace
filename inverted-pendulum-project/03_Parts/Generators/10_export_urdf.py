@@ -931,7 +931,7 @@ def main():
         base_link = build_urdf_link(
             'Base_Link',
             base_mass,
-            [0, 0, 0],  # CoM at origin for root link
+            base_center,  # CoM = bbox center, same value as visual/collision origin (Issue #124/#125)
             base_inertia,
             visual_geometry={
                 'type': 'box',
