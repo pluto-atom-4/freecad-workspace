@@ -1,0 +1,44 @@
+# Optional per-object Placement.Base (position, mm) overrides for
+# 07_create_body_and_wheels.py. Key = exact object Name. Omit a key, or
+# omit this whole file, to keep that object's hardcoded script-constant
+# default -- this file only overrides, never the sole source of truth.
+# A human measures `original`/`adjust` directly off the live FCStd's
+# Data tab -> Placement -> Position for that exact object (see
+# inverted-pendulum-project/README.md's alignment workflow section).
+# Only the keys being changed need to be present; the file accumulates
+# across correction rounds.
+#
+# Wheel_Left / Wheel_Right: SPLIT-AXIS (Issue #146 Amendment 2).
+# X/Y axes: VERIFY-ONLY (hole-derived, physical hardware fit -- never written).
+#           Compared against actual post-remount position, warns (non-fatal) on mismatch.
+# Z axis:   APPLIED (written if it differs from adjust[2] beyond tolerance).
+#           Allows vertical offset correction while preserving hole-fit on X/Y.
+
+STS3032_Mount:
+  original: [-1.0, -0.40, -7.00]
+  adjust:   [-1.0, -0.40,  0.00]
+
+STS3032_Mount_Right:
+  original: [-1.0, 54.02, 13.05]
+  adjust:   [-1.0, 54.02,  6.05]
+
+PlateStack:
+  original: [0.0, 0.0, 0.0]
+  adjust:   [-1.0, -0.50, 0.00]
+
+PlateStack_Right:
+  original: [0.0, 0.0, 0.0]
+  adjust:   [-1.0, 2.50, -6.00]
+
+Wheel_Left:
+  original: [15.00, -28.53, 54.01]
+  adjust:   [14.00, -29.30, 54.01]
+
+Wheel_Right:
+  original: [15.00, 67.03, 51.01]
+  adjust:   [14.00, 70.43, 54.01]
+
+# Base_Link: uncomment to override.
+# Base_Link:
+#   original: [15.40, 19.00, 0.0]
+#   adjust:   [15.40, 19.00, 0.0]

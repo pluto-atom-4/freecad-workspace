@@ -127,6 +127,7 @@ Output:
 import sys
 import json
 import functools
+import yaml
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional
@@ -174,6 +175,8 @@ SOURCE_DOC_FILENAME = "plates_servo_assembled.FCStd"
 OUTPUT_DOC_NAME = "robot_body_wheels"
 OUTPUT_FCSTD_FILENAME = "robot_body_wheels.FCStd"
 METADATA_FILENAME = "07_body_wheels_metadata.json"
+PLACEMENT_OVERRIDES_FILENAME = "placement_overrides.yaml"
+KNOWN_OVERRIDE_KEYS = frozenset({"STS3032_Mount", "STS3032_Mount_Right", "PlateStack", "PlateStack_Right", "Base_Link", "Wheel_Left", "Wheel_Right"})
 
 # Tessellation deflection for triangle-count reporting -- matches the
 # project's established 1.0mm visual-mesh convention (see
@@ -348,6 +351,8 @@ class LinkRecord:
     triangle_count: Optional[int] = None
     plate_shapes: Optional[List[Dict[str, Any]]] = None
     sts_mount_placement: Optional[Dict[str, Any]] = None
+    plate_stack_placement: Optional[Dict[str, Any]] = None
+    servo_visual_mesh_local_bbox_center: Optional[Dict[str, float]] = None
     notes: Optional[str] = None
 
     def to_dict(self) -> dict:
@@ -395,6 +400,7 @@ class BodyWheelsGenerator:
         self.new_primitive_triangle_count = 0
         self.total_volume_mm3 = 0.0
         self.bottom_plate_right_name: Optional[str] = None
+        self.placement_overrides: Dict[str, Dict[str, Any]] = {}
 
     # ---------------------------------------------------------------
     # Setup
@@ -411,6 +417,45 @@ class BodyWheelsGenerator:
             return True
         except Exception as e:
             print(f"ERROR loading robot_parameters.yaml: {e}")
+            return False
+
+    def load_placement_overrides(self) -> bool:
+        """Load optional Placement.Base position overrides from YAML.
+
+        Missing file → no overrides (optional). Present but unparsable →
+        hard fail, same severity as malformed robot_parameters.yaml.
+        Unknown keys trigger a warning and are dropped (idempotent, typos
+        don't break the run).
+        """
+        try:
+            override_path = SCRIPT_DIR / PLACEMENT_OVERRIDES_FILENAME
+            if not override_path.exists():
+                print(f"Note: {PLACEMENT_OVERRIDES_FILENAME} not found (optional)")
+                self.placement_overrides = {}
+                return True
+
+            with open(override_path, "r") as f:
+                data = yaml.safe_load(f)
+
+            if not isinstance(data, dict):
+                print(f"ERROR: {PLACEMENT_OVERRIDES_FILENAME} top level is not a mapping")
+                return False
+
+            # Filter out unknown keys with a warning
+            filtered = {}
+            for key, value in data.items():
+                if key not in KNOWN_OVERRIDE_KEYS:
+                    print(f"WARNING: {PLACEMENT_OVERRIDES_FILENAME}: unknown key {key!r}, "
+                          f"no matching object -- skipping")
+                else:
+                    filtered[key] = value
+
+            self.placement_overrides = filtered
+            loaded_keys = ", ".join(sorted(filtered.keys())) if filtered else "(none)"
+            print(f"✓ Loaded placement overrides: {loaded_keys}")
+            return True
+        except Exception as e:
+            print(f"ERROR loading {PLACEMENT_OVERRIDES_FILENAME}: {e}")
             return False
 
     def open_source_document(self) -> bool:
@@ -434,6 +479,97 @@ class BodyWheelsGenerator:
         except Exception as e:
             print(f"ERROR creating output document: {e}")
             return False
+
+    def _apply_placement_override(self, obj, name: str) -> None:
+        """Apply a position-only override from placement_overrides.yaml if present.
+
+        If no override exists for this object name, returns without action (no-op,
+        allowing "only supply the parts you're adjusting" semantics). If an override
+        entry is present but malformed (missing 'adjust' or wrong shape), raises
+        RuntimeError (authoring mistake, loud fail). Validates 'original' against
+        the object's current position with a tolerance (warn-only mismatch).
+        Rotation is NOT overridden -- only position. Prints confirmation lines.
+        """
+        override = self.placement_overrides.get(name)
+        if override is None:
+            return  # No override for this object; no-op
+
+        adjust = override.get("adjust")
+        if adjust is None or len(adjust) != 3:
+            raise RuntimeError(
+                f"Malformed override for {name!r}: 'adjust' key missing or "
+                f"not a length-3 list (got {adjust!r})"
+            )
+
+        # Warn-only original check: compare current position to the recorded 'original'
+        original = override.get("original")
+        if original is not None and len(original) == 3:
+            current_pos = (obj.Placement.Base.x, obj.Placement.Base.y, obj.Placement.Base.z)
+            tolerance = 1e-3  # mm
+            if not all(abs(c - o) < tolerance for c, o in zip(current_pos, original)):
+                print(f"WARNING: {name} position mismatch:")
+                print(f"  original (expected): {original}")
+                print(f"  current (actual):    {list(current_pos)}")
+
+        # Apply position only; keep existing rotation
+        old_pos = (obj.Placement.Base.x, obj.Placement.Base.y, obj.Placement.Base.z)
+        obj.Placement = Placement(Vector(*adjust), obj.Placement.Rotation)
+        print(f"  ✓ {name}: position override {list(old_pos)} → {adjust}")
+
+    def _verify_wheel_expected_position(self, obj, name: str) -> None:
+        """Split-axis verification + Z application for wheels (Issue #146, Amendment 2).
+
+        X/Y stay verify-only (hole-derived, never written). Z is now APPLIED if it
+        differs from the YAML's adjust[2] beyond tolerance.
+
+        If no override entry exists for this wheel, returns without action (no-op).
+        If an override entry is present but malformed (missing 'adjust' or wrong shape),
+        raises RuntimeError (authoring mistake, loud fail).
+        """
+        override = self.placement_overrides.get(name)
+        if override is None:
+            return  # No override for this wheel; no-op
+
+        expected = override.get("adjust")
+        if expected is None or len(expected) != 3:
+            raise RuntimeError(
+                f"Malformed override for {name!r}: 'adjust' key missing or "
+                f"not a length-3 list (got {expected!r})"
+            )
+
+        actual_pos = (obj.Placement.Base.x, obj.Placement.Base.y, obj.Placement.Base.z)
+        tolerance = 1e-2  # mm
+
+        # X/Y: verify only, never write (hole-derived, physical invariant)
+        x_match = abs(actual_pos[0] - expected[0]) < tolerance
+        y_match = abs(actual_pos[1] - expected[1]) < tolerance
+
+        if x_match and y_match:
+            print(f"  ✓ {name}: X/Y match expected ({expected[0]:.4f}, {expected[1]:.4f}) (hole-derived, not overridden)")
+        else:
+            print(f"WARNING: {name} X/Y mismatch (hole-derived, not overridden):")
+            print(f"  actual (hole-derived):   ({actual_pos[0]:.4f}, {actual_pos[1]:.4f})")
+            print(f"  expected:                ({expected[0]:.4f}, {expected[1]:.4f})")
+
+        # Z: apply if it differs beyond tolerance (Amendment 2 split-axis handling)
+        old_z = actual_pos[2]
+        z_match = abs(old_z - expected[2]) < tolerance
+
+        if z_match:
+            print(f"  ✓ {name}: Z matches expected {expected[2]:.4f} (no correction needed)")
+        else:
+            # Write Z, keep X/Y unchanged
+            obj.Placement = Placement(
+                Vector(obj.Placement.Base.x, obj.Placement.Base.y, expected[2]),
+                obj.Placement.Rotation,
+            )
+            print(f"  ⚙ {name}: Z corrected {old_z:.4f} -> {expected[2]:.4f} (X/Y stay hole-derived)")
+
+        # Update metadata record with final placement (after Z correction if applied)
+        for record in self.links:
+            if record.name == name:
+                record.placement = _placement_to_dict(obj.Placement)
+                break
 
     # ---------------------------------------------------------------
     # Geometry: chassis + wheels
@@ -659,6 +795,7 @@ class BodyWheelsGenerator:
 
             # Copy the servo meshes (Mesh::Feature: Mesh + Placement)
             mesh_children = []
+            servo_visual_mesh_local_bbox_center = None
             for child in source_sts_mount.Group:
                 if not hasattr(child, "Mesh"):
                     continue
@@ -670,6 +807,14 @@ class BodyWheelsGenerator:
                 mesh_children.append(new_obj)
                 facets = new_obj.Mesh.CountFacets
                 self.reused_mesh_facet_counts[child.Name] = facets
+                # Capture bbox center of the visual servo mesh for URDF composition (Issue #148)
+                if child.Name == "feetech_STS3032_visual_1_0mm":
+                    bbox_center = new_obj.Mesh.BoundBox.Center
+                    servo_visual_mesh_local_bbox_center = {
+                        "x": round(bbox_center.x, 4),
+                        "y": round(bbox_center.y, 4),
+                        "z": round(bbox_center.z, 4),
+                    }
                 print(f"  ✓ Copied {child.Name} into STS3032_Mount ({facets} facets)")
 
             # Human-tuned live (Issue #77): STS3032_Mount's own Placement,
@@ -679,6 +824,13 @@ class BodyWheelsGenerator:
                 Vector(*PENDULUM_LINK_STS_MOUNT_POSITION_MM),
                 Rotation(Vector(1, 0, 0), PENDULUM_LINK_STS_MOUNT_TILT_DEG),
             )
+
+            # Apply placement overrides if present (Issue #146)
+            self._apply_placement_override(sts_mount, "STS3032_Mount")
+            self._apply_placement_override(plate_stack, "PlateStack")
+
+            # Capture PlateStack placement for URDF composition (Issue #146 Amendment 3)
+            plate_stack_placement = _placement_to_dict(plate_stack.Placement)
 
             if not plate_children:
                 print("ERROR: No plate objects copied from PlateStack")
@@ -735,7 +887,8 @@ class BodyWheelsGenerator:
             # WARNING: bounding_box_mm (post-Placement, world-frame) is NOT safe
             # to use directly as box dimensions in URDF when the link has rotation --
             # use bounding_box_local_mm instead.
-            plate_bbox_global = plate_bbox.transformed(pendulum_link.Placement.toMatrix())
+            # Compose PlateStack placement first, then Pendulum_Link placement (Issue #146 Amendment 3)
+            plate_bbox_global = plate_bbox.transformed(plate_stack.Placement.toMatrix()).transformed(pendulum_link.Placement.toMatrix())
 
             volume = sum(obj.Shape.Volume for obj in plate_children)
             self.total_volume_mm3 += volume
@@ -770,6 +923,8 @@ class BodyWheelsGenerator:
                 target_mass_kg=self.params.target_mass_for_link_kg("Pendulum_Link"),
                 plate_shapes=plate_shapes,
                 sts_mount_placement=sts_mount_placement,
+                plate_stack_placement=plate_stack_placement,
+                servo_visual_mesh_local_bbox_center=servo_visual_mesh_local_bbox_center,
                 notes=(
                     "Copied (not linked) from plates_servo_assembled.FCStd's "
                     "PlateStack + STS3032_Mount groups -- see module "
@@ -869,6 +1024,7 @@ class BodyWheelsGenerator:
                       f"(Z override: {child.Name in z_overrides})")
 
             mesh_children = []
+            servo_visual_mesh_local_bbox_center = None
             for child in source_sts_mount.Group:
                 if not hasattr(child, "Mesh"):
                     continue
@@ -887,6 +1043,14 @@ class BodyWheelsGenerator:
                 mesh_children.append(new_obj)
                 facets = new_obj.Mesh.CountFacets
                 self.reused_mesh_facet_counts[new_name] = facets
+                # Capture bbox center of the visual servo mesh for URDF composition (Issue #148)
+                if child.Name == "feetech_STS3032_visual_1_0mm":
+                    bbox_center = new_obj.Mesh.BoundBox.Center
+                    servo_visual_mesh_local_bbox_center = {
+                        "x": round(bbox_center.x, 4),
+                        "y": round(bbox_center.y, 4),
+                        "z": round(bbox_center.z, 4),
+                    }
                 print(f"  ✓ Copied {child.Name} into STS3032_Mount_Right as {new_name} ({facets} facets)")
 
             # Human-tuned live: STS3032_Mount_Right's own Placement (not
@@ -897,6 +1061,13 @@ class BodyWheelsGenerator:
                 Vector(*PENDULUM_LINK_RIGHT_STS_MOUNT_POSITION_MM),
                 Rotation(Vector(1, 0, 0), PENDULUM_LINK_RIGHT_STS_MOUNT_TILT_DEG),
             )
+
+            # Apply placement overrides if present (Issue #146)
+            self._apply_placement_override(sts_mount, "STS3032_Mount_Right")
+            self._apply_placement_override(plate_stack, "PlateStack_Right")
+
+            # Capture PlateStack_Right placement for URDF composition (Issue #146 Amendment 3)
+            plate_stack_placement = _placement_to_dict(plate_stack.Placement)
 
             if not plate_children:
                 print("ERROR: No plate objects copied into PlateStack_Right")
@@ -948,7 +1119,8 @@ class BodyWheelsGenerator:
             # WARNING: bounding_box_mm (post-Placement, world-frame) is NOT safe
             # to use directly as box dimensions in URDF when the link has rotation --
             # use bounding_box_local_mm instead.
-            plate_bbox_global = plate_bbox.transformed(pendulum_link_right.Placement.toMatrix())
+            # Compose PlateStack_Right placement first, then Pendulum_Link_Right placement (Issue #146 Amendment 3)
+            plate_bbox_global = plate_bbox.transformed(plate_stack.Placement.toMatrix()).transformed(pendulum_link_right.Placement.toMatrix())
 
             volume = sum(obj.Shape.Volume for obj in plate_children)
             self.total_volume_mm3 += volume
@@ -993,6 +1165,8 @@ class BodyWheelsGenerator:
                 target_mass_kg=target_mass_kg,
                 plate_shapes=plate_shapes,
                 sts_mount_placement=sts_mount_placement,
+                plate_stack_placement=plate_stack_placement,
+                servo_visual_mesh_local_bbox_center=servo_visual_mesh_local_bbox_center,
                 notes=(
                     "NOT a geometric mirror of Pendulum_Link -- see "
                     "build_pendulum_link_right()'s docstring. "
@@ -1151,6 +1325,9 @@ class BodyWheelsGenerator:
             base_link.Placement = Placement(
                 base_link.Placement.Base + delta, base_link.Placement.Rotation
             )
+
+            # Apply placement override if present (Issue #146)
+            self._apply_placement_override(base_link, "Base_Link")
 
             self._chassis_top_z = target_top_z
             self._chassis_bottom_z = target_top_z - (local_bbox.ZMax - local_bbox.ZMin)
@@ -1484,6 +1661,10 @@ class BodyWheelsGenerator:
             return False
         print()
 
+        if not self.load_placement_overrides():
+            return False
+        print()
+
         if not self.open_source_document():
             return False
         print()
@@ -1518,6 +1699,9 @@ class BodyWheelsGenerator:
         print("-" * 70)
         if not self._mount_wheel_on_pendulum_plate("Wheel_Left"):
             return False
+        wheel_left = self.output_doc.getObject("Wheel_Left")
+        if wheel_left:
+            self._verify_wheel_expected_position(wheel_left, "Wheel_Left")
         print()
 
         print("Re-mounting Wheel_Right on Pendulum_Link_Right's Bottom_Plate_Right...")
@@ -1526,6 +1710,9 @@ class BodyWheelsGenerator:
             "Wheel_Right", self.bottom_plate_right_name, Vector(*WHEEL_RIGHT_HOLE_OFFSET_MM)
         ):
             return False
+        wheel_right = self.output_doc.getObject("Wheel_Right")
+        if wheel_right:
+            self._verify_wheel_expected_position(wheel_right, "Wheel_Right")
         print()
 
         print("Repositioning Base_Link under Pendulum_Link/STS3032_Mount...")
