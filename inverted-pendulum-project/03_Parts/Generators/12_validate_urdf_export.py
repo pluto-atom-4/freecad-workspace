@@ -32,12 +32,15 @@ from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timezone
 import math
 
-
 # Script directory resolution (same pattern as Stage 3+4 scripts)
 try:
     SCRIPT_DIR = Path(__file__).resolve().parent
 except NameError:
     SCRIPT_DIR = Path.home() / "freecad-workspace" / "inverted-pendulum-project" / "03_Parts" / "Generators"
+
+# Add script dir to path for importing sibling modules
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 # Relative paths to inputs
 _EXPORTS_DIR = SCRIPT_DIR.parent.parent / "06_Exports"
@@ -210,69 +213,14 @@ def validate_unit_consistency(urdf_root: ET.Element) -> List[Dict[str, Any]]:
         }]
 
 
-def ypr_deg_to_rotation_matrix(yaw_deg: float, pitch_deg: float, roll_deg: float):
-    """Convert YPR angles (degrees) to a 3x3 rotation matrix.
-
-    Rotations are applied in order: Yaw (Z), Pitch (Y), Roll (X).
-    This matches the convention in 10_export_urdf.py.
-
-    Args:
-        yaw_deg, pitch_deg, roll_deg: rotation angles in degrees
-
-    Returns:
-        3x3 list-of-lists representing the rotation matrix
-    """
-    # Convert to radians
-    yaw = math.radians(yaw_deg)
-    pitch = math.radians(pitch_deg)
-    roll = math.radians(roll_deg)
-
-    cos_y, sin_y = math.cos(yaw), math.sin(yaw)
-    cos_p, sin_p = math.cos(pitch), math.sin(pitch)
-    cos_r, sin_r = math.cos(roll), math.sin(roll)
-
-    # Rotation matrices
-    # Yaw (Z-axis)
-    Rz = [
-        [cos_y, -sin_y, 0],
-        [sin_y, cos_y, 0],
-        [0, 0, 1]
-    ]
-
-    # Pitch (Y-axis)
-    Ry = [
-        [cos_p, 0, sin_p],
-        [0, 1, 0],
-        [-sin_p, 0, cos_p]
-    ]
-
-    # Roll (X-axis)
-    Rx = [
-        [1, 0, 0],
-        [0, cos_r, -sin_r],
-        [0, sin_r, cos_r]
-    ]
-
-    # Compose: R = Rx @ Ry @ Rz
-    def matmul(A, B):
-        """Simple 3x3 matrix multiplication."""
-        result = [[0]*3 for _ in range(3)]
-        for i in range(3):
-            for j in range(3):
-                for k in range(3):
-                    result[i][j] += A[i][k] * B[k][j]
-        return result
-
-    RyRz = matmul(Ry, Rz)
-    R = matmul(Rx, RyRz)
-    return R
-
-
 def compose_axis(axis_global: List[float], rotation_ypr_deg: Dict[str, float]) -> Optional[List[float]]:
     """Compose global axis with inverse rotation to express in local/child frame.
 
     The rotation matrix transforms from child→parent, so its inverse transforms
     parent→child. Apply R^-1 (= R^T for orthonormal matrices) to the global axis.
+
+    Uses ypr_deg_to_rotation_matrix() from 10_export_urdf.py (imported to avoid
+    duplication and ensure consistency across the codebase).
 
     Args:
         axis_global: Global axis as [x, y, z]
@@ -281,11 +229,19 @@ def compose_axis(axis_global: List[float], rotation_ypr_deg: Dict[str, float]) -
     Returns:
         Composed and normalized axis, or None if norm too small
     """
+    # Import here to avoid circular dependency and maintain module independence
+    from importlib import import_module
+    exporter = import_module('10_export_urdf')
+
     yaw_deg = rotation_ypr_deg.get('yaw', 0.0)
     pitch_deg = rotation_ypr_deg.get('pitch', 0.0)
     roll_deg = rotation_ypr_deg.get('roll', 0.0)
 
-    R = ypr_deg_to_rotation_matrix(yaw_deg, pitch_deg, roll_deg)
+    R = exporter.ypr_deg_to_rotation_matrix(yaw_deg, pitch_deg, roll_deg)
+
+    # Convert numpy array to list if needed (10_export_urdf.py returns numpy array)
+    if hasattr(R, 'tolist'):
+        R = R.tolist()
 
     # R_inv = R^T for orthonormal matrix
     R_inv = [[R[j][i] for j in range(3)] for i in range(3)]
