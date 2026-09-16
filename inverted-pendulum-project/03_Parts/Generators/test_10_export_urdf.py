@@ -131,17 +131,108 @@ def test_base_link_no_incoming_joint():
 
 
 def test_joint_axes():
-    """All joints have valid axes (should be [0, 1, 0] for Y-axis rotation)."""
+    """Joint axes are expressed in child frame (composed with rpy rotation).
+
+    Issue #156: URDF <axis> must be expressed in the joint's local (child) frame
+    after rpy is applied, not in global coordinates. This test verifies that axes
+    have been correctly composed with the inverse rotation.
+
+    For this robot:
+      - Wheels (left, right) have rpy=[0,0,0], so global axis [0,1,0] is unchanged.
+      - Pendulum pivots have rpy=[0,0,π/2] (90° roll about X), so global axis [0,1,0]
+        is rotated by the inverse (−90° roll about X) to [0,0,−1] in the child frame.
+
+    Reasoning: A 90° roll about X applied to [0,1,0] gives [0,0,1].
+    The inverse (−90° roll) applied to [0,1,0] gives [0,0,−1].
+    This expresses the original global Y-axis in the rotated child frame.
+    """
     root = load_urdf()
+
+    # Load joint config to get expected rotation angles
+    joint_config_file = SCRIPT_DIR / "joint_config.json"
+    if not joint_config_file.exists():
+        pytest.skip(f"joint_config.json not found: {joint_config_file}")
+
+    with open(joint_config_file, 'r') as f:
+        joint_config = json.load(f)
+
     joints = root.findall('joint')
 
     for joint in joints:
+        joint_name = joint.get('name')
         axis_elem = joint.find('axis')
         axis_str = axis_elem.get('xyz')
         axis = [float(x) for x in axis_str.split()]
-        assert axis == [0.0, 1.0, 0.0], (
-            f"Joint {joint.get('name')} has axis {axis}, expected [0, 1, 0]"
-        )
+
+        # Look up expected axis from joint config
+        if joint_name not in joint_config['joints']:
+            # Skip ground joint or other non-config joints
+            continue
+
+        config = joint_config['joints'][joint_name]
+
+        # Determine expected axis based on rotation
+        # Global axis is always [0, 1, 0] (Y-axis) per joint_config.json
+        global_axis = [0.0, 1.0, 0.0]
+
+        # Get rotation angles
+        rotation_ypr = config.get('rotation_ypr_deg', {'yaw': 0.0, 'pitch': 0.0, 'roll': 0.0})
+        yaw = rotation_ypr.get('yaw', 0.0)
+        pitch = rotation_ypr.get('pitch', 0.0)
+        roll = rotation_ypr.get('roll', 0.0)
+
+        # Compute expected axis using the inverse rotation
+        # (same math as in 10_export_urdf.py's axis composition)
+        if abs(roll) < 1e-6 and abs(pitch) < 1e-6 and abs(yaw) < 1e-6:
+            # No rotation: axis unchanged
+            expected_axis = global_axis
+        else:
+            # Apply inverse rotation to global axis
+            # For this robot: roll=90 on pendulum joints means axis should be [0, 0, -1]
+            # For wheels (roll=0): axis should be [0, 1, 0]
+            # Compute via matrix inverse or special case
+
+            # Special case: roll ≈ 90° about X, pitch ≈ 0, yaw ≈ 0
+            # Inverse roll ≈ −90° applied to [0,1,0] gives [0,0,−1]
+            if abs(roll - 90.0) < 0.1 and abs(pitch) < 0.1 and abs(yaw) < 0.1:
+                expected_axis = [0.0, 0.0, -1.0]
+            elif abs(roll - 180.0) < 0.1 and abs(pitch) < 0.1 and abs(yaw) < 0.1:
+                expected_axis = [0.0, -1.0, 0.0]
+            else:
+                # General case: use matrix computation
+                import math
+                import numpy as np
+
+                # Build rotation matrix from YPR (same as ypr_deg_to_rotation_matrix)
+                yaw_rad = math.radians(yaw)
+                pitch_rad = math.radians(pitch)
+                roll_rad = math.radians(roll)
+
+                # Rotation matrices
+                cos_y, sin_y = math.cos(yaw_rad), math.sin(yaw_rad)
+                Rz = np.array([[cos_y, -sin_y, 0], [sin_y, cos_y, 0], [0, 0, 1]])
+
+                cos_p, sin_p = math.cos(pitch_rad), math.sin(pitch_rad)
+                Ry = np.array([[cos_p, 0, sin_p], [0, 1, 0], [-sin_p, 0, cos_p]])
+
+                cos_r, sin_r = math.cos(roll_rad), math.sin(roll_rad)
+                Rx = np.array([[1, 0, 0], [0, cos_r, -sin_r], [0, sin_r, cos_r]])
+
+                R = Rx @ Ry @ Rz
+                R_inv = R.T
+                expected_axis = np.dot(R_inv, np.array(global_axis)).tolist()
+
+                # Normalize
+                norm = math.sqrt(sum(x*x for x in expected_axis))
+                if norm > 1e-9:
+                    expected_axis = [x / norm for x in expected_axis]
+
+        # Compare with tolerance for floating-point precision
+        for i in range(3):
+            assert abs(axis[i] - expected_axis[i]) < 1e-5, (
+                f"Joint {joint_name}: axis {axis} != expected {expected_axis} "
+                f"(roll={roll}°, pitch={pitch}°, yaw={yaw}°)"
+            )
 
 
 def test_every_link_has_inertial():

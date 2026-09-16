@@ -96,4 +96,7 @@ python3 10_export_urdf.py
 echo "=== Phase 11: Inertia validation ==="
 python3 11_validate_inertia.py
 
+echo "=== Phase 12: URDF export validation ==="
+python3 12_validate_urdf_export.py
+
 echo "=== Pipeline complete (Phase 8 requires MCP bridge -- see notes above) ==="

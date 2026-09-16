@@ -1,0 +1,32 @@
+{
+  "timestamp": "2026-09-15T16:37:48.342610+00:00",
+  "urdf_file": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/06_Exports/urdf/robot.urdf",
+  "checks": [
+    {
+      "check": "mesh_paths_exist",
+      "passed": true,
+      "details": "All 1 referenced mesh file(s) exist"
+    },
+    {
+      "check": "unit_consistency",
+      "passed": true,
+      "details": "All geometric values within expected range (< 10.0m)"
+    },
+    {
+      "check": "link_connectivity",
+      "passed": true,
+      "details": "Graph is valid: single root, all 5 link(s) reachable, no cycles"
+    },
+    {
+      "check": "joint_axes",
+      "passed": true,
+      "details": "All joint axes are unit vectors (includes direction check from joint_config.json)"
+    }
+  ],
+  "summary": {
+    "total_checks": 4,
+    "passed_checks": 4,
+    "failed_checks": 0,
+    "overall_status": "PASSED"
+  }
+}
