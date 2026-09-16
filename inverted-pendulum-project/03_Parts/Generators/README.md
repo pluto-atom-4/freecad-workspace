@@ -122,11 +122,50 @@ freecadcmd --python 04_export_assembly_merged.py
 
 ---
 
+## Phase 6: Parametric Bracket & Mesh Tooling
+
+Phase 6 provides **standalone, headless tooling** for parametric bracket generation, mesh validation/repair, and multi-mesh assembly. No FreeCAD required—ideal for CAD automation pipelines and 3D printing workflows.
+
+**3 Tools:**
+
+1. **`06_cadquery_parametric_brackets.py`** — Generate support brackets (simple, L, corner types) with customizable dimensions. Exports to STEP (CAD) and STL (3D printing).
+
+2. **`06_trimesh_mesh_validator.py`** — Validate STL meshes for watertight/manifold properties. Auto-repair common issues (duplicate vertices, degenerate faces).
+
+3. **`06_trimesh_merge_for_stl.py`** — Combine multiple STL meshes with spatial transforms (rotate, scale, translate) into composite assemblies.
+
+**Quick Commands:**
+
+```bash
+# Generate a simple bracket (100×80×10mm with 8mm holes)
+python3 06_cadquery_parametric_brackets.py --type simple --length 100 --width 80 --thickness 10 --hole-diameter 8 --fillet-radius 3
+
+# Validate a mesh
+python3 06_trimesh_mesh_validator.py --input servo.stl
+
+# Auto-repair and export
+python3 06_trimesh_mesh_validator.py --input problematic.stl --auto-repair --output repaired.stl
+
+# Merge multiple meshes (requires merge_config.json with mesh list + transforms)
+python3 06_trimesh_merge_for_stl.py --config merge_config.json
+```
+
+**Output:**
+- Brackets: `.step` (CAD) + `.stl` (3D printing) + metadata JSON
+- Validator: JSON report + optional repaired mesh
+- Merger: Combined `.stl` + metadata JSON
+
+**Status:** ✅ (all 3 tools operational)
+
+**Environment:** `pendulum-tools` mamba environment
+
+---
+
 ## Robot Assembly (Issue #9 Stages 1-5 + URDF Export Stages 4-5)
 
 Complete workflow for creating a two-wheel self-balancing robot assembly from Stage 0's design parameters, configuring joints, computing mass properties, and exporting to URDF format for simulation.
 
-### Phase 7-11 Overview (URDF Export Pipeline)
+### Phase 7-12 Overview (URDF Export Pipeline)
 
 | Phase | Script | Output | Execution Mode | Status |
 |-------|--------|--------|-----------------|--------|
@@ -135,8 +174,9 @@ Complete workflow for creating a two-wheel self-balancing robot assembly from St
 | 9 | `09_compute_mass_properties.py` | `09_mass_properties.json` | `freecadcmd -c` | ✅ |
 | 10 | `10_export_urdf.py` | `06_Exports/urdf/robot.urdf`, `06_Exports/urdf/meshes/`, `10_urdf_export_metadata.json` | `python3` | ✅ |
 | 11 | `11_validate_inertia.py` | `11_inertia_validation_report.json` | `python3` | ✅ |
+| 12 | `12_validate_urdf_export.py` | `12_urdf_export_validation_report.json` | `python3` | ✅ |
 
-**Run phases 7, 9-11 end-to-end:** `./run_urdf_export.sh`  
+**Run phases 7, 9-12 end-to-end:** `./run_urdf_export.sh`  
 **Run Phase 8 separately:** Requires FreeCAD MCP bridge (see Phase 8 section below for details)
 
 ### Joint & Link Naming Convention (for Webots/Simulator Import)
@@ -361,6 +401,83 @@ python3 -m pytest -q test_11_validate_inertia.py
 
 **Status:** ✅ (Issue #91 complete; prototype_measurements.json population pending Issue #8 hardware work)
 
+### Stage 6: Validate URDF Export (Issue #156)
+
+**Script:** `12_validate_urdf_export.py` + `test_12_validate_urdf_export.py`
+
+Validates the exported URDF (from Stage 4) for correctness and consistency. Checks 4 critical aspects: mesh file paths, unit values, link connectivity, and joint axes direction.
+
+**Requirements:**
+- `06_Exports/urdf/robot.urdf` (output from Stage 4)
+- All mesh files referenced in the URDF must exist on disk
+- `joint_config.json` (optional, used for axis direction validation via rotation composition)
+
+**Usage:**
+```bash
+python3 12_validate_urdf_export.py
+python3 -m pytest -q test_12_validate_urdf_export.py
+```
+
+**Output:**
+- `12_urdf_export_validation_report.json` — machine-readable pass/fail report with detailed per-check results and error descriptions
+- Console: human-readable summary of all 4 checks
+
+**Checks (in order):**
+
+1. **Mesh paths exist** — All `<mesh>` URI elements resolve to files on disk. Handles both `package://` URIs and relative paths.
+
+2. **Unit consistency** — All numeric values (position/size/radius/length) are metre-scale and physically plausible. Flags any value exceeding 10.0m (heuristic for detecting missed mm→m conversion bugs like Issues #105, #124, #125, #148).
+
+3. **Link connectivity** — Single root link (no parent joint), all other links reachable from root, no cycles in the kinematic tree. Ensures well-formed URDF structure for simulators.
+
+4. **Joint axes unit vectors** — All joint axes are unit vectors (norm ≈ 1.0) with correct direction in local frame. Validates axes by composing global direction with inverse rotation from `joint_config.json`.
+
+**Exit Code:**
+- 0: all 4 checks passed
+- 1: one or more checks failed
+
+**Report Fields (JSON):**
+```json
+{
+  "validation_timestamp": "ISO 8601 string",
+  "checks": [
+    {
+      "check": "mesh_paths_exist",
+      "passed": true,
+      "details": "All N mesh file(s) exist",
+      "missing_files": []  // populated if passed=false
+    },
+    {
+      "check": "unit_consistency",
+      "passed": true,
+      "details": "All values within expected range (< 10.0m)"
+    },
+    {
+      "check": "link_connectivity",
+      "passed": true,
+      "details": "Graph structure valid: 1 root, all reachable, no cycles"
+    },
+    {
+      "check": "joint_axes_unit_vectors",
+      "passed": true,
+      "details": "All joint axes are valid unit vectors (4 joints checked)"
+    }
+  ],
+  "overall_status": "PASSED",
+  "error_count": 0
+}
+```
+
+**Tests:**
+- Mesh paths: missing files detected correctly
+- Unit consistency: threshold violations flagged
+- Link connectivity: root detection, reachability, cycle detection
+- Joint axes: normalization, direction composition via exporter's rotation helper
+
+**Time:** < 1 second (pure Python, no FreeCAD)
+
+**Status:** ✅ (Issue #156 complete; reuses exporter's `ypr_deg_to_rotation_matrix()` helper for rotation consistency)
+
 ---
 
 ## Testing & Validation (Phase 5, Legacy)
@@ -441,12 +558,12 @@ python3 test_05_integration.py
 
 **Time:** ~60-120 seconds
 
-### Phases 7-11: URDF Export Pipeline (Robot Assembly + Simulation)
+### Phases 7-12: URDF Export Pipeline (Robot Assembly + Simulation)
 
 Run the complete URDF export pipeline in one command:
 
 ```bash
-# Run all phases (7-11) end-to-end
+# Run all phases (7-12) end-to-end
 ./run_urdf_export.sh
 ```
 
@@ -458,9 +575,10 @@ echo "exec(open('08_configure_assembly_joints.py').read())" | freecadcmd -c
 echo "exec(open('09_compute_mass_properties.py').read())" | freecadcmd -c
 python3 10_export_urdf.py
 python3 11_validate_inertia.py
+python3 12_validate_urdf_export.py
 ```
 
-**Time:** ~60-120 seconds (depends on FreeCAD startup)
+**Time:** ~60-120 seconds (depends on FreeCAD startup) + < 1 second for Phase 12
 
 ---
 
@@ -520,7 +638,7 @@ This assumes the vendor's original STL file is manually placed at `~/Documents/`
 Generators/
 ├── run_generator.sh                          # Phase 1-4 generator wrapper
 ├── run_export.sh                             # Phase 5 export wrapper (legacy)
-├── run_urdf_export.sh                        # Phase 7-11 URDF export pipeline
+├── run_urdf_export.sh                        # Phase 7-12 URDF export pipeline
 ├── 01_convert_servo_stl_to_step.py
 ├── 01_convert_servo_stl_to_step_via_freecad.py
 ├── 01_convert_servo_stl_to_step.sh
@@ -543,6 +661,8 @@ Generators/
 ├── test_10_export_urdf.py
 ├── 11_validate_inertia.py                    # Phase 11: Inertia validation (pure Python)
 ├── test_11_validate_inertia.py
+├── 12_validate_urdf_export.py                # Phase 12: URDF validator (pure Python)
+├── test_12_validate_urdf_export.py
 ├── robot_body_wheels.FCStd
 ├── 07_body_wheels_metadata.json
 ├── plates_assembled.FCStd
