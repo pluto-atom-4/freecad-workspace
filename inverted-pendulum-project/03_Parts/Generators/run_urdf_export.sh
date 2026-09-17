@@ -102,12 +102,16 @@ echo "=== Phase 12: URDF export validation ==="
 python3 12_validate_urdf_export.py
 
 echo "=== Phase 13: PROTO structure validation ==="
-cd ../../../07_Simulation/webots
+WEBOTS_DIR="$SCRIPT_DIR/../../07_Simulation/webots"
+cd "$WEBOTS_DIR" || {
+    echo "ERROR: Cannot access webots directory at $WEBOTS_DIR"
+    exit 1
+}
 python3 validate_proto_structure.py
 PHASE_13_EXIT=$?
 
 # Wire back to generators directory for any future phases
-cd ../../../03_Parts/Generators
+cd "$SCRIPT_DIR"
 
 if [ $PHASE_13_EXIT -ne 0 ]; then
     echo "ERROR: Phase 13 (PROTO structure validation) failed"

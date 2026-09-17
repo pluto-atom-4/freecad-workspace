@@ -46,7 +46,7 @@ mkdir -p "$(dirname "$URDF_OUTPUT")"
 # The relative path is from .generated/ (where the output URDF lives) back to
 # the meshes directory: .generated/ is webots/.generated/, going up 3 levels
 # through webots/ -> 07_Simulation/ -> inverted-pendulum-project/, then into 06_Exports/urdf/.
-sed "s|package://inverted_pendulum_robot/|../../../06_Exports/urdf/|g" "$URDF_SOURCE" > "$URDF_OUTPUT"
+sed "s|package://inverted_pendulum_robot/meshes/|../../../06_Exports/urdf/meshes/|g" "$URDF_SOURCE" > "$URDF_OUTPUT"
 
 # Fail loudly if any package:// substring remains (signals incompletely rewritten paths).
 if grep -q "package://" "$URDF_OUTPUT"; then
