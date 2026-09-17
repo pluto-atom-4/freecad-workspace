@@ -35,6 +35,8 @@ from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timezone
 import re
 
+from vrml_lexer import find_matching_brace
+
 # Script directory resolution
 try:
     SCRIPT_DIR = Path(__file__).resolve().parent
@@ -130,27 +132,26 @@ def extract_solid_names_from_proto(proto_content: str) -> set:
     Extract Solid node names from PROTO file.
 
     Finds all `endPoint Solid { ... name "..." ... }` blocks and extracts the name.
-    Handles nested braces by finding endPoint Solid and searching forward for the name attribute.
+    Uses vrml_lexer.find_matching_brace() for proper brace matching.
     """
     solid_names = set()
 
     # Find all occurrences of "endPoint Solid {"
-    # Use brace-counting to properly handle nested braces
     endpoint_pattern = r'endPoint\s+Solid\s*{'
     for match in re.finditer(endpoint_pattern, proto_content):
         # From the opening brace, find the matching closing brace
-        brace_count = 1
-        pos = match.end()
+        open_brace_pos = proto_content.rfind('{', match.start(), match.end() + 1)
+        if open_brace_pos == -1:
+            continue
 
-        while pos < len(proto_content) and brace_count > 0:
-            if proto_content[pos] == '{':
-                brace_count += 1
-            elif proto_content[pos] == '}':
-                brace_count -= 1
-            pos += 1
+        try:
+            close_brace_pos = find_matching_brace(proto_content, open_brace_pos)
+        except ValueError:
+            # Skip blocks with malformed braces
+            continue
 
         # Extract the block content (between the braces)
-        block_content = proto_content[match.end():pos-1]
+        block_content = proto_content[open_brace_pos:close_brace_pos + 1]
 
         # Within this block, find the name attribute
         name_pattern = r'name\s+"([^"]+)"'
@@ -165,6 +166,8 @@ def validate_physics_propagated(urdf_root: ET.Element, proto_content: str) -> Di
     """
     Validate that each Solid link has physics with mass, inertiaMatrix, and centerOfMass.
     Also validates that PROTO has correct number of endPoint Solid nodes.
+
+    Uses vrml_lexer for robust Physics block extraction.
 
     Args:
         urdf_root: Parsed URDF XML root element
@@ -188,24 +191,34 @@ def validate_physics_propagated(urdf_root: ET.Element, proto_content: str) -> Di
     # Extract Solid node names from PROTO to validate structural correctness
     solid_names = extract_solid_names_from_proto(proto_content)
 
-    # Check for complete Physics blocks in PROTO
-    # A complete Physics block must have: mass + inertiaMatrix [ ] + centerOfMass [ ]
-    # Pattern: physics Physics { ... mass ... inertiaMatrix [ ... ] ... centerOfMass [ ... ] ... }
+    # Find all Physics blocks using lexer-based block extraction
+    physics_with_mass = 0
+    physics_with_inertia = 0
+    physics_with_com = 0
 
-    # Count Physics blocks with mass
-    mass_pattern = r'physics\s+Physics\s*{[^}]*?mass\s+\d+\.?\d*'
-    mass_matches = re.findall(mass_pattern, proto_content, re.DOTALL)
-    physics_with_mass = len(mass_matches)
+    physics_pattern = r'physics\s+Physics\s*{'
+    for match in re.finditer(physics_pattern, proto_content):
+        # Find opening brace
+        open_brace_pos = proto_content.rfind('{', match.start(), match.end() + 1)
+        if open_brace_pos == -1:
+            continue
 
-    # Count Physics blocks with inertiaMatrix
-    inertia_pattern = r'physics\s+Physics\s*{[^}]*?inertiaMatrix\s*\['
-    inertia_matches = re.findall(inertia_pattern, proto_content, re.DOTALL)
-    physics_with_inertia = len(inertia_matches)
+        try:
+            close_brace_pos = find_matching_brace(proto_content, open_brace_pos)
+        except ValueError:
+            # Skip malformed blocks
+            continue
 
-    # Count Physics blocks with centerOfMass
-    com_pattern = r'physics\s+Physics\s*{[^}]*?centerOfMass\s*\['
-    com_matches = re.findall(com_pattern, proto_content, re.DOTALL)
-    physics_with_com = len(com_matches)
+        # Extract block content
+        block_content = proto_content[open_brace_pos:close_brace_pos + 1]
+
+        # Check for required attributes
+        if re.search(r'mass\s+\d+\.?\d*', block_content):
+            physics_with_mass += 1
+        if re.search(r'inertiaMatrix\s*\[', block_content):
+            physics_with_inertia += 1
+        if re.search(r'centerOfMass\s*\[', block_content):
+            physics_with_com += 1
 
     # All three must be present in equal numbers (one complete Physics block per link)
     expected_physics_blocks = len([v for v in link_masses.values() if v is not None])
@@ -279,7 +292,10 @@ def validate_mesh_urls_resolve(urdf_root: ET.Element, proto_content: str) -> Dic
 
 def validate_vrml_syntax(proto_content: str) -> Dict[str, Any]:
     """
-    Validate basic VRML syntax: braces balanced, non-empty file.
+    Validate VRML syntax: braces balanced, non-empty file, proper string/comment handling.
+
+    Uses vrml_lexer.find_matching_brace() to validate proper brace matching across
+    the entire file, catching unterminated strings/comments and nested structure issues.
 
     Args:
         proto_content: PROTO file content as string
@@ -295,22 +311,45 @@ def validate_vrml_syntax(proto_content: str) -> Dict[str, Any]:
             "details": "PROTO file is empty",
         }
 
-    # Count braces
+    # Count braces (quick check)
     open_braces = proto_content.count('{')
     close_braces = proto_content.count('}')
 
     # Check for VRML magic string
     has_vrml_header = "#VRML_SIM" in proto_content or "VRML" in proto_content
 
-    passed = (open_braces == close_braces) and has_vrml_header and len(proto_content) > 0
+    # Detailed check: try to find matching braces for each top-level opening brace
+    # This catches unterminated strings, comments, and nested structure issues
+    lexer_error = None
+    for match in re.finditer(r'\{', proto_content):
+        pos = match.start()
+        # Skip if this is not a top-level brace (naive heuristic: not inside another block)
+        # For a full check, we'd track context, but for PROTO files, checking first few works
+        try:
+            find_matching_brace(proto_content, pos)
+        except ValueError as e:
+            lexer_error = str(e)
+            break
+
+    passed = (
+        (open_braces == close_braces) and
+        has_vrml_header and
+        len(proto_content) > 0 and
+        lexer_error is None
+    )
+
+    details = f"Braces: {open_braces} open, {close_braces} close; VRML header present: {has_vrml_header}"
+    if lexer_error:
+        details += f"; Lexer error: {lexer_error}"
 
     return {
         "check": "vrml_syntax",
         "passed": passed,
-        "details": f"Braces: {open_braces} open, {close_braces} close; VRML header present: {has_vrml_header}",
+        "details": details,
         "open_braces": open_braces,
         "close_braces": close_braces,
         "has_vrml_header": has_vrml_header,
+        "lexer_error": lexer_error,
     }
 
 
