@@ -34,6 +34,25 @@ Stage A sets up a minimal Webots simulation environment:
 - **URDF mesh-path resolution:** The source URDF (`06_Exports/urdf/robot.urdf`) uses `package://inverted_pendulum_robot/meshes/...` URIs that `urdf2webots` cannot resolve. This stage's `prepare_urdf_for_webots.sh` script rewrites them to relative paths in a `.generated/` copy — the source URDF is never modified (that's issue #9 territory).
 - **Networked standard-library PROTOs:** Stage A uses plain Webots nodes (Background, DirectionalLight, Solid) for a fully offline world. Future stages may add networked PROTOs (TexturedBackground, etc.) for visual polish.
 
+## File Comparisons
+
+| File | Purpose | Mesh Paths | Joint Axes |
+|------|---------|-----------|-----------|
+| `06_Exports/urdf/robot.urdf` | Source URDF, FreeCAD export | `package://inverted_pendulum_robot/meshes/...` | Defined in FreeCAD origin frames |
+| `.generated/robot_webots.urdf` | Working URDF for urdf2webots | `../../../06_Exports/urdf/meshes/...` (relative) | Same, path-rewritten copy |
+| `webots/validate_proto_structure.py` | Phase 13 validator (B2) | Inspects PROTO generation output | Confirms pendulum arm axes match parent Y-axis |
+
+## Implementation Flows
+
+- **FreeCAD → robot.urdf:** B1 validation complete; exports 5 links, 4 joints with axis definitions from mechanical origin frames.
+- **robot.urdf → robot_webots.urdf:** `prepare_urdf_for_webots.sh` rewrites `package://` URIs to relative paths so `urdf2webots` can resolve meshes.
+- **robot_webots.urdf + urdf2webots → PROTO:** Generates `InvertedPendulumRobot.proto` with post-processing for shadow casting (high-triangle servo mesh).
+- **validate_proto_structure.py:** Performs 5 structural checks (node count, joint composition, link hierarchy, mesh references, axis alignment) with JSON+Markdown output.
+
+### Key Detail
+
+The pendulum arm joint axes are composed from two FreeCAD values: **rpy** (roll-pitch-yaw rotation) **+ axis vector** (local joint rotation direction). Their combination must align with the **parent link's Y-axis** in world frame. The validator (Phase 13, B2) confirms this composition is preserved through PROTO generation.
+
 ## How to Run
 
 ### GUI Mode (Human Visual Validation)
@@ -70,6 +89,45 @@ Expected behavior:
 - Webots exits 0 if initialization succeeds (PROTO resolved, world loaded, no crash).
 
 **Important:** This smoke test only validates the URDF/PROTO pipeline structure. It does **NOT** prove the robot looks correct visually or that physics behaves correctly. Those require human GUI inspection.
+
+## URDF Inspection with yourdfpy
+
+**yourdfpy** visualizes URDF structure, mesh paths, joint axes, and link hierarchy. Use it as an early checkpoint before PROTO generation.
+
+Installation:
+```bash
+mamba run -n pendulum-tools pip install yourdfpy
+```
+
+Quick usage:
+```bash
+yourdfpy 06_Exports/urdf/robot.urdf
+```
+
+Inspect for:
+- Mesh presence and file paths
+- Joint axis orientations (especially pendulum arm Y-axis alignment)
+- Link masses and hierarchy
+- Collision geometry
+
+**Human checkpoint:** Verify URDF structure visually before running `generate_proto.sh`.
+
+## URDF Validation Checkpoint (yourdfpy)
+
+Before calling `generate_proto.sh`, validate the path-rewritten URDF (`robot_webots.urdf`):
+
+```bash
+cd inverted-pendulum-project/07_Simulation/webots/
+./prepare_urdf_for_webots.sh  # generates .generated/robot_webots.urdf
+yourdfpy .generated/robot_webots.urdf
+```
+
+**Verify:**
+- **Joint axes unchanged:** Pendulum arm joints must be `[0,0,-1]` (not `[0,1,0]` or other values).
+- **Mesh paths relative:** All mesh filenames must be `../../../06_Exports/urdf/meshes/...` — no `package://` URIs remain.
+- **Link hierarchy intact:** All 5 links and 4 joints present with correct parent-child relationships.
+
+**If axes are wrong:** Abort, fix `prepare_urdf_for_webots.sh`'s sed pattern, and re-run this checkpoint before `generate_proto.sh`.
 
 ## The package:// URI Rewrite Problem
 

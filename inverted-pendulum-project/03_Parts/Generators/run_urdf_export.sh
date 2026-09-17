@@ -1,5 +1,5 @@
 #!/bin/bash
-# URDF Export Pipeline (Phases 7-11)
+# URDF Export Pipeline (Phases 7-13)
 #
 # Runs the complete URDF export pipeline:
 #   Phase 7: Create body + wheel geometry (freecadcmd)
@@ -7,6 +7,8 @@
 #   Phase 9: Compute mass properties (freecadcmd)
 #   Phase 10: Export URDF (pure Python)
 #   Phase 11: Validate inertia (pure Python)
+#   Phase 12: Validate URDF export (pure Python)
+#   Phase 13: Validate PROTO structure (pure Python)
 #
 # Prerequisites:
 #   - freecadcmd available (set via FREECAD_BIN or on PATH)
@@ -98,5 +100,22 @@ python3 11_validate_inertia.py
 
 echo "=== Phase 12: URDF export validation ==="
 python3 12_validate_urdf_export.py
+
+echo "=== Phase 13: PROTO structure validation ==="
+WEBOTS_DIR="$SCRIPT_DIR/../../07_Simulation/webots"
+cd "$WEBOTS_DIR" || {
+    echo "ERROR: Cannot access webots directory at $WEBOTS_DIR"
+    exit 1
+}
+python3 validate_proto_structure.py
+PHASE_13_EXIT=$?
+
+# Wire back to generators directory for any future phases
+cd "$SCRIPT_DIR"
+
+if [ $PHASE_13_EXIT -ne 0 ]; then
+    echo "ERROR: Phase 13 (PROTO structure validation) failed"
+    exit 1
+fi
 
 echo "=== Pipeline complete (Phase 8 requires MCP bridge -- see notes above) ==="

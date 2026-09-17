@@ -1,0 +1,93 @@
+{
+  "timestamp": "2026-09-17T15:45:15.347963+00:00",
+  "phase": 13,
+  "title": "PROTO Structure Validation (Phase 13 \u2014 Stage B2)",
+  "urdf_file": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/07_Simulation/webots/.generated/robot_webots.urdf",
+  "proto_file": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/07_Simulation/webots/protos/InvertedPendulumRobot.proto",
+  "checks": [
+    {
+      "check": "joint_names_match_urdf",
+      "passed": true,
+      "details": "Checked 4 URDF joints against 4 PROTO motors",
+      "joint_names": [
+        "pendulum_pivot_joint",
+        "pendulum_pivot_right_joint",
+        "wheel_left_joint",
+        "wheel_right_joint"
+      ],
+      "motor_names": [
+        "pendulum_pivot_joint",
+        "pendulum_pivot_right_joint",
+        "wheel_left_joint",
+        "wheel_right_joint"
+      ],
+      "missing_motors": []
+    },
+    {
+      "check": "position_sensors_auto_named",
+      "passed": true,
+      "details": "Checked 4 expected sensors, found 4",
+      "expected_sensors": [
+        "pendulum_pivot_joint_sensor",
+        "pendulum_pivot_right_joint_sensor",
+        "wheel_left_joint_sensor",
+        "wheel_right_joint_sensor"
+      ],
+      "found_sensors": [
+        "pendulum_pivot_joint_sensor",
+        "pendulum_pivot_right_joint_sensor",
+        "wheel_left_joint_sensor",
+        "wheel_right_joint_sensor"
+      ],
+      "missing_sensors": []
+    },
+    {
+      "check": "physics_propagated",
+      "passed": true,
+      "details": "Found 5 mass, 5 inertia, 5 centerOfMass, 4 solids (expected 5 physics blocks, 4 solids)",
+      "link_masses": {
+        "Base_Link": 0.25,
+        "Wheel_Left": 0.03,
+        "Wheel_Right": 0.03,
+        "Pendulum_Link": 0.175,
+        "Pendulum_Link_Right": 0.175
+      },
+      "physics_with_mass": 5,
+      "physics_with_inertia": 5,
+      "physics_with_com": 5,
+      "expected_blocks": 5,
+      "solid_names": [
+        "Pendulum_Link",
+        "Pendulum_Link_Right",
+        "Wheel_Left",
+        "Wheel_Right"
+      ],
+      "expected_solids": 4
+    },
+    {
+      "check": "mesh_urls_resolve",
+      "passed": true,
+      "details": "Checked 1 mesh files, 1 resolved, 0 missing",
+      "mesh_files": [
+        "../../../06_Exports/urdf/meshes/feetech-STS3032-visual.stl"
+      ],
+      "resolved_files": {
+        "../../../06_Exports/urdf/meshes/feetech-STS3032-visual.stl": "/home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/06_Exports/urdf/meshes/feetech-STS3032-visual.stl"
+      },
+      "missing_files": []
+    },
+    {
+      "check": "vrml_syntax",
+      "passed": true,
+      "details": "Braces: 90 open, 90 close; VRML header present: True",
+      "open_braces": 90,
+      "close_braces": 90,
+      "has_vrml_header": true
+    }
+  ],
+  "summary": {
+    "total_checks": 5,
+    "passed_checks": 5,
+    "failed_checks": 0
+  }
+}
