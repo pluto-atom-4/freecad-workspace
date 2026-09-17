@@ -45,6 +45,9 @@ if str(SCRIPT_DIR) not in sys.path:
 # Import mesh path resolver (Issue #161)
 from urdf_mesh_path_resolver import resolve_mesh_path
 
+# Import shared axis validation (Issue #163)
+from axis_validation import compose_axis, validate_joint_axes
+
 # Relative paths to inputs
 _EXPORTS_DIR = SCRIPT_DIR.parent.parent / "06_Exports"
 
@@ -217,51 +220,6 @@ def validate_unit_consistency(urdf_root: ET.Element) -> List[Dict[str, Any]]:
         }]
 
 
-def compose_axis(axis_global: List[float], rotation_ypr_deg: Dict[str, float]) -> Optional[List[float]]:
-    """Compose global axis with inverse rotation to express in local/child frame.
-
-    The rotation matrix transforms from child→parent, so its inverse transforms
-    parent→child. Apply R^-1 (= R^T for orthonormal matrices) to the global axis.
-
-    Uses ypr_deg_to_rotation_matrix() from 10_export_urdf.py (imported to avoid
-    duplication and ensure consistency across the codebase).
-
-    Args:
-        axis_global: Global axis as [x, y, z]
-        rotation_ypr_deg: Dict with keys 'yaw', 'pitch', 'roll' (in degrees)
-
-    Returns:
-        Composed and normalized axis, or None if norm too small
-    """
-    # Import here to avoid circular dependency and maintain module independence
-    from importlib import import_module
-    exporter = import_module('10_export_urdf')
-
-    yaw_deg = rotation_ypr_deg.get('yaw', 0.0)
-    pitch_deg = rotation_ypr_deg.get('pitch', 0.0)
-    roll_deg = rotation_ypr_deg.get('roll', 0.0)
-
-    R = exporter.ypr_deg_to_rotation_matrix(yaw_deg, pitch_deg, roll_deg)
-
-    # Convert numpy array to list if needed (10_export_urdf.py returns numpy array)
-    if hasattr(R, 'tolist'):
-        R = R.tolist()
-
-    # R_inv = R^T for orthonormal matrix
-    R_inv = [[R[j][i] for j in range(3)] for i in range(3)]
-
-    # Apply R_inv to axis_global
-    axis_local = [0, 0, 0]
-    for i in range(3):
-        for j in range(3):
-            axis_local[i] += R_inv[i][j] * axis_global[j]
-
-    # Normalize
-    axis_norm = math.sqrt(sum(x*x for x in axis_local))
-    if axis_norm > 1e-9:
-        return [x / axis_norm for x in axis_local]
-    else:
-        return None
 
 
 def load_joint_config() -> Optional[Dict[str, Any]]:
@@ -385,103 +343,6 @@ def validate_link_connectivity(urdf_root: ET.Element) -> List[Dict[str, Any]]:
         }]
 
 
-def validate_joint_axes(urdf_root: ET.Element) -> List[Dict[str, Any]]:
-    """Validate that joint axes are unit vectors and have correct direction.
-
-    Checks:
-      1. Axis norm is approximately 1.0 (unit vector check)
-      2. If joint_config.json is available, axis direction matches the expected
-         composed value computed from the global axis and RPY rotation.
-
-    Args:
-        urdf_root: Parsed URDF XML root element
-
-    Returns:
-        List of validation result dicts with keys: {check, passed, details, errors}
-    """
-    TOLERANCE = 1e-3
-    errors = []
-
-    # Load joint config for direction validation
-    joint_config = load_joint_config()
-    has_direction_check = joint_config is not None
-
-    for joint in urdf_root.findall('joint'):
-        joint_name = joint.get('name', 'unknown')
-        axis_elem = joint.find('axis')
-
-        if axis_elem is None:
-            continue
-
-        xyz_str = axis_elem.get('xyz', '')
-        try:
-            axis = [float(x) for x in xyz_str.split()]
-            if len(axis) != 3:
-                errors.append({
-                    'joint': joint_name,
-                    'axis': axis,
-                    'message': f'Axis has {len(axis)} components, expected 3'
-                })
-                continue
-
-            # Check 1: Unit vector norm
-            norm = math.sqrt(sum(x*x for x in axis))
-            if abs(norm - 1.0) > TOLERANCE:
-                errors.append({
-                    'joint': joint_name,
-                    'axis': axis,
-                    'norm': norm,
-                    'check_type': 'norm',
-                    'message': f'Axis {axis} has norm {norm:.6f}, expected ~1.0'
-                })
-
-            # Check 2: Axis direction (if joint_config available)
-            if has_direction_check and 'joints' in joint_config:
-                joint_data = joint_config['joints'].get(joint_name)
-                if joint_data:
-                    axis_global = joint_data.get('axis_global', [0, 1, 0])
-                    rotation_ypr_deg = joint_data.get('rotation_ypr_deg', {
-                        'yaw': 0.0, 'pitch': 0.0, 'roll': 0.0
-                    })
-
-                    expected_axis = compose_axis(axis_global, rotation_ypr_deg)
-                    if expected_axis is not None:
-                        # Compare with computed direction
-                        direction_error = math.sqrt(sum((a - e)**2 for a, e in zip(axis, expected_axis)))
-                        if direction_error > TOLERANCE:
-                            errors.append({
-                                'joint': joint_name,
-                                'axis': axis,
-                                'expected_axis': expected_axis,
-                                'check_type': 'direction',
-                                'error': direction_error,
-                                'axis_global': axis_global,
-                                'rotation_ypr_deg': rotation_ypr_deg,
-                                'message': f'Axis direction mismatch: {axis} vs expected {expected_axis} (error={direction_error:.6f})'
-                            })
-
-        except (ValueError, IndexError) as e:
-            errors.append({
-                'joint': joint_name,
-                'xyz_str': xyz_str,
-                'message': f'Could not parse axis: {e}'
-            })
-
-    if errors:
-        direction_check_info = " (includes direction check from joint_config.json)" if has_direction_check else ""
-        return [{
-            'check': 'joint_axes',
-            'passed': False,
-            'details': f'Found {len(errors)} axis validation issue(s){direction_check_info}',
-            'errors': errors,
-        }]
-    else:
-        direction_check_info = " (includes direction check from joint_config.json)" if has_direction_check else ""
-        return [{
-            'check': 'joint_axes',
-            'passed': True,
-            'details': f'All joint axes are unit vectors{direction_check_info}',
-        }]
 
 
 def main():
@@ -502,7 +363,11 @@ def main():
     all_results.extend(validate_mesh_paths(urdf_root, URDF_FILE))
     all_results.extend(validate_unit_consistency(urdf_root))
     all_results.extend(validate_link_connectivity(urdf_root))
-    all_results.extend(validate_joint_axes(urdf_root))
+
+    # Load joint config for axis validation (Issue #163)
+    joint_config = load_joint_config()
+    axis_validation_result = validate_joint_axes(urdf_root, joint_config)
+    all_results.extend(axis_validation_result['checks'])
 
     # Aggregate results
     passed_count = sum(1 for r in all_results if r['passed'])
