@@ -42,11 +42,14 @@ echo "  Output: $URDF_OUTPUT"
 mkdir -p "$(dirname "$URDF_OUTPUT")"
 
 # Copy and rewrite package:// URIs to relative paths.
-# package://inverted_pendulum_robot/ -> ../../../06_Exports/urdf/
-# The relative path is from .generated/ (where the output URDF lives) back to
-# the meshes directory: .generated/ is webots/.generated/, going up 3 levels
-# through webots/ -> 07_Simulation/ -> inverted-pendulum-project/, then into 06_Exports/urdf/.
-sed "s|package://inverted_pendulum_robot/meshes/|../../../06_Exports/urdf/meshes/|g" "$URDF_SOURCE" > "$URDF_OUTPUT"
+# Use centralized Python resolver (Issue #161) instead of hardcoded sed.
+# The relative path is computed from the resolved absolute path back to .generated/.
+GENERATORS_DIR="$SCRIPT_DIR/../../03_Parts/Generators"
+python3 "${GENERATORS_DIR}/urdf_mesh_path_resolver.py" rewrite \
+    --input "$URDF_SOURCE" \
+    --output "$URDF_OUTPUT" \
+    --urdf-dir "$(dirname "$URDF_SOURCE")" \
+    --webots-dir "$(dirname "$URDF_OUTPUT")"
 
 # Fail loudly if any package:// substring remains (signals incompletely rewritten paths).
 if grep -q "package://" "$URDF_OUTPUT"; then
