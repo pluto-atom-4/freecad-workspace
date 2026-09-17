@@ -136,6 +136,31 @@ def validate_unit_consistency(urdf_root: ET.Element) -> List[Dict[str, Any]]:
     tabletop robot and likely indicate a missed mm→m conversion (Issues #105,
     #124, #125, #148).
 
+    RATIONALE: The 10m threshold provides a ~30–50× safety margin for this
+    tabletop-scale robot (nominal dimensions ~0.3–0.5m). This is a cheap,
+    broad heuristic to catch obvious unit-conversion off-by-1000 bugs (e.g.,
+    mesh in mm imported as metres). Chosen empirically from observed robot
+    geometry + design margins.
+
+    EDGE CASES:
+    (a) Threshold may need raising if the robot scope expands to larger sizes
+        (e.g., industrial arm, mobile robot base > 2m).
+    (b) False-negatives possible: small parts left in mm (e.g., 0.005m = 5mm)
+        slip through this check undetected. Validation is not exhaustive.
+    (c) Asymmetry: origin xyz can be negative (e.g., offset from centre);
+        box/cylinder dimensions must be positive (checked as absolute values for
+        origin, strict positivity for geometry).
+
+    FALLBACK: This is a pre-validation check only. Real downstream validation
+    includes:
+    - generate_proto.sh Step 1.5: Full Phase 12 validator (this function)
+    - generate_proto.sh Step 1.5b: Structure checker (link/joint counts)
+    - test_urdf_fcstd_consistency.py: FK regression test (motion validates
+      dimensions at runtime)
+    See inverted-pendulum-project/DESIGN.md Known Limitations for details.
+    See CLAUDE.md "FreeCAD Live Bridge — Known Limitations" for tessellation
+    and shape validation caveats.
+
     Args:
         urdf_root: Parsed URDF XML root element
 
