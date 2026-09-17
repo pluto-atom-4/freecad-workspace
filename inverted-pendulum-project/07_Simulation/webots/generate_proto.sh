@@ -55,9 +55,30 @@ if [ ! -s "$URDF_INPUT" ]; then
 fi
 
 echo ""
+echo "Step 1.5: Pre-validating URDF structure via Phase 12 validator..."
+
+# Step 1.5: Pre-validate URDF via Phase 12 before tool invocation.
+# Run full Phase 12 validator to catch structural issues early.
+# Note: Validator requires numpy (via 10_export_urdf), so run in pendulum-tools env.
+GENERATORS_DIR="$SCRIPT_DIR/../../03_Parts/Generators"
+if ! mamba run -n pendulum-tools python3 "$GENERATORS_DIR/12_validate_urdf_export.py" > /dev/null 2>&1; then
+    echo "FATAL: Phase 12 pre-validation failed — URDF invalid, aborting urdf2webots." >&2
+    exit 1
+fi
+
+# Also assert exact link/joint counts before tool runs (defense-in-depth).
+# Expected: 5 links (Base_Link, Wheel_Left, Wheel_Right, Pendulum_Link, Pendulum_Link_Right)
+#           4 joints (wheel_left_joint, wheel_right_joint, pendulum_pivot_joint, pendulum_pivot_right_joint)
+if ! mamba run -n pendulum-tools python3 "$GENERATORS_DIR/urdf_structure_checker.py" \
+    --urdf "$URDF_INPUT" --links 5 --joints 4 > /dev/null 2>&1; then
+    echo "FATAL: URDF structure validation failed — link/joint counts incorrect, aborting urdf2webots." >&2
+    exit 1
+fi
+
+echo ""
 echo "Running urdf2webots (R2025a target)..."
 
-# Step 2: Run urdf2webots in the pendulum-tools env.
+# Step 3: Run urdf2webots in the pendulum-tools env (pre-validated at Step 1.5).
 # Capture output for link/joint count validation.
 PROTO_OUTPUT_DIR="$(dirname "$PROTO_OUTPUT")"
 mkdir -p "$PROTO_OUTPUT_DIR"
@@ -75,13 +96,13 @@ URDF2WEBOTS_OUTPUT=$(mamba run -n pendulum-tools python3 -m urdf2webots.importer
     exit 1
 }
 
-# Step 3: Validate output PROTO file exists and is non-empty.
+# Step 4: Validate output PROTO file exists and is non-empty.
 if [ ! -s "$PROTO_OUTPUT" ]; then
     echo "FATAL: urdf2webots completed but output PROTO not found or empty: $PROTO_OUTPUT" >&2
     exit 1
 fi
 
-# Step 4: Parse urdf2webots output to validate link/joint counts.
+# Step 5: Parse urdf2webots output to validate link/joint counts (defense-in-depth).
 # Expected: 5 links (Base_Link, Wheel_Left, Wheel_Right, Pendulum_Link, Pendulum_Link_Right)
 #           4 joints (wheel_left_joint, wheel_right_joint, pendulum_pivot_joint, pendulum_pivot_right_joint)
 LINK_COUNT=$(echo "$URDF2WEBOTS_OUTPUT" | grep -oE "[0-9]+ links" | grep -oE "[0-9]+" | head -1 || true)
@@ -117,7 +138,7 @@ if [ "$JOINT_COUNT" -ne 4 ]; then
     exit 1
 fi
 
-# Step 5: Post-process PROTO to inject castShadows FALSE for high-triangle-count meshes.
+# Step 6: Post-process PROTO to inject castShadows FALSE for high-triangle-count meshes.
 # The feetech-STS3032-visual mesh has ~37556 triangles, exceeding Webots' 21845-triangle
 # limit. Webots warns about shadow casting on oversized meshes; suppress with castShadows FALSE.
 # This post-processor is idempotent: if castShadows already exists in the Shape, it skips.
