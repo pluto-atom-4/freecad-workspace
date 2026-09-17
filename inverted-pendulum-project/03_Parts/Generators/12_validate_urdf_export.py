@@ -42,6 +42,9 @@ except NameError:
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+# Import mesh path resolver (Issue #161)
+from urdf_mesh_path_resolver import resolve_mesh_path
+
 # Relative paths to inputs
 _EXPORTS_DIR = SCRIPT_DIR.parent.parent / "06_Exports"
 
@@ -54,8 +57,10 @@ OUTPUT_REPORT_FILE = SCRIPT_DIR / "12_urdf_export_validation_report.json"
 def validate_mesh_paths(urdf_root: ET.Element, urdf_path: Path) -> List[Dict[str, Any]]:
     """Validate that all mesh files referenced in the URDF exist on disk.
 
+    Validates both the source URDF and, if it exists, the rewritten robot_webots.urdf.
+
     Args:
-        urdf_root: Parsed URDF XML root element
+        urdf_root: Parsed URDF XML root element (source)
         urdf_path: Path to the URDF file (used as base for relative paths)
 
     Returns:
@@ -63,47 +68,46 @@ def validate_mesh_paths(urdf_root: ET.Element, urdf_path: Path) -> List[Dict[str
     """
     missing_files = []
     checked_files = set()
+    urdf_dir = urdf_path.parent
 
-    # Find all <mesh> elements
+    # Find all <mesh> elements in source URDF
     for mesh_elem in urdf_root.findall('.//mesh'):
         filename = mesh_elem.get('filename', '')
         if not filename or filename in checked_files:
             continue
         checked_files.add(filename)
 
-        # Handle package:// URIs: resolve relative to URDF directory
-        if filename.startswith('package://'):
-            # package://robot_name/path/to/mesh.stl
-            # In our export, meshes are stored at urdf/meshes/...
-            # Extract only the filename and subdirectory part (last components)
-            # Heuristic: assume package:// URIs point to files that are actually
-            # in the urdf/ directory tree (meshes/, etc.), not in a versioned subdirectory.
-            # Common pattern: package://robot_name/meshes/file.stl
-            # → check urdf_parent / meshes/file.stl
-            parts = filename.split('/')
-            if len(parts) >= 3:
-                # Find the "meshes" part if present, otherwise use last two components
-                try:
-                    meshes_idx = parts.index('meshes')
-                    # Reconstruct from meshes onward
-                    relative_path = '/'.join(parts[meshes_idx:])
-                    mesh_path = urdf_path.parent / relative_path
-                except ValueError:
-                    # No "meshes" directory, use generic fallback
-                    # Use parts[-2:] if available (subdirectory + filename)
-                    if len(parts) >= 4:
-                        relative_path = '/'.join(parts[-2:])
-                    else:
-                        relative_path = parts[-1]
-                    mesh_path = urdf_path.parent / relative_path
-            else:
-                mesh_path = urdf_path.parent / filename
-        else:
-            # Relative path: resolve relative to URDF directory
-            mesh_path = urdf_path.parent / filename
+        # Use centralized resolve_mesh_path() function (Issue #161)
+        try:
+            mesh_path = resolve_mesh_path(filename, urdf_dir)
+            if not mesh_path.exists():
+                missing_files.append(str(mesh_path))
+        except Exception as e:
+            missing_files.append(f"{filename} (resolution error: {e})")
 
-        if not mesh_path.exists():
-            missing_files.append(str(mesh_path))
+    # NEW: Also validate robot_webots.urdf if it exists
+    webots_urdf_path = SCRIPT_DIR.parent.parent / "07_Simulation" / "webots" / ".generated" / "robot_webots.urdf"
+    if webots_urdf_path.exists():
+        try:
+            webots_tree = ET.parse(webots_urdf_path)
+            webots_root = webots_tree.getroot()
+            webots_urdf_dir = webots_urdf_path.parent
+
+            # Validate all mesh references in robot_webots.urdf
+            for mesh_elem in webots_root.findall('.//mesh'):
+                webots_filename = mesh_elem.get('filename', '')
+                if not webots_filename:
+                    continue
+
+                # robot_webots.urdf should have relative paths (not package://)
+                try:
+                    webots_mesh_path = (webots_urdf_dir / webots_filename).resolve()
+                    if not webots_mesh_path.exists():
+                        missing_files.append(f"(robot_webots.urdf) {str(webots_mesh_path)}")
+                except Exception as e:
+                    missing_files.append(f"(robot_webots.urdf) {webots_filename} (resolution error: {e})")
+        except ET.ParseError as e:
+            missing_files.append(f"(robot_webots.urdf) Parse error: {e}")
 
     if missing_files:
         return [{
@@ -116,7 +120,7 @@ def validate_mesh_paths(urdf_root: ET.Element, urdf_path: Path) -> List[Dict[str
         return [{
             'check': 'mesh_paths_exist',
             'passed': True,
-            'details': f'All {len(checked_files)} referenced mesh file(s) exist',
+            'details': f'All {len(checked_files)} referenced mesh file(s) exist (source + webots)',
         }]
 
 
