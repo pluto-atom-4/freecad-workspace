@@ -76,6 +76,10 @@ EXPORTS_DIR = SCRIPT_DIR.parent.parent / "06_Exports"
 sys.path.insert(0, str(DESIGN_INPUTS_DIR))
 from robot_parameters import load_robot_parameters  # noqa: E402
 
+# Import shared pipeline logger (Issue #166)
+sys.path.insert(0, str(SCRIPT_DIR.parent.parent))
+from pipeline_logger import log_event  # noqa: E402
+
 # Input files (from earlier stages)
 MASS_PROPERTIES_FILE = SCRIPT_DIR / "09_mass_properties.json"
 BODY_WHEELS_METADATA_FILE = SCRIPT_DIR / "07_body_wheels_metadata.json"
@@ -931,6 +935,7 @@ def main():
     print("=" * 70)
     print("Stage 4: URDF Export with Collision Primitives (Issue #84)")
     print("=" * 70)
+    log_event("Phase 10", "========== PHASE 10: URDF EXPORT START ==========")
 
     try:
         # Load all metadata
@@ -1461,11 +1466,19 @@ def main():
             urdf_tree = ET.parse(URDF_FILE)
             urdf_root = urdf_tree.getroot()
             axis_result = validate_joint_axes(urdf_root, joint_config)
+            log_event("Phase 10", "Running axis validation checks...")
+
             if not axis_result["passed"]:
                 errors_msg = "\n".join([f"  - {e.get('message', str(e))}" for e in axis_result["errors"]])
+                log_event("Phase 10", f"✗ Axis validation FAILED with {len(axis_result['errors'])} error(s)")
+                for err in axis_result["errors"]:
+                    log_event("Phase 10", f"  - {err.get('message', str(err))}")
                 raise RuntimeError(f"Axis validation failed:\n{errors_msg}")
+
+            log_event("Phase 10", f"✓ Axis validation passed - {len(axis_result['checks'])} check(s) successful")
             print(f"   ✓ Axis validation passed")
         except Exception as e:
+            log_event("Phase 10", f"ERROR: Axis validation failed: {e}")
             print(f"   ✗ Axis validation failed: {e}", file=sys.stderr)
             raise
 
@@ -1575,9 +1588,11 @@ def main():
         print(f"  Pendulum_Link combined mass: {pend_combined_mass:.3f} kg (plate {pend_plate_mass:.3f} + servo {servo_l_mass:.3f})")
         print(f"  Pendulum_Link_Right combined mass: {pend_r_combined_mass:.3f} kg (plate {pend_r_plate_mass:.3f} + servo {servo_r_mass:.3f})")
 
+        log_event("Phase 10", "========== PHASE 10: URDF EXPORT SUCCESS ==========")
         return 0
 
     except Exception as e:
+        log_event("Phase 10", f"ERROR: URDF export failed: {e}")
         print(f"\nERROR: {e}", file=sys.stderr)
         import traceback
         traceback.print_exc(file=sys.stderr)

@@ -48,6 +48,10 @@ from urdf_mesh_path_resolver import resolve_mesh_path
 # Import shared axis validation (Issue #163)
 from axis_validation import compose_axis, validate_joint_axes
 
+# Import shared pipeline logger (Issue #166)
+sys.path.insert(0, str(SCRIPT_DIR.parent.parent))
+from pipeline_logger import log_event
+
 # Relative paths to inputs
 _EXPORTS_DIR = SCRIPT_DIR.parent.parent / "06_Exports"
 
@@ -372,7 +376,11 @@ def validate_link_connectivity(urdf_root: ET.Element) -> List[Dict[str, Any]]:
 
 def main():
     """Run all validators and write report."""
+    log_event("Phase 12", "========== URDF EXPORT VALIDATION START ==========")
+    log_event("Phase 12", f"URDF path: {URDF_FILE}")
+
     if not URDF_FILE.exists():
+        log_event("Phase 12", f"ERROR: URDF file not found: {URDF_FILE}")
         print(f"ERROR: URDF file not found: {URDF_FILE}")
         sys.exit(1)
 
@@ -380,8 +388,11 @@ def main():
         tree = ET.parse(URDF_FILE)
         urdf_root = tree.getroot()
     except ET.ParseError as e:
+        log_event("Phase 12", f"ERROR: Failed to parse URDF: {e}")
         print(f"ERROR: Failed to parse URDF: {e}")
         sys.exit(1)
+
+    log_event("Phase 12", f"✓ Loaded URDF from {URDF_FILE}")
 
     # Run all validators
     all_results = []
@@ -393,6 +404,16 @@ def main():
     joint_config = load_joint_config()
     axis_validation_result = validate_joint_axes(urdf_root, joint_config)
     all_results.extend(axis_validation_result['checks'])
+
+    log_event("Phase 12", "Running validation checks...")
+
+    # Log each check result
+    for check in all_results:
+        check_name = check.get('check', 'unknown')
+        passed = check.get('passed', False)
+        details = check.get('details', '')
+        status = "✓ PASS" if passed else "✗ FAIL"
+        log_event("Phase 12", f"Check '{check_name}': {status} ({details})")
 
     # Aggregate results
     passed_count = sum(1 for r in all_results if r['passed'])
@@ -415,6 +436,8 @@ def main():
     OUTPUT_REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_REPORT_FILE, 'w') as f:
         json.dump(report, f, indent=2)
+
+    log_event("Phase 12", f"Summary: {passed_count}/{len(all_results)} checks passed, overall status: {report['summary']['overall_status']}")
 
     # Print summary
     print(f"\nURDF Export Validation Report")
