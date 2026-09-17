@@ -241,3 +241,127 @@ See "Logging & Audit Trail" section above for event types and implementation det
 - Parent Epic: [#10](https://github.com/pluto-atom-4/freecad-workspace/issues/10)
 - Source URDF: `06_Exports/urdf/robot.urdf`
 - POC reference: `poc/freecad-webots-pipeline/` (TurtleBot3 simulation pipeline)
+
+---
+
+# Stage B3: IMU Node Hand-Add
+
+Issue: [#178](https://github.com/pluto-atom-4/freecad-workspace/issues/178) — Add InertialUnit sensor node to the robot PROTO for IMU simulation.
+
+## Overview
+
+Stage B3 augments the Stage A PROTO with an InertialUnit (inertial measurement unit / IMU) sensor node. The `urdf2webots` tool does not automatically generate sensor nodes from URDF — only kinematic/dynamic structure (links, joints, shapes, physics). Manual hand-addition of sensor nodes is the standard Webots workflow when converting from URDF to PROTO.
+
+**Scope:**
+- Add InertialUnit node as a direct child of the Robot node (at Robot origin: translation 0 0 0).
+- Add a warning comment in the PROTO file documenting hand-added nodes and regeneration risk.
+
+**Reason:**
+`urdf2webots` converts kinematic and dynamic robot structure only; sensor nodes (InertialUnit, GPS, Camera, Lidar, etc.) are not part of the URDF standard and must be added manually post-generation. This is a one-time manual edit per new robot design.
+
+## Implementation Checklist
+
+### Step 1: Add InertialUnit Node to PROTO
+
+Edit `protos/InvertedPendulumRobot.proto`:
+- Locate the Robot node's `children [ ... ]` block (around line 28).
+- After the base-plate Pose node (lines 29–43), insert the InertialUnit:
+  ```
+  InertialUnit {
+    translation 0 0 0
+    name "imu"
+  }
+  ```
+- Position: Direct child of Robot, before the first HingeJoint. Placing the sensor at the Robot origin (translation 0 0 0) measures accelerations/orientations at the base.
+
+### Step 2: Add Warning Comment
+
+At the top of the PROTO file (after the existing header comments, before the PROTO declaration), add:
+```
+# WARNING: InertialUnit node hand-added in B3.
+# If generate_proto.sh is rerun, this node will be wiped.
+# See 07_Simulation/README.md Stage B3 section for re-add steps.
+```
+
+This ensures any future maintainer re-running the generation scripts knows that hand-added nodes must be re-inserted afterward.
+
+### Step 3: Validate with Headless Smoke Test
+
+```bash
+cd inverted-pendulum-project/07_Simulation/webots
+./run_batch.sh
+```
+
+Expected behavior:
+- Script validates world and PROTO syntax.
+- Webots runs 30s in batch mode without crashing (timeout = pass).
+- Exit code 0 confirms VRML/PROTO syntax is valid.
+
+**Important:** This test only validates structural syntax. It does NOT verify that the InertialUnit is visible or functional — that requires human GUI inspection (Step 4).
+
+### Step 4: Human GUI Visual Verification (Manual Gate)
+
+Open the robot world in the Webots GUI and visually confirm:
+
+```bash
+export DISPLAY=:1  # Set to your active X display
+cd inverted-pendulum-project/07_Simulation/webots
+./run_gui.sh
+```
+
+**Checklist (in Webots GUI):**
+- ✅ Robot renders without pink error materials (meshes resolve correctly).
+- ✅ Robot's geometry is intact: base plate, wheels, pendulum arms, servo meshes visible.
+- ✅ InertialUnit node is visible in the Scene tree under the Robot node.
+- ✅ No console errors or warnings related to the sensor node.
+
+**Screenshot:** Take a screenshot of the Webots GUI showing:
+1. 3D viewport with the robot rendered correctly.
+2. Scene tree (left panel) with the Robot node expanded, InertialUnit visible as a child.
+
+This visual gate confirms that the PROTO modification is correct and the sensor node integrates without breaking the robot's visual structure.
+
+## FAQ
+
+### Why Hand-Add Instead of Using URDF?
+URDF does not have a standard sensor element that maps directly to Webots InertialUnit. ROS sensor definitions (camera, laser, etc.) are typically handled via separate ROS node drivers, not URDF markup. When converting URDF→Webots, the standard practice is to:
+1. Auto-generate kinematic/dynamic structure via `urdf2webots`.
+2. Manually add sensor nodes specific to the Webots environment.
+
+### What Happens If I Re-Run `generate_proto.sh`?
+Re-running `generate_proto.sh` will overwrite `protos/InvertedPendulumRobot.proto` with a freshly generated version, **wiping out the hand-added InertialUnit node**. To recover:
+1. Re-run this stage's Steps 1–2 (re-insert InertialUnit and warning comment).
+2. Re-run the smoke test (Step 3).
+3. Perform visual verification (Step 4) again.
+
+Alternatively, if you modify the robot design in FreeCAD and need a fresh URDF export, you can mark the entire PROTO generation as needing re-validation rather than manually patching each time.
+
+### Can I Add Multiple Sensors?
+Yes. Follow the same pattern: add each sensor node as a direct child of the Robot node (or nested under Link nodes if you want sensor data in a link's local frame). For example:
+```
+InertialUnit {
+  translation 0 0 0
+  name "imu"
+}
+GPS {
+  translation 0 0 0
+  name "gps"
+}
+```
+
+### Where Is the InertialUnit Data Exposed?
+In a Webots controller script, access the InertialUnit readings via:
+```python
+imu = robot.getDevice("imu")
+imu.enable(TIME_STEP)
+# After stepping the simulation
+quaternion = imu.getRollPitchYaw()
+```
+This is stage-specific and outside the scope of this PROTO modification (future work).
+
+## References (Stage B3)
+
+- GitHub Issue: [#178](https://github.com/pluto-atom-4/freecad-workspace/issues/178)
+- Webots InertialUnit docs: [Webots Reference Manual](https://www.cyberbotics.com/doc/reference/inertialunit)
+- URDF to Webots conversion: [urdf2webots on PyPI](https://pypi.org/project/urdf2webots/)
+- Related: Stage A ([URDF Import + PROTO](#stage-a-webots-world-scaffolding-urdf-import--proto))
