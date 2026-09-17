@@ -1452,6 +1452,23 @@ def main():
         tree.write(URDF_FILE, encoding='utf-8', xml_declaration=True)
         print(f"   ✓ Wrote {URDF_FILE}")
 
+        # In-situ axis validation (Issue #163)
+        print(f"\n6b. Validating axes in-situ...")
+        try:
+            from axis_validation import validate_joint_axes
+
+            # Re-parse written URDF and validate axes
+            urdf_tree = ET.parse(URDF_FILE)
+            urdf_root = urdf_tree.getroot()
+            axis_result = validate_joint_axes(urdf_root, joint_config)
+            if not axis_result["passed"]:
+                errors_msg = "\n".join([f"  - {e.get('message', str(e))}" for e in axis_result["errors"]])
+                raise RuntimeError(f"Axis validation failed:\n{errors_msg}")
+            print(f"   ✓ Axis validation passed")
+        except Exception as e:
+            print(f"   ✗ Axis validation failed: {e}", file=sys.stderr)
+            raise
+
         # Write metadata
         print(f"\n7. Writing metadata...")
         metadata = {
