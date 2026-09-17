@@ -318,12 +318,19 @@ Exports the complete robot assembly to URDF format (standardized XML for simulat
 - `robot_parameters.yaml` (design parameters)
 - `joint_config.json` (joint definitions from Stage 2)
 - Visual mesh file: `../Mechanical/feetech-STS3032-visual-1.0mm.stl`
+- `urdf_mesh_path_resolver.py` (shared module for mesh path resolution, Issue #161)
 
 **Usage:**
 ```bash
 echo "exec(open('10_export_urdf.py').read())" | freecadcmd -c
 python3 -m pytest -q test_10_export_urdf.py
 ```
+
+**Post-Export Checks:**
+After URDF generation, Phase 10 validates joint axes with `axis_validation.py` (Issue #163):
+- Verifies all joint axes are unit vectors (norm ≈ 1.0)
+- Confirms axis directions match expected mechanical frames
+- Logs validation events to `pipeline_audit.log` via `pipeline_logger.py` (Issue #166)
 
 **Output:**
 - `06_Exports/urdf/robot.urdf` (URDF XML, ~15-20 KB) containing:
@@ -358,6 +365,18 @@ python3 -m pytest -q test_10_export_urdf.py
 **Time:** ~5-10 seconds
 
 **Status:** ✅ (Issue #84 complete)
+
+#### Unified Mesh Path Resolution (Issue #161)
+
+**Shared Module:** `urdf_mesh_path_resolver.py`
+
+Centralizes URDF mesh path handling across the export pipeline. Provides two core functions:
+- `resolve_mesh_path()` — Converts `package://` URIs to file-system paths
+- `rewrite_for_webots()` — Rewrites package URIs to relative paths for Webots compatibility
+
+Used by both Phase 10 (URDF export) and Phase 13 validation (Webots PROTO generation). This shared resolution ensures mesh paths remain consistent across the entire pipeline, avoiding duplication and synchronization bugs.
+
+**Key Benefit:** Single source of truth for mesh path logic; fixes Issue #161's requirement for unified path handling.
 
 ### Stage 5: Validate URDF Inertia (Issue #91)
 
@@ -405,12 +424,14 @@ python3 -m pytest -q test_11_validate_inertia.py
 
 **Script:** `12_validate_urdf_export.py` + `test_12_validate_urdf_export.py`
 
-Validates the exported URDF (from Stage 4) for correctness and consistency. Checks 4 critical aspects: mesh file paths, unit values, link connectivity, and joint axes direction.
+Validates the exported URDF (from Stage 4) for correctness and consistency. Checks 4 critical aspects: mesh file paths, unit values, link connectivity, and joint axes direction. Integrates with `axis_validation.py` (Issue #163) for joint axis checks and logs all events to `pipeline_audit.log` (Issue #166).
 
 **Requirements:**
 - `06_Exports/urdf/robot.urdf` (output from Stage 4)
 - All mesh files referenced in the URDF must exist on disk
 - `joint_config.json` (optional, used for axis direction validation via rotation composition)
+- `axis_validation.py` module (Issue #163, validates joint axis unit vectors and directions)
+- `pipeline_logger.py` module (Issue #166, unified audit logging)
 
 **Usage:**
 ```bash
@@ -420,17 +441,18 @@ python3 -m pytest -q test_12_validate_urdf_export.py
 
 **Output:**
 - `12_urdf_export_validation_report.json` — machine-readable pass/fail report with detailed per-check results and error descriptions
+- `pipeline_audit.log` (shared, appended with validation timestamp and per-check results via `log_event()`)
 - Console: human-readable summary of all 4 checks
 
 **Checks (in order):**
 
-1. **Mesh paths exist** — All `<mesh>` URI elements resolve to files on disk. Handles both `package://` URIs and relative paths.
+1. **Mesh paths exist** — All `<mesh>` URI elements resolve to files on disk. Handles both `package://` URIs and relative paths (resolved via `urdf_mesh_path_resolver.py`, Issue #161). Event logged: `"mesh_paths_validated"`.
 
-2. **Unit consistency** — All numeric values (position/size/radius/length) are metre-scale and physically plausible. Flags any value exceeding 10.0m (heuristic for detecting missed mm→m conversion bugs like Issues #105, #124, #125, #148).
+2. **Unit consistency** — All numeric values (position/size/radius/length) are metre-scale and physically plausible. Flags any value exceeding 10.0m (heuristic for detecting missed mm→m conversion bugs like Issues #105, #124, #125, #148). Event logged: `"unit_consistency_validated"`.
 
-3. **Link connectivity** — Single root link (no parent joint), all other links reachable from root, no cycles in the kinematic tree. Ensures well-formed URDF structure for simulators.
+3. **Link connectivity** — Single root link (no parent joint), all other links reachable from root, no cycles in the kinematic tree. Ensures well-formed URDF structure for simulators. Event logged: `"link_connectivity_validated"`.
 
-4. **Joint axes unit vectors** — All joint axes are unit vectors (norm ≈ 1.0) with correct direction in local frame. Validates axes by composing global direction with inverse rotation from `joint_config.json`.
+4. **Joint axes unit vectors** — All joint axes are unit vectors (norm ≈ 1.0) with correct direction in local frame. Delegated to `axis_validation.validate_joint_axes()` (Issue #163), composing global direction with inverse rotation from `joint_config.json`. Event logged: `"joint_axes_validated"`.
 
 **Exit Code:**
 - 0: all 4 checks passed
@@ -472,15 +494,19 @@ python3 -m pytest -q test_12_validate_urdf_export.py
 - Mesh paths: missing files detected correctly
 - Unit consistency: threshold violations flagged
 - Link connectivity: root detection, reachability, cycle detection
-- Joint axes: normalization, direction composition via exporter's rotation helper
+- Joint axes: normalization, direction composition via `axis_validation.py` (Issue #163)
+- Mesh inode assertions: `test_stage_b_pipeline.py` verifies mesh file identity across phases (Issue #165)
+
+**Phase 13 Pre-Validation Gate:**
+Before PROTO generation (Phase 13, Webots simulation), `urdf_structure_checker.py` (Issue #162) performs a secondary structural check to ensure the validated URDF is ready for Webots import. This gate prevents downstream generation failures.
 
 **Time:** < 1 second (pure Python, no FreeCAD)
 
-**Status:** ✅ (Issue #156 complete; reuses exporter's `ypr_deg_to_rotation_matrix()` helper for rotation consistency)
+**Status:** ✅ (Issue #156 complete; Issue #163/#166 integration complete; Phase 13 gate documented Issue #162)
 
 ---
 
-## Testing & Validation (Phase 5, Legacy)
+## Testing & Validation (Phase 5, Legacy + Stage B Pipeline Tests)
 
 ### Unit Tests (No FreeCAD Required)
 
@@ -509,6 +535,28 @@ python3 test_05_integration.py
 - Phases 2-4: ⏳ Pending (require FreeCAD execution)
 
 **Time:** ~2-5 seconds
+
+### Stage B Pipeline Tests (Phases 10-13 Integration, Issue #165)
+
+**Script:** `test_stage_b_pipeline.py`
+
+End-to-end tests for the URDF export and Webots validation pipeline (Phases 10-13). Validates:
+- Mesh file paths and inode identity across phases (ensures no accidental file duplication/relinking)
+- URDF export consistency and post-export axis validation
+- Webots PROTO generation and structure validation
+
+**Usage:**
+```bash
+python3 test_stage_b_pipeline.py
+```
+
+**Key Assertions (Issue #165):**
+- Mesh files have consistent inodes across phases (no silent duplications)
+- Axis validation events logged to `pipeline_audit.log`
+- PROTO generation output matches expected link/joint counts
+- Mesh path resolution (package URI → relative path) is idempotent
+
+**Time:** ~5-10 seconds (includes subprocess PROTO generation)
 
 ### Live Integration Tests (FreeCAD Required)
 

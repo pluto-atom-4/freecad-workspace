@@ -129,11 +129,40 @@ yourdfpy .generated/robot_webots.urdf
 
 **If axes are wrong:** Abort, fix `prepare_urdf_for_webots.sh`'s sed pattern, and re-run this checkpoint before `generate_proto.sh`.
 
+## Logging & Audit Trail (Issue #166)
+
+**Shared Log:** `.generated/pipeline_audit.log` — unified audit trail across all pipeline phases (Phases 10-13).
+
+**logged Events (per phase):**
+- **Phase 10:** `mesh_paths_validated`, `unit_consistency_validated`, `link_connectivity_validated`, `joint_axes_validated`
+- **Phase 12.5:** `urdf_structure_check_passed` (pre-validation gate)
+- **Phase 13:** `proto_generation_started`, `proto_generation_completed`, `proto_structure_validated`
+
+**Usage:** Check `pipeline_audit.log` for timestamped events when debugging generation failures:
+```bash
+cat .generated/pipeline_audit.log | grep -E "FAIL|ERROR"  # Find failures
+tail -20 .generated/pipeline_audit.log                    # Recent events
+```
+
+**Implementation:** Uses `pipeline_logger.py` shared module (Issue #166) with `log_event(phase, event_name, details)` calls.
+
+## Phase 12.5: Pre-Validation Gate (Issue #162)
+
+Before PROTO generation (Phase 13), `urdf_structure_checker.py` performs a secondary structural validation to ensure the URDF is Webots-ready. This gate prevents downstream generation failures.
+
+**Checks:**
+- URDF document structure (valid XML, required elements)
+- Mesh file accessibility at resolved paths
+- Link/joint counts and hierarchy consistency
+- Joint axes validity (unit vectors, correct directions)
+
+**Status:** ✅ (Issue #162 complete; integrated into Phase 13 pre-check)
+
 ## The package:// URI Rewrite Problem
 
 The source URDF references meshes via `package://inverted_pendulum_robot/meshes/...`, which assumes a ROS environment with `ROS_PACKAGE_PATH` set. Since `urdf2webots` runs outside ROS (just Python, no ROS), it cannot resolve those paths.
 
-**Solution:** `prepare_urdf_for_webots.sh` copies `robot.urdf` to `.generated/robot_webots.urdf`, rewriting all `package://inverted_pendulum_robot/` → `../../../06_Exports/urdf/`. The relative path is from `.generated/` back to the actual mesh location. After rewrite, `urdf2webots` can resolve the relative mesh paths correctly.
+**Solution:** `prepare_urdf_for_webots.sh` (using `urdf_mesh_path_resolver.py` shared module, Issue #161) copies `robot.urdf` to `.generated/robot_webots.urdf`, rewriting all `package://inverted_pendulum_robot/` → `../../../06_Exports/urdf/`. The relative path is from `.generated/` back to the actual mesh location. After rewrite, `urdf2webots` can resolve the relative mesh paths correctly.
 
 **Note:** The source `06_Exports/urdf/robot.urdf` is never modified. This keeps issue #9 (URDF format/mesh paths) separate from this stage's PROTO generation task.
 
@@ -145,11 +174,12 @@ The source URDF references meshes via `package://inverted_pendulum_robot/meshes/
 - Fails loudly if any `package://` substring remains after rewrite.
 
 ### generate_proto.sh
-- Calls `prepare_urdf_for_webots.sh`.
+- Calls `prepare_urdf_for_webots.sh` (uses `urdf_mesh_path_resolver.py`, Issue #161).
 - Runs `mamba run -n pendulum-tools python3 -m urdf2webots.importer` with target R2025a.
 - Validates output PROTO exists and is non-empty.
 - **Validates** urdf2webots output for link/joint counts as a required sanity check (5 links, 4 joints expected; exits FATAL if mismatch).
-- **Post-processes** the PROTO to inject `castShadows FALSE` into Shape nodes referencing the `feetech-STS3032-visual` mesh (a high-triangle-count servo mesh ~37556 triangles). Webots warns about shadow casting on meshes exceeding 21845 triangles; this suppression is idempotent (safe to re-run; does not duplicate the injection).
+- **Post-processes** the PROTO to inject `castShadows FALSE` into Shape nodes referencing the `feetech-STS3032-visual` mesh (a high-triangle-count servo mesh ~37556 triangles). Webots warns about shadow casting on meshes exceeding 21845 triangles; this suppression is idempotent (safe to re-run; does not duplicate the injection). Uses `inject_cast_shadows.py` (Issue #164, refactored VRML lexer with robust edge-case handling).
+- **Phase 13 Post-Generation:** Calls `validate_proto_structure.py` to confirm PROTO generation success, validates 5 structural checks (node count, link hierarchy, mesh references, axis alignment), logs results to `pipeline_audit.log` (Issue #162, #166).
 
 ### run_gui.sh / run_batch.sh
 - Validate world file and WEBOTS_BIN.
@@ -176,17 +206,27 @@ export WEBOTS_BIN=/path/to/webots
 Ensure mamba is installed and on PATH. This is required to run `urdf2webots` in the `pendulum-tools` environment.
 
 ### "package:// URI found in output"
-`prepare_urdf_for_webots.sh` failed the rewrite. Check that the `sed` pattern in the script matches the actual URDF paths.
+`prepare_urdf_for_webots.sh` failed the rewrite. Check that the `sed` pattern in the script matches the actual URDF paths. Consult `pipeline_audit.log` for detailed path rewriting events.
 
 ### "PROTO generation succeeded, but robot is missing/invisible"
 - Confirm the `.proto` file exists and is non-empty: `ls -lh protos/InvertedPendulumRobot.proto`
 - Check the Webots console for errors (EXTERNPROTO resolution, mesh loading failures).
 - If the PROTO file is stale, delete it and re-run `generate_proto.sh`.
+- Review `pipeline_audit.log` for Phase 13 validation failures: `grep "proto_structure" .generated/pipeline_audit.log`
 
 ### "Webots GUI shows pink error materials"
 Likely a mesh path issue. Check:
 1. Does `.generated/robot_webots.urdf` have correct relative paths? (should be `../../../06_Exports/urdf/meshes/...`)
 2. Do the mesh files exist at that location relative to `.generated/`?
+3. Consult `.generated/pipeline_audit.log` for mesh path resolution events.
+
+### "Debugging generation failures"
+Enable verbose logging and check the audit trail:
+```bash
+tail -50 .generated/pipeline_audit.log  # Last 50 events
+cat .generated/pipeline_audit.log | grep "FAIL\|ERROR"  # Failures only
+```
+See "Logging & Audit Trail" section above for event types and implementation details.
 
 ## Environment
 
