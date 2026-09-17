@@ -1,0 +1,60 @@
+#VRML_SIM R2025a utf8
+
+# Test world for InertialUnit accessibility (issue #178).
+# Same world as pendulum_robot.wbt, but with test_imu controller instead of <none>.
+# Used to validate that robot.getDevice("imu") works in controller code.
+
+EXTERNPROTO "../protos/InvertedPendulumRobot.proto"
+
+WorldInfo {
+  info [
+    "Stage B3 test: validate InertialUnit accessibility via robot.getDevice()"
+    "Uses test_imu controller to exercise sensor API."
+  ]
+  title "test_imu"
+  basicTimeStep 32
+}
+
+Viewpoint {
+  orientation -0.3 0.3 0.9 1.2
+  position -0.2 -0.3 0.15
+}
+
+Background {
+  skyColor [0.4 0.6 1.0]
+}
+
+DirectionalLight {
+  direction 0.5 -1.0 0.5
+  intensity 1.0
+}
+
+Solid {
+  translation 0 0 -0.01
+  rotation 1 0 0 0
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.8 0.8 0.8
+        }
+      }
+      geometry Box {
+        size 1.0 1.0 0.02
+      }
+    }
+  ]
+  boundingObject Box {
+    size 1.0 1.0 0.02
+  }
+  physics Physics {
+    density -1
+    mass 100
+  }
+  name "floor"
+}
+
+InvertedPendulumRobot {
+  translation 0 0 0.02
+  controller "test_imu"
+}
