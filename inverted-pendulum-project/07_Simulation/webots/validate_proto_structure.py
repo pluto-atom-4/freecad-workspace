@@ -48,6 +48,26 @@ URDF_FILE = SCRIPT_DIR / ".generated" / "robot_webots.urdf"
 PROTO_FILE = SCRIPT_DIR / "protos" / "InvertedPendulumRobot.proto"
 OUTPUT_REPORT_FILE = SCRIPT_DIR / "13_proto_structure_validation_report.json"
 OUTPUT_CHECKLIST_FILE = SCRIPT_DIR / "B2_PROTO_STRUCTURE_CHECKLIST.md"
+LOG_FILE = SCRIPT_DIR / ".generated" / "pipeline_debug.log"
+
+
+def log_event(message: str) -> None:
+    """Log event to pipeline_debug.log with timestamp.
+
+    Args:
+        message: Event message to log
+    """
+    # Ensure .generated directory exists
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    log_line = f"[{timestamp}] validate_proto_structure.py: {message}"
+
+    try:
+        with open(LOG_FILE, 'a') as f:
+            f.write(log_line + '\n')
+    except Exception as e:
+        print(f"Warning: Failed to write to log file: {e}", file=sys.stderr)
 
 
 def validate_joint_names_match_urdf(urdf_root: ET.Element, proto_content: str) -> Dict[str, Any]:
@@ -458,25 +478,36 @@ def generate_markdown_checklist(urdf_root: ET.Element, checks: List[Dict[str, An
 
 def main() -> int:
     """Main validation pipeline."""
+    log_event("========== PHASE 13: PROTO STRUCTURE VALIDATION START ==========")
+    log_event(f"URDF path: {URDF_FILE}")
+    log_event(f"PROTO path: {PROTO_FILE}")
+
     print("=== Phase 13: PROTO Structure Validation ===\n")
 
     # Check input files exist
     if not URDF_FILE.exists():
+        log_event("ERROR: URDF file not found")
         print(f"ERROR: URDF file not found at {URDF_FILE}")
         return 1
 
     if not PROTO_FILE.exists():
+        log_event("ERROR: PROTO file not found")
         print(f"ERROR: PROTO file not found at {PROTO_FILE}")
         return 1
 
     # Load files
     urdf_root = load_urdf(URDF_FILE)
     if urdf_root is None:
+        log_event("ERROR: Failed to parse URDF XML")
         return 1
 
     proto_content = load_proto(PROTO_FILE)
     if proto_content is None:
+        log_event("ERROR: Failed to load PROTO file")
         return 1
+
+    log_event(f"✓ Loaded URDF from {URDF_FILE}")
+    log_event(f"✓ Loaded PROTO from {PROTO_FILE}")
 
     print(f"✓ Loaded URDF from {URDF_FILE}")
     print(f"✓ Loaded PROTO from {PROTO_FILE}")
@@ -484,6 +515,8 @@ def main() -> int:
 
     # Run validation checks
     print("Running validation checks...")
+    log_event("Running validation checks...")
+
     checks = [
         validate_joint_names_match_urdf(urdf_root, proto_content),
         validate_position_sensors_auto_named(urdf_root, proto_content),
@@ -491,6 +524,14 @@ def main() -> int:
         validate_mesh_urls_resolve(urdf_root, proto_content),
         validate_vrml_syntax(proto_content),
     ]
+
+    # Log each check result
+    for check in checks:
+        check_name = check.get('check', 'unknown')
+        passed = check.get('passed', False)
+        details = check.get('details', '')
+        status = "✓ PASS" if passed else "✗ FAIL"
+        log_event(f"Check '{check_name}': {status} ({details})")
 
     # Generate timestamp
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -524,9 +565,12 @@ def main() -> int:
 
     # Fail-hard if any check failed
     if summary["failed_checks"] > 0:
+        log_event(f"VALIDATION FAILED: {summary['failed_checks']}/{summary['total_checks']} check(s) failed")
         print(f"ERROR: {summary['failed_checks']} validation check(s) failed")
         return 1
 
+    log_event(f"✓ PHASE 13 SUCCESS: All {summary['total_checks']} checks passed")
+    log_event("========== PHASE 13: PROTO STRUCTURE VALIDATION SUCCESS ==========")
     print("=== All validation checks passed ===")
     return 0
 
