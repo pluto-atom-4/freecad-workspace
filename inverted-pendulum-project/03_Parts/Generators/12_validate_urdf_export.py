@@ -48,6 +48,10 @@ from urdf_mesh_path_resolver import resolve_mesh_path
 # Import shared axis validation (Issue #163)
 from axis_validation import compose_axis, validate_joint_axes
 
+# Import shared pipeline logger (Issue #166)
+sys.path.insert(0, str(SCRIPT_DIR.parent.parent))
+from pipeline_logger import log_event
+
 # Relative paths to inputs
 _EXPORTS_DIR = SCRIPT_DIR.parent.parent / "06_Exports"
 
@@ -55,26 +59,6 @@ _EXPORTS_DIR = SCRIPT_DIR.parent.parent / "06_Exports"
 URDF_FILE = _EXPORTS_DIR / "urdf" / "robot.urdf"
 JOINT_CONFIG_FILE = SCRIPT_DIR / "joint_config.json"
 OUTPUT_REPORT_FILE = SCRIPT_DIR / "12_urdf_export_validation_report.json"
-LOG_FILE = SCRIPT_DIR / ".generated" / "pipeline_debug.log"
-
-
-def log_event(message: str) -> None:
-	"""Log event to pipeline_debug.log with timestamp.
-
-	Args:
-		message: Event message to log
-	"""
-	# Ensure .generated directory exists
-	LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-	timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-	log_line = f"[{timestamp}] 12_validate_urdf_export.py: {message}"
-
-	try:
-		with open(LOG_FILE, 'a') as f:
-			f.write(log_line + '\n')
-	except Exception as e:
-		print(f"Warning: Failed to write to log file: {e}", file=sys.stderr)
 
 
 def validate_mesh_paths(urdf_root: ET.Element, urdf_path: Path) -> List[Dict[str, Any]]:
@@ -392,11 +376,11 @@ def validate_link_connectivity(urdf_root: ET.Element) -> List[Dict[str, Any]]:
 
 def main():
     """Run all validators and write report."""
-    log_event("========== PHASE 12: URDF EXPORT VALIDATION START ==========")
-    log_event(f"URDF path: {URDF_FILE}")
+    log_event("Phase 12", "========== URDF EXPORT VALIDATION START ==========")
+    log_event("Phase 12", f"URDF path: {URDF_FILE}")
 
     if not URDF_FILE.exists():
-        log_event(f"ERROR: URDF file not found: {URDF_FILE}")
+        log_event("Phase 12", f"ERROR: URDF file not found: {URDF_FILE}")
         print(f"ERROR: URDF file not found: {URDF_FILE}")
         sys.exit(1)
 
@@ -404,11 +388,11 @@ def main():
         tree = ET.parse(URDF_FILE)
         urdf_root = tree.getroot()
     except ET.ParseError as e:
-        log_event(f"ERROR: Failed to parse URDF: {e}")
+        log_event("Phase 12", f"ERROR: Failed to parse URDF: {e}")
         print(f"ERROR: Failed to parse URDF: {e}")
         sys.exit(1)
 
-    log_event(f"✓ Loaded URDF from {URDF_FILE}")
+    log_event("Phase 12", f"✓ Loaded URDF from {URDF_FILE}")
 
     # Run all validators
     all_results = []
@@ -421,7 +405,7 @@ def main():
     axis_validation_result = validate_joint_axes(urdf_root, joint_config)
     all_results.extend(axis_validation_result['checks'])
 
-    log_event("Running validation checks...")
+    log_event("Phase 12", "Running validation checks...")
 
     # Log each check result
     for check in all_results:
@@ -429,7 +413,7 @@ def main():
         passed = check.get('passed', False)
         details = check.get('details', '')
         status = "✓ PASS" if passed else "✗ FAIL"
-        log_event(f"Check '{check_name}': {status} ({details})")
+        log_event("Phase 12", f"Check '{check_name}': {status} ({details})")
 
     # Aggregate results
     passed_count = sum(1 for r in all_results if r['passed'])
@@ -453,7 +437,7 @@ def main():
     with open(OUTPUT_REPORT_FILE, 'w') as f:
         json.dump(report, f, indent=2)
 
-    log_event(f"Summary: {passed_count}/{len(all_results)} checks passed, overall status: {report['summary']['overall_status']}")
+    log_event("Phase 12", f"Summary: {passed_count}/{len(all_results)} checks passed, overall status: {report['summary']['overall_status']}")
 
     # Print summary
     print(f"\nURDF Export Validation Report")
