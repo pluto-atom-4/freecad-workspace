@@ -66,7 +66,7 @@ def find_shape_blocks(content: str, mesh_name: str) -> List[Tuple[int, int]]:
     return blocks
 
 
-def inject_cast_shadows_false(content: str, block_positions: List[Tuple[int, int]]) -> str:
+def inject_cast_shadows_false(content: str, block_positions: List[Tuple[int, int]]) -> Tuple[str, int]:
     """
     Inject castShadows FALSE before closing } in each block.
 
@@ -75,14 +75,16 @@ def inject_cast_shadows_false(content: str, block_positions: List[Tuple[int, int
         block_positions: List of (start_pos, end_pos) tuples from find_shape_blocks()
 
     Returns:
-        Modified content with castShadows FALSE injected
+        Tuple of (modified_content, changes_made):
+        - modified_content: Modified content with castShadows FALSE injected
+        - changes_made: Number of Shape blocks that were modified
 
     Raises:
-        ValueError: If a block already contains castShadows FALSE (already patched)
+        ValueError: If a block already contains castShadows (already patched)
                     or if structure is invalid
     """
     if not block_positions:
-        return content
+        return (content, 0)
 
     # Process blocks in reverse order to preserve positions during modification
     modified = content
@@ -92,8 +94,8 @@ def inject_cast_shadows_false(content: str, block_positions: List[Tuple[int, int
         # Adjust positions for any previous modifications
         block_content = modified[start_pos : end_pos + 1]
 
-        if "castShadows FALSE" in block_content:
-            # Already patched, skip
+        if "castShadows" in block_content:
+            # castShadows already present (TRUE or FALSE), skip to prevent duplicates
             continue
 
         # Find the closing brace within this block

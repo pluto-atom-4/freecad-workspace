@@ -194,6 +194,67 @@ class TestInjectCastShadows:
         modified, changes = inject_cast_shadows_false(text, blocks)
         assert changes == 2
 
+    def test_return_type_is_tuple(self):
+        """Test: inject_cast_shadows_false returns Tuple[str, int] (issue #164)"""
+        text = "Shape { url \"test.stl\" }"
+        blocks = [(0, len(text) - 1)]
+        result = inject_cast_shadows_false(text, blocks)
+        assert isinstance(result, tuple), "Function must return a tuple"
+        assert len(result) == 2, "Tuple must have exactly 2 elements"
+        modified, changes = result
+        assert isinstance(modified, str), "First element must be str"
+        assert isinstance(changes, int), "Second element must be int"
+
+    def test_empty_blocks_returns_tuple(self):
+        """Test: empty block list returns (content, 0) tuple (issue #164)"""
+        text = "Shape { url \"test.stl\" }"
+        blocks = []
+        result = inject_cast_shadows_false(text, blocks)
+        assert isinstance(result, tuple), "Function must return tuple for empty blocks"
+        modified, changes = result
+        assert modified == text, "Content should be unchanged for empty blocks"
+        assert changes == 0, "Changes should be 0 for empty blocks"
+
+    def test_duplicate_castShadows_false_skipped(self):
+        """Test: blocks already containing castShadows FALSE are skipped"""
+        text = 'Shape { url "test.stl"\n  castShadows FALSE\n}'
+        blocks = [(0, len(text) - 1)]
+        modified, changes = inject_cast_shadows_false(text, blocks)
+        assert changes == 0, "Should skip blocks that already have castShadows FALSE"
+        assert modified == text, "Content should be unchanged"
+        # Count occurrences to ensure no duplicate was added
+        assert modified.count("castShadows FALSE") == 1
+
+    def test_duplicate_castShadows_true_skipped(self):
+        """Test: blocks with castShadows TRUE are also skipped (issue #164)"""
+        text = 'Shape { url "test.stl"\n  castShadows TRUE\n}'
+        blocks = [(0, len(text) - 1)]
+        modified, changes = inject_cast_shadows_false(text, blocks)
+        assert changes == 0, "Should skip blocks that already have castShadows attribute"
+        assert modified == text, "Content should be unchanged when castShadows TRUE exists"
+        # Verify no FALSE was injected (would create duplicate)
+        assert modified.count("castShadows") == 1
+
+    def test_idempotency(self):
+        """Test: running injection twice on same content is idempotent"""
+        text = "Shape { url \"test.stl\" }"
+        blocks = [(0, len(text) - 1)]
+
+        # First injection
+        modified1, changes1 = inject_cast_shadows_false(text, blocks)
+        assert changes1 == 1, "First injection should make changes"
+        assert "castShadows FALSE" in modified1
+
+        # Find blocks in modified content
+        blocks2 = find_shape_blocks(modified1, "test.stl")
+
+        # Second injection on modified content
+        modified2, changes2 = inject_cast_shadows_false(modified1, blocks2)
+        assert changes2 == 0, "Second injection should make no changes (idempotent)"
+        assert modified1 == modified2, "Content should be unchanged on second run"
+        # Verify only one castShadows FALSE exists
+        assert modified2.count("castShadows FALSE") == 1
+
 
 class TestVrmlBracesValidation:
     """Tests for validate_vrml_braces() function"""
