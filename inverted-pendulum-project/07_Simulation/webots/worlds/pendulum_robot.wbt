@@ -14,7 +14,7 @@ WorldInfo {
     "Robot uses <none> (no-op) controller in this stage."
   ]
   title "pendulum_robot"
-  basicTimeStep 32
+  basicTimeStep 16
 }
 
 Viewpoint {

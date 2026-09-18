@@ -12,7 +12,7 @@ WorldInfo {
     "Uses test_imu controller to exercise sensor API."
   ]
   title "test_imu"
-  basicTimeStep 32
+  basicTimeStep 16
 }
 
 Viewpoint {
