@@ -1,11 +1,8 @@
 #!/bin/bash
 # Generate InvertedPendulumRobot.proto from prepared URDF via urdf2webots.
 #
-# This script:
-# 1. Calls prepare_urdf_for_webots.sh to rewrite package:// URIs.
-# 2. Runs urdf2webots to generate the PROTO file.
-# 3. Validates output PROTO file exists and is non-empty.
-# 4. Parses urdf2webots output to confirm link/joint counts (5 links, 4 joints).
+# Pipeline: prepare URDF → validate structure → generate PROTO via urdf2webots →
+# inject shadows + sensors → validate final PROTO
 #
 # Usage: ./generate_proto.sh
 #   (Run from the webots/ directory.)
@@ -114,7 +111,7 @@ echo ""
 echo "Running urdf2webots (R2025a target)..."
 log "Step 2: Invoking urdf2webots.importer (R2025a target)..."
 
-# Step 3: Run urdf2webots in the pendulum-tools env (pre-validated at Step 1.5).
+# Step 2: Run urdf2webots in the pendulum-tools env (pre-validated at Step 1.5).
 # Capture output for link/joint count validation.
 PROTO_OUTPUT_DIR="$(dirname "$PROTO_OUTPUT")"
 mkdir -p "$PROTO_OUTPUT_DIR"
@@ -133,7 +130,7 @@ URDF2WEBOTS_OUTPUT=$(mamba run -n pendulum-tools python3 -m urdf2webots.importer
     exit 1
 }
 
-# Step 4: Validate output PROTO file exists and is non-empty.
+# Step 3: Validate output PROTO file exists and is non-empty.
 if [ ! -s "$PROTO_OUTPUT" ]; then
     log "ERROR: urdf2webots completed but output PROTO not found or empty: $PROTO_OUTPUT"
     echo "FATAL: urdf2webots completed but output PROTO not found or empty: $PROTO_OUTPUT" >&2
@@ -142,7 +139,7 @@ fi
 
 log "✓ PROTO file generated: $PROTO_OUTPUT"
 
-# Step 5: Parse urdf2webots output to validate link/joint counts (defense-in-depth).
+# Step 3 (continued): Parse urdf2webots output to validate link/joint counts (defense-in-depth).
 # Expected: 5 links (Base_Link, Wheel_Left, Wheel_Right, Pendulum_Link, Pendulum_Link_Right)
 #           4 joints (wheel_left_joint, wheel_right_joint, pendulum_pivot_joint, pendulum_pivot_right_joint)
 log "Step 3: Parsing urdf2webots output for link/joint counts..."
@@ -186,7 +183,7 @@ fi
 
 log "✓ Parsed counts: $LINK_COUNT links (regex match), $JOINT_COUNT joints (regex match)"
 
-# Step 6: Post-process PROTO to inject castShadows FALSE for high-triangle-count meshes.
+# Step 4: Post-process PROTO to inject castShadows FALSE for high-triangle-count meshes.
 # The feetech-STS3032-visual mesh has ~37556 triangles, exceeding Webots' 21845-triangle
 # limit. Webots warns about shadow casting on oversized meshes; suppress with castShadows FALSE.
 # This post-processor is idempotent: if castShadows already exists in the Shape, it skips.
@@ -202,6 +199,25 @@ if ! python3 "$SCRIPT_DIR/inject_cast_shadows.py" --proto "$PROTO_OUTPUT"; then
 fi
 
 log "✓ inject_cast_shadows.py completed successfully"
+
+# Step 5: Inject sensor nodes from YAML config.
+# sensor nodes (InertialUnit, etc.) are not part of URDF and must be injected post-generation.
+# This step is idempotent: if a sensor name already exists in the PROTO, it skips (logged as already injected).
+# Configuration: sensors.yaml (sits beside PROTO file in webots/ directory).
+
+echo ""
+echo "Post-processing PROTO to inject sensor nodes from YAML config..."
+log "Step 5: Invoking inject_sensors.py (YAML-driven sensor injection)..."
+
+if ! mamba run -n pendulum-tools python3 "$SCRIPT_DIR/inject_sensors.py" \
+    --proto "$PROTO_OUTPUT" \
+    --config "$SCRIPT_DIR/sensors.yaml"; then
+    log "ERROR: Sensor injection failed"
+    echo "FATAL: Sensor injection failed." >&2
+    exit 1
+fi
+
+log "✓ inject_sensors.py completed successfully"
 
 echo ""
 echo "=================================================================="
