@@ -192,6 +192,7 @@ The source URDF references meshes via `package://inverted_pendulum_robot/meshes/
 - Plain Webots nodes: WorldInfo, Viewpoint, Background, DirectionalLight, Solid floor.
 - Robot instance with `controller "<none>"` (built-in no-op — no controller code yet).
 - Robot positioned with clearance above floor so it can settle under gravity.
+- basicTimeStep 16 (50Hz) — required for Stage C 50Hz control-loop feasibility (#194).
 
 ## Troubleshooting
 
