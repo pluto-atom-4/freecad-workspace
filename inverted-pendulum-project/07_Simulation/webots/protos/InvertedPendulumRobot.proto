@@ -3,10 +3,6 @@
 # license url: http://www.apache.org/licenses/LICENSE-2.0
 # This is a proto file for Webots for the InvertedPendulumRobot
 # Extracted from: /home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/07_Simulation/webots/.generated/robot_webots.urdf
-#
-# WARNING: InertialUnit node hand-added in B3.
-# If generate_proto.sh is rerun, this node will be wiped.
-# See 07_Simulation/README.md Stage B3 section for re-add steps.
 
 PROTO InvertedPendulumRobot [
   field  SFVec3f     translation     0 0 0
@@ -48,10 +44,10 @@ PROTO InvertedPendulumRobot [
       InertialUnit {
         translation 0 0 0
         rotation 0 0 1 0
-        name "imu"
         xAxis TRUE
         yAxis TRUE
         zAxis TRUE
+        name "imu"
       }
       HingeJoint {
         jointParameters HingeJointParameters {
@@ -167,7 +163,7 @@ PROTO InvertedPendulumRobot [
       }
       HingeJoint {
         jointParameters HingeJointParameters {
-          axis 0.000000 0.000000 1.000000
+          axis 0.000000 1.000000 -0.000000
           anchor -0.008001 -0.018276 0.070750
         }
         device [
@@ -294,7 +290,7 @@ PROTO InvertedPendulumRobot [
       }
       HingeJoint {
         jointParameters HingeJointParameters {
-          axis 0.000000 0.000000 1.000000
+          axis 0.000000 1.000000 -0.000000
           anchor -0.008001 0.062276 0.068250
         }
         device [
@@ -419,12 +415,6 @@ PROTO InvertedPendulumRobot [
             ]
           }
         }
-      }
-    ]
-    device [
-      InertialUnit {
-        translation 0 0 0
-        name "imu"
       }
     ]
     name IS name
