@@ -421,3 +421,150 @@ This is stage-specific and outside the scope of this PROTO modification (future 
 - Webots InertialUnit docs: [Webots Reference Manual](https://www.cyberbotics.com/doc/reference/inertialunit)
 - URDF to Webots conversion: [urdf2webots on PyPI](https://pypi.org/project/urdf2webots/)
 - Related: Stage A ([URDF Import + PROTO](#stage-a-webots-world-scaffolding-urdf-import--proto))
+
+---
+
+# Stage B4: Sensor Automation (YAML-Driven)
+
+Issue: [#180](https://github.com/pluto-atom-4/freecad-workspace/issues/180) — Automate sensor node generation via YAML config + inject_sensors.py.
+
+## Overview
+
+Stage B4 automates sensor node generation from YAML configuration, replacing the manual hand-add pattern in Stage B3. The `sensors.yaml` configuration file is the single source of truth for all sensor nodes — when you re-run `generate_proto.sh`, sensors survive the regeneration and can be easily modified by editing the YAML file instead of manually patching the PROTO.
+
+**Key improvements over Stage B3 (manual hand-add):**
+- **Idempotent:** Re-running `generate_proto.sh` does not wipe out sensors.
+- **Version-controlled:** `sensors.yaml` sits in the repo, unlike hand-edited PROTO nodes.
+- **Maintainable:** Modify sensors by editing YAML, not VRML syntax.
+- **Extensible:** Forward-compatible schema for future sensor types (GPS, Camera, etc.) and joint-attached sensors.
+
+**Current scope:**
+- InertialUnit sensor nodes only
+- Robot-attachment only (joint-attachment deferred for future work)
+- Configuration file: `sensors.yaml` (per-robot, sits beside PROTO in `webots/` directory)
+
+## Configuration File: sensors.yaml
+
+Location: `inverted-pendulum-project/07_Simulation/webots/sensors.yaml`
+
+**Schema:**
+```yaml
+sensors:
+  - type: InertialUnit              # Sensor type (currently: InertialUnit only)
+    name: imu                       # Unique sensor name (must be unique within sensors[])
+    attach_to: robot                # Attachment point (currently: "robot" only)
+    description: "..."              # Human-readable description (optional)
+    fields:                          # VRML field overrides (optional)
+      translation: [x, y, z]        # Position offset from attach point
+      rotation: [x, y, z, angle]    # Rotation offset
+      xAxis: true/false             # Enable X-axis measurement
+      yAxis: true/false             # Enable Y-axis measurement
+      zAxis: true/false             # Enable Z-axis measurement
+```
+
+**Example:**
+```yaml
+sensors:
+  - type: InertialUnit
+    name: imu
+    attach_to: robot
+    description: "Body-fixed IMU for orientation and acceleration sensing"
+    fields:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 1, 0]
+      xAxis: true
+      yAxis: true
+      zAxis: true
+```
+
+## Workflow
+
+### To Add/Modify/Remove a Sensor:
+
+1. Edit `sensors.yaml` in the `webots/` directory.
+2. Run `generate_proto.sh` (or any script that calls it, e.g., `run_gui.sh`):
+   ```bash
+   cd inverted-pendulum-project/07_Simulation/webots/
+   ./generate_proto.sh
+   ```
+3. Verify the PROTO now contains your sensor(s):
+   ```bash
+   grep -A5 'InertialUnit {' protos/InvertedPendulumRobot.proto
+   ```
+
+### To Recover After Modifying robot.urdf:
+
+If you regenerate `robot.urdf` (via FreeCAD export or `10_export_urdf.py`), simply re-run `generate_proto.sh`:
+```bash
+./generate_proto.sh
+```
+
+**Your sensors survive the regeneration** because `inject_sensors.py` is idempotent: it checks sensor names before injection and skips already-present sensors (logged as "already injected, skipping").
+
+### Idempotency Guarantee:
+
+Running `generate_proto.sh` multiple times with the same `sensors.yaml` produces a **byte-identical PROTO file** after the first injection. This allows safe automation and CI/CD integration.
+
+## How It Works
+
+1. **urdf2webots** generates the base PROTO from URDF (links, joints, shapes, physics).
+2. **inject_cast_shadows.py** post-processes the PROTO to disable shadow casting on high-triangle-count meshes (idempotent).
+3. **inject_sensors.py** (NEW) reads `sensors.yaml` and injects sensor nodes into the PROTO (idempotent).
+   - Validates sensor schema (type whitelist, name uniqueness, supported attachment points).
+   - Renders VRML node text for each sensor.
+   - Finds insertion point (after first Pose block for robot-attached sensors).
+   - Checks idempotency: if sensor name already present, skips with log message.
+   - Validates VRML braces before/after injection.
+
+## Reference: Stage B3 (Manual Hand-Add) — Now Deprecated
+
+**Stage B3 hand-add steps are kept for reference but are now deprecated.** Use Stage B4 (YAML-driven) instead.
+
+The old workflow was:
+1. Manually edit PROTO file.
+2. Add InertialUnit node by hand.
+3. Hope not to re-run `generate_proto.sh` (it would wipe out your changes).
+4. If you do re-run, manually re-add the sensor again.
+
+**The new Stage B4 workflow eliminates these manual steps** via `sensors.yaml` and automated `inject_sensors.py`.
+
+## Validation
+
+### Smoke Test (Structural Validation):
+
+```bash
+cd inverted-pendulum-project/07_Simulation/webots
+./run_batch.sh
+```
+
+Expected: Webots runs 30s in batch mode without crashing. Exit code 0 or timeout (124) indicates structural success.
+
+### Visual Verification (Interactive/GUI Mode):
+
+```bash
+cd inverted-pendulum-project/07_Simulation/webots
+export DISPLAY=:1  # Set to your active X display
+./run_gui.sh
+```
+
+In the Webots GUI, expand the Scene tree and confirm sensor nodes are visible as children of the Robot node.
+
+### Functional Test (Controller):
+
+After confirming visual structure, test that controller code can access the sensor:
+
+```bash
+cd inverted-pendulum-project/07_Simulation/webots
+export DISPLAY=:1
+webots worlds/test_imu.wbt
+```
+
+Watch the Webots console for test_imu controller output (same as Stage B3 test).
+
+## References (Stage B4)
+
+- GitHub Issue: [#180](https://github.com/pluto-atom-4/freecad-workspace/issues/180)
+- Script: `inject_sensors.py` (YAML reader, VRML node injector, idempotent)
+- Config: `sensors.yaml` (per-robot sensor definitions)
+- Tests: `test_inject_sensors.py` (idempotency, schema validation, regression tests)
+- Related: Stage B3 ([Sensor Node Hand-Add](#stage-b3-imu-node-hand-add)) — manual pattern, now deprecated

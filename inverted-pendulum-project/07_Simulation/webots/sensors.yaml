@@ -1,0 +1,32 @@
+# InvertedPendulumRobot sensor configuration
+#
+# This file defines sensors injected into the PROTO by inject_sensors.py
+# during `generate_proto.sh` execution. Edit this file to add/remove/modify sensors.
+#
+# Sensor injection is idempotent: re-running generate_proto.sh will not duplicate
+# already-injected sensors (checked by name).
+#
+# Schema:
+# sensors:
+#   - type: InertialUnit              # Sensor type (currently: InertialUnit only)
+#     name: <sensor_name>             # Unique sensor name (must be unique within sensors[])
+#     attach_to: robot                # Attachment point (currently: "robot" only)
+#     description: <optional string>  # Human-readable description
+#     fields:                          # VRML field overrides (optional)
+#       translation: [x, y, z]        # Position offset from attach point (default: [0, 0, 0])
+#       rotation: [x, y, z, angle]    # Rotation offset (default: [0, 0, 1, 0])
+#       xAxis: true/false             # Enable X-axis measurement (default: true)
+#       yAxis: true/false             # Enable Y-axis measurement (default: true)
+#       zAxis: true/false             # Enable Z-axis measurement (default: true)
+
+sensors:
+  - type: InertialUnit
+    name: imu
+    attach_to: robot
+    description: "Body-fixed IMU for orientation and acceleration sensing"
+    fields:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 1, 0]
+      xAxis: true
+      yAxis: true
+      zAxis: true

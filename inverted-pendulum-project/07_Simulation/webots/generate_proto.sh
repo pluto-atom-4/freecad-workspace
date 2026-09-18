@@ -203,6 +203,25 @@ fi
 
 log "✓ inject_cast_shadows.py completed successfully"
 
+# Step 7: Inject sensor nodes from YAML config.
+# sensor nodes (InertialUnit, etc.) are not part of URDF and must be injected post-generation.
+# This step is idempotent: if a sensor name already exists in the PROTO, it skips (logged as already injected).
+# Configuration: sensors.yaml (sits beside PROTO file in webots/ directory).
+
+echo ""
+echo "Post-processing PROTO to inject sensor nodes from YAML config..."
+log "Step 7: Invoking inject_sensors.py (YAML-driven sensor injection)..."
+
+if ! mamba run -n pendulum-tools python3 "$SCRIPT_DIR/inject_sensors.py" \
+    --proto "$PROTO_OUTPUT" \
+    --config "$SCRIPT_DIR/sensors.yaml"; then
+    log "ERROR: Sensor injection failed"
+    echo "FATAL: Sensor injection failed." >&2
+    exit 1
+fi
+
+log "✓ inject_sensors.py completed successfully"
+
 echo ""
 echo "=================================================================="
 echo "PROTO generation complete."
