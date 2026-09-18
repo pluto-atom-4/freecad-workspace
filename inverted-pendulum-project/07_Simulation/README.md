@@ -321,6 +321,62 @@ cd inverted-pendulum-project/07_Simulation/webots
 
 This visual gate confirms that the PROTO modification is correct and the sensor node integrates without breaking the robot's visual structure.
 
+### Validation (Controller Test)
+
+After confirming visual structure in the GUI, validate that the InertialUnit is **functionally accessible** to controller code via the standard Webots device API.
+
+**Test Controller:** `controllers/test_imu.py`
+- Calls `robot.getDevice("imu")` to retrieve the InertialUnit by name.
+- Enables sensor sampling via `imu.enable(timestep)`.
+- Performs one simulation step.
+- Reads IMU orientation (`getRollPitchYaw()`) and acceleration (`getAcceleration()`).
+- Returns exit code 0 if sensor is accessible and data is readable; exits 1 if device lookup fails or sensor read throws.
+
+**Test World:** `worlds/test_imu.wbt`
+- Identical to `pendulum_robot.wbt`, but uses `controller "test_imu"` instead of `<none>`.
+
+**Running the Test (Interactive/GUI Mode - Recommended):**
+
+```bash
+cd inverted-pendulum-project/07_Simulation/webots
+export DISPLAY=:1  # Set to your active X display
+webots worlds/test_imu.wbt
+```
+
+Watch the Webots GUI console for output from the test_imu controller:
+```
+[test_imu] Robot initialized with timestep=32
+SUCCESS: InertialUnit 'imu' accessible
+  Device type: <sensor_type>
+  Device name: imu
+  Sensor enabled
+  One timestep executed
+  Roll/Pitch/Yaw: [...]
+  Acceleration: [...]
+SUCCESS: Sensor data readable
+```
+
+**What This Proves:**
+- InertialUnit node exists in the PROTO and is correctly named `"imu"`.
+- Webots successfully instantiates the sensor when the world is loaded.
+- Controller code can access the device via `getDevice()` — the standard pattern for all future IMU-using controllers (e.g., control loop, feedback stabilization, etc.).
+- Sensor readings are available and non-null.
+
+**Headless Smoke Test (Structural Validation Only):**
+
+To confirm the PROTO syntax is valid and the InertialUnit node integrates without breaking the robot structure:
+
+```bash
+cd inverted-pendulum-project/07_Simulation/webots
+./run_batch.sh
+```
+
+Expected behavior: Webots runs for 30s in batch mode without crashing. Exit code 0 or timeout (exit 124) indicates structural success.
+
+**If Test Fails:**
+- `ERROR: InertialUnit 'imu' not found via getDevice()` → PROTO is missing the InertialUnit node or it has a different name. Re-check Step 1 above.
+- `ERROR: Could not read sensor data: ...` → InertialUnit is present but misconfigured (e.g., not enabled, corrupt attribute). Review PROTO syntax and Webots InertialUnit documentation.
+- PROTO fails to load in GUI/batch → Malformed VRML syntax in PROTO. Inspect `protos/InvertedPendulumRobot.proto` for syntax errors near the InertialUnit block (lines 48–55).
 ## FAQ
 
 ### Why Hand-Add Instead of Using URDF?
