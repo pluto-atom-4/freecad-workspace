@@ -19,6 +19,9 @@ SENSOR_NAMES = {
 CONTROL_RATE_MS = int(os.environ.get("CONTROL_RATE_MS", "20"))
 CONTROL_PERIOD_S = CONTROL_RATE_MS / 1000.0
 
+# Sensor log throttling (configurable via env var)
+SENSOR_LOG_THROTTLE = int(os.environ.get("SENSOR_LOG_THROTTLE", "50"))
+
 def main():
     robot = Robot()
     timestep = int(robot.getBasicTimeStep())
@@ -42,23 +45,26 @@ def main():
     log_path = Path(__file__).parent / "controller.log"
 
     with open(log_path, "w") as log_file:
-        def log_msg(msg):
+        def log_msg(msg, always_flush=False):
             print(msg)
             log_file.write(msg + "\n")
-            log_file.flush()
+            if always_flush or (sensor_log_count % SENSOR_LOG_THROTTLE == 0):
+                log_file.flush()
 
-        log_msg("Pendulum controller started. Reading all 5 sensors.")
-        log_msg(f"Control rate: {CONTROL_RATE_MS}ms ({1000.0/CONTROL_RATE_MS:.1f}Hz)")
-        log_msg("Time(s) IMU_Roll(rad) IMU_Pitch(rad) IMU_Yaw(rad) IMU_Ax(m/s2) IMU_Ay(m/s2) IMU_Az(m/s2) WheelL(rad) WheelR(rad) PivotL(rad) PivotR(rad)")
+        log_msg("Pendulum controller started. Reading all 5 sensors.", always_flush=True)
+        log_msg(f"Control rate: {CONTROL_RATE_MS}ms ({1000.0/CONTROL_RATE_MS:.1f}Hz)", always_flush=True)
+        log_msg("Time(s) IMU_Roll(rad) IMU_Pitch(rad) IMU_Yaw(rad) IMU_Ax(m/s2) IMU_Ay(m/s2) IMU_Az(m/s2) WheelL(rad) WheelR(rad) PivotL(rad) PivotR(rad)", always_flush=True)
 
         # Fixed-rate control loop state
         control_accum_ms = 0.0
         control_step_count = 0
         control_fire_times = []  # for jitter measurement at shutdown
+        sensor_log_count = 0  # for throttling sensor log lines
 
         def _run_control_step(t, roll, pitch, yaw, ax, ay, az, wl, wr, pl, pr):
             """Placeholder control logic. TODO(Stage D): replace with motor commands."""
             # No motor writes yet; just a hook for Stage D to fill
+            # TODO(Stage D): Add log_control_msg() for per-fire control telemetry if needed
             pass
 
         # Main loop: run indefinitely until Webots quit signal (-1)
@@ -77,7 +83,7 @@ def main():
 
                 # Log (check for NaN)
                 if None in [rpy, accel, wl, wr, pl, pr] or any(x is None for x in rpy) or any(x is None for x in accel):
-                    log_msg(f"{t:.3f} READING_ERROR: sensor returned None")
+                    log_msg(f"{t:.3f} READING_ERROR: sensor returned None", always_flush=True)
                     continue
 
                 roll, pitch, yaw = rpy
@@ -93,9 +99,12 @@ def main():
                     control_fire_times.append(t)
                     _run_control_step(t, roll, pitch, yaw, ax, ay, az, wl, wr, pl, pr)
 
-                log_msg(f"{t:.3f} {roll:.4f} {pitch:.4f} {yaw:.4f} {ax:.4f} {ay:.4f} {az:.4f} {wl:.4f} {wr:.4f} {pl:.4f} {pr:.4f}")
+                # Log sensor data with throttle gate
+                sensor_log_count += 1
+                if sensor_log_count % SENSOR_LOG_THROTTLE == 0:
+                    log_msg(f"{t:.3f} {roll:.4f} {pitch:.4f} {yaw:.4f} {ax:.4f} {ay:.4f} {az:.4f} {wl:.4f} {wr:.4f} {pl:.4f} {pr:.4f}")
         finally:
-            log_msg(f"Controller finished at t={robot.getTime():.3f}s")
+            log_msg(f"Controller finished at t={robot.getTime():.3f}s", always_flush=True)
 
             # Jitter and frequency measurement
             if control_fire_times and len(control_fire_times) > 1:
@@ -105,7 +114,7 @@ def main():
                 min_period_ms = min(diffs) * 1000
                 max_period_ms = max(diffs) * 1000
                 max_jitter_ms = max(abs(d * 1000 - CONTROL_RATE_MS) for d in diffs) if diffs else 0
-                log_msg(f"Control rate: {mean_freq_hz:.2f}Hz (target {1000/CONTROL_RATE_MS:.2f}Hz), periods {min_period_ms:.1f}-{max_period_ms:.1f}ms (target {CONTROL_RATE_MS}ms), max deviation {max_jitter_ms:.2f}ms")
+                log_msg(f"Control rate: {mean_freq_hz:.2f}Hz (target {1000/CONTROL_RATE_MS:.2f}Hz), periods {min_period_ms:.1f}-{max_period_ms:.1f}ms (target {CONTROL_RATE_MS}ms), max deviation {max_jitter_ms:.2f}ms", always_flush=True)
 
     return 0
 
