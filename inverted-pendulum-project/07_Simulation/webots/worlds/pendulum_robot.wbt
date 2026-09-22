@@ -50,10 +50,6 @@ Solid {
   boundingObject Box {
     size 1.0 1.0 0.02
   }
-  physics Physics {
-    density -1
-    mass 100
-  }
   name "floor"
 }
 
