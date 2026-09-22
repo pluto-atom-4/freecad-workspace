@@ -41,6 +41,11 @@ class PlantPID:
         self._integral = 0.0
         self._prev_error = None
 
+        # Component tracking for telemetry logging
+        self._last_p_term = 0.0
+        self._last_i_term = 0.0
+        self._last_d_term = 0.0
+
     def step(self, error, dt):
         """Perform one PID step.
 
@@ -65,7 +70,8 @@ class PlantPID:
 
         # Special case: dt == 0 returns P-only output, no state update
         if dt == 0:
-            return self.kp * error
+            self._last_p_term = self.kp * error
+            return self._last_p_term
 
         # P term
         p_term = self.kp * error
@@ -82,6 +88,11 @@ class PlantPID:
         else:
             d_term = self.kd * (error - self._prev_error) / dt
 
+        # Store components for telemetry logging
+        self._last_p_term = p_term
+        self._last_i_term = i_term
+        self._last_d_term = d_term
+
         # Sum and saturate to output bounds
         output = p_term + i_term + d_term
         output = max(self.output_min, min(self.output_max, output))
@@ -95,3 +106,8 @@ class PlantPID:
         """Reset controller state (integral and previous error)."""
         self._integral = 0.0
         self._prev_error = None
+
+    def last_components(self):
+        """Return (p_term, i_term, d_term) from the most recent step() call.
+        Before any step() call, returns (0.0, 0.0, 0.0)."""
+        return (self._last_p_term, self._last_i_term, self._last_d_term)
