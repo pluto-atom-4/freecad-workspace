@@ -31,7 +31,6 @@ def main():
             return 1
 
         log_msg("SUCCESS: InertialUnit 'imu' accessible")
-        log_msg(f"  Device type: {imu.getType()}")
         log_msg(f"  Device name: {imu.getName()}")
 
         # Enable sensor sampling
@@ -45,9 +44,7 @@ def main():
         # Read IMU data
         try:
             roll_pitch_yaw = imu.getRollPitchYaw()
-            accel = imu.getAcceleration()
             log_msg(f"  Roll/Pitch/Yaw: {roll_pitch_yaw}")
-            log_msg(f"  Acceleration: {accel}")
             log_msg("SUCCESS: Sensor data readable")
             return 0
         except Exception as e:
