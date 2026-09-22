@@ -56,5 +56,5 @@ Solid {
 
 InvertedPendulumRobot {
   translation 0 0 0.02
-  controller "pendulum_controller"
+  controller "test_imu"
 }
