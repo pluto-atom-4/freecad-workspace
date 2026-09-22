@@ -6,6 +6,9 @@ import sys
 import os
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from plant_pid import PlantPID
+
 # TODO(#187): Replace hardcoded SENSOR_NAMES with manifest resolver
 SENSOR_NAMES = {
     "imu": "imu",
@@ -26,6 +29,16 @@ CONTROL_PERIOD_S = CONTROL_RATE_MS / 1000.0
 
 # Sensor log throttling (configurable via env var)
 SENSOR_LOG_THROTTLE = int(os.environ.get("SENSOR_LOG_THROTTLE", "50"))
+
+# Placeholder PID gains (conservative starting point; real tuning is a follow-up
+# once the loop is confirmed working via manual GUI sign-verification).
+BALANCE_PID = PlantPID(
+    kp=1.0,
+    ki=0.1,
+    kd=0.05,
+    output_min=-1.0,
+    output_max=1.0,
+)
 
 def main():
     robot = Robot()
@@ -85,12 +98,39 @@ def main():
         control_accum_ms = 0.0
         control_step_count = 0
         control_fire_times = []  # for jitter measurement at shutdown
+        control_prev_fire_time = None  # for computing dt in PID step
+        saturation_count = 0  # for tracking output saturation events
         sensor_log_count = 0  # for throttling sensor log lines
 
         def _run_control_step(t, roll, pitch, yaw, ax, ay, az, wl, wr, pl, pr):
-            """Stage D smoke test: zero-velocity hold (mode already switched to velocity-control at init)."""
-            motors["wheel_left"].setVelocity(0)
-            motors["wheel_right"].setVelocity(0)
+            """PID balance control: tilt error measured from pitch angle.
+
+            Error = -pitch (setpoint 0 = upright). Sign UNVERIFIED — requires manual GUI test:
+            tilt robot and confirm wheels drive to correct not amplify the fall.
+            Gains are placeholders pending real tuning.
+            """
+            nonlocal control_prev_fire_time, saturation_count
+
+            # Compute dt: fallback to CONTROL_PERIOD_S on first call
+            if control_prev_fire_time is None:
+                dt = CONTROL_PERIOD_S
+            else:
+                dt = t - control_prev_fire_time
+            control_prev_fire_time = t
+
+            # Tilt error: negative pitch (upright at pitch=0)
+            error = -pitch
+
+            # Compute command velocity
+            cmd_velocity = BALANCE_PID.step(error, dt)
+
+            # Track saturation events
+            if abs(cmd_velocity) >= 0.95 * 1.0:
+                saturation_count += 1
+
+            # Command both wheels
+            motors["wheel_left"].setVelocity(cmd_velocity)
+            motors["wheel_right"].setVelocity(cmd_velocity)
 
         # Main loop: run indefinitely until Webots quit signal (-1)
         try:
@@ -140,6 +180,8 @@ def main():
                 max_period_ms = max(diffs) * 1000
                 max_jitter_ms = max(abs(d * 1000 - CONTROL_RATE_MS) for d in diffs) if diffs else 0
                 log_msg(f"Control rate: {mean_freq_hz:.2f}Hz (target {1000/CONTROL_RATE_MS:.2f}Hz), periods {min_period_ms:.1f}-{max_period_ms:.1f}ms (target {CONTROL_RATE_MS}ms), max deviation {max_jitter_ms:.2f}ms", always_flush=True)
+
+            log_msg(f"Saturation events: {saturation_count} of {control_step_count} control steps", always_flush=True)
 
     return 0
 
