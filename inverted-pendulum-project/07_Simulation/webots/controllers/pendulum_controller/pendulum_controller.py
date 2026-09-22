@@ -80,7 +80,7 @@ def main():
 
         log_msg("Pendulum controller started. Reading all 5 sensors.", always_flush=True)
         log_msg(f"Control rate: {CONTROL_RATE_MS}ms ({1000.0/CONTROL_RATE_MS:.1f}Hz)", always_flush=True)
-        log_msg("Time(s) IMU_Roll(rad) IMU_Pitch(rad) IMU_Yaw(rad) IMU_Ax(m/s2) IMU_Ay(m/s2) IMU_Az(m/s2) WheelL(rad) WheelR(rad) PivotL(rad) PivotR(rad)", always_flush=True)
+        log_msg("Time(s) IMU_Roll(rad) IMU_Pitch(rad) IMU_Yaw(rad) IMU_Ax(m/s2) IMU_Ay(m/s2) IMU_Az(m/s2) WheelL(rad) WheelR(rad) PivotL(rad) PivotR(rad) PID_Error(rad) PID_P PID_I PID_D PID_Cmd", always_flush=True)
 
         # Initialize motors: switch to velocity control mode
         for key, motor in motors.items():
@@ -102,6 +102,13 @@ def main():
         saturation_count = 0  # for tracking output saturation events
         sensor_log_count = 0  # for throttling sensor log lines
 
+        # PID component tracking for telemetry logging
+        error = 0.0
+        p_term = 0.0
+        i_term = 0.0
+        d_term = 0.0
+        cmd_velocity = 0.0
+
         def _run_control_step(t, roll, pitch, yaw, ax, ay, az, wl, wr, pl, pr):
             """PID balance control: tilt error measured from pitch angle.
 
@@ -109,7 +116,7 @@ def main():
             tilt robot and confirm wheels drive to correct not amplify the fall.
             Gains are placeholders pending real tuning.
             """
-            nonlocal control_prev_fire_time, saturation_count
+            nonlocal control_prev_fire_time, saturation_count, error, p_term, i_term, d_term, cmd_velocity
 
             # Compute dt: fallback to CONTROL_PERIOD_S on first call
             if control_prev_fire_time is None:
@@ -123,6 +130,7 @@ def main():
 
             # Compute command velocity
             cmd_velocity = BALANCE_PID.step(error, dt)
+            p_term, i_term, d_term = BALANCE_PID.last_components()
 
             # Track saturation events
             if abs(cmd_velocity) >= 0.95 * 1.0:
@@ -166,7 +174,7 @@ def main():
                 # Log sensor data with throttle gate
                 sensor_log_count += 1
                 if sensor_log_count % SENSOR_LOG_THROTTLE == 0:
-                    log_msg(f"{t:.3f} {roll:.4f} {pitch:.4f} {yaw:.4f} {ax:.4f} {ay:.4f} {az:.4f} {wl:.4f} {wr:.4f} {pl:.4f} {pr:.4f}")
+                    log_msg(f"{t:.3f} {roll:.4f} {pitch:.4f} {yaw:.4f} {ax:.4f} {ay:.4f} {az:.4f} {wl:.4f} {wr:.4f} {pl:.4f} {pr:.4f} {error:.4f} {p_term:.4f} {i_term:.4f} {d_term:.4f} {cmd_velocity:.4f}")
         finally:
             log_msg(f"Controller finished at t={robot.getTime():.3f}s", always_flush=True)
 
