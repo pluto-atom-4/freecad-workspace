@@ -140,19 +140,18 @@ def main():
                 # Read sensors
                 imu_device = sensors["imu"]
                 rpy = imu_device.getRollPitchYaw()
-                accel = imu_device.getAcceleration()
                 wl = sensors["wheel_left"].getValue()
                 wr = sensors["wheel_right"].getValue()
                 pl = sensors["pivot_left"].getValue()
                 pr = sensors["pivot_right"].getValue()
 
                 # Log (check for NaN)
-                if None in [rpy, accel, wl, wr, pl, pr] or any(x is None for x in rpy) or any(x is None for x in accel):
+                if None in [rpy, wl, wr, pl, pr] or any(x is None for x in rpy):
                     log_msg(f"{t:.3f} READING_ERROR: sensor returned None", always_flush=True)
                     continue
 
                 roll, pitch, yaw = rpy
-                ax, ay, az = accel
+                ax, ay, az = 0.0, 0.0, 0.0  # No Accelerometer device on this robot; InertialUnit has no getAcceleration() (see #202)
 
                 # Fixed-rate control loop gating (accumulator pattern)
                 # Note: if (not while) assumes timestep < CONTROL_RATE_MS per startup validation above.
