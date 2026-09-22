@@ -20,6 +20,7 @@ WorldInfo {
 Viewpoint {
   orientation -0.3 0.3 0.9 1.2
   position -0.2 -0.3 0.15
+  followType "None"
 }
 
 Background {
