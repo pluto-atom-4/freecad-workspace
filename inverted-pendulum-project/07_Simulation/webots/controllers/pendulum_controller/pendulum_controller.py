@@ -15,6 +15,11 @@ SENSOR_NAMES = {
     "pivot_right": "pendulum_pivot_right_joint_sensor",
 }
 
+MOTOR_NAMES = {
+    "wheel_left": "wheel_left_joint",
+    "wheel_right": "wheel_right_joint",
+}
+
 # Fixed-rate control loop parameters
 CONTROL_RATE_MS = int(os.environ.get("CONTROL_RATE_MS", "20"))
 CONTROL_PERIOD_S = CONTROL_RATE_MS / 1000.0
@@ -41,6 +46,15 @@ def main():
         sensors[key] = device
         device.enable(timestep)
 
+    # Get motor devices
+    motors = {}
+    for key, device_name in MOTOR_NAMES.items():
+        device = robot.getDevice(device_name)
+        if device is None:
+            print(f"ERROR: Motor '{device_name}' (key: {key}) not found", file=sys.stderr)
+            return 1
+        motors[key] = device
+
     # Log output (dual-sink: stdout + file)
     log_path = Path(__file__).parent / "controller.log"
 
@@ -55,6 +69,18 @@ def main():
         log_msg(f"Control rate: {CONTROL_RATE_MS}ms ({1000.0/CONTROL_RATE_MS:.1f}Hz)", always_flush=True)
         log_msg("Time(s) IMU_Roll(rad) IMU_Pitch(rad) IMU_Yaw(rad) IMU_Ax(m/s2) IMU_Ay(m/s2) IMU_Az(m/s2) WheelL(rad) WheelR(rad) PivotL(rad) PivotR(rad)", always_flush=True)
 
+        # Initialize motors: switch to velocity control mode
+        for key, motor in motors.items():
+            motor.setPosition(float('inf'))
+            motor.setVelocity(0)
+
+        wheel_left_max_vel = motors["wheel_left"].getMaxVelocity()
+        wheel_left_max_torque = motors["wheel_left"].getMaxTorque()
+        wheel_right_max_vel = motors["wheel_right"].getMaxVelocity()
+        wheel_right_max_torque = motors["wheel_right"].getMaxTorque()
+        log_msg(f"Wheel motors: mode=velocity, wheel_left maxVelocity={wheel_left_max_vel:.2f} maxTorque={wheel_left_max_torque:.2f}, wheel_right maxVelocity={wheel_right_max_vel:.2f} maxTorque={wheel_right_max_torque:.2f}", always_flush=True)
+        log_msg("NOTE: Pivot servo motors (pendulum_pivot_joint/pendulum_pivot_right_joint) intentionally left at Webots default position-hold this stage.", always_flush=True)
+
         # Fixed-rate control loop state
         control_accum_ms = 0.0
         control_step_count = 0
@@ -62,10 +88,9 @@ def main():
         sensor_log_count = 0  # for throttling sensor log lines
 
         def _run_control_step(t, roll, pitch, yaw, ax, ay, az, wl, wr, pl, pr):
-            """Placeholder control logic. TODO(Stage D): replace with motor commands."""
-            # No motor writes yet; just a hook for Stage D to fill
-            # TODO(Stage D): Add log_control_msg() for per-fire control telemetry if needed
-            pass
+            """Stage D smoke test: zero-velocity hold (mode already switched to velocity-control at init)."""
+            motors["wheel_left"].setVelocity(0)
+            motors["wheel_right"].setVelocity(0)
 
         # Main loop: run indefinitely until Webots quit signal (-1)
         try:
