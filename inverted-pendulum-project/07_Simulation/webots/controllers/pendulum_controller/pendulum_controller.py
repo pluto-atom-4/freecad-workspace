@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pendulum robot controller: read IMU + wheel position sensors."""
 
-from controller import Robot
+from controller import Robot, Supervisor
 import sys
 import os
 from pathlib import Path
@@ -30,6 +30,9 @@ CONTROL_PERIOD_S = CONTROL_RATE_MS / 1000.0
 # Sensor log throttling (configurable via env var)
 SENSOR_LOG_THROTTLE = int(os.environ.get("SENSOR_LOG_THROTTLE", "50"))
 
+# Simulation time limit for automated testing (0 = disabled)
+TEST_MAX_SIM_TIME_S = float(os.environ.get("TEST_MAX_SIM_TIME_S", "0"))
+
 # Placeholder PID gains (conservative starting point; real tuning is a follow-up
 # once the loop is confirmed working via manual GUI sign-verification).
 BALANCE_PID = PlantPID(
@@ -41,7 +44,7 @@ BALANCE_PID = PlantPID(
 )
 
 def main():
-    robot = Robot()
+    robot = Supervisor()
     timestep = int(robot.getBasicTimeStep())
 
     # Validate that timestep < CONTROL_RATE_MS (required for single-fire-per-step assumption)
@@ -144,6 +147,11 @@ def main():
         try:
             while robot.step(timestep) != -1:
                 t = robot.getTime()
+
+                # Check simulated time limit (for automated testing)
+                if TEST_MAX_SIM_TIME_S > 0 and t >= TEST_MAX_SIM_TIME_S:
+                    log_msg(f"Simulated time limit reached ({t:.3f}s >= {TEST_MAX_SIM_TIME_S}s), stopping.", always_flush=True)
+                    robot.simulationQuit(0)
 
                 # Read sensors
                 imu_device = sensors["imu"]

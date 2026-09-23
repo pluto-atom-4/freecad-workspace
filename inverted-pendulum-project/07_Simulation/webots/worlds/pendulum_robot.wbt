@@ -56,4 +56,5 @@ Solid {
 InvertedPendulumRobot {
   translation 0 0 0.02
   controller "pendulum_controller"
+  supervisor TRUE
 }
