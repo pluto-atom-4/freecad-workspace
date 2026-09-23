@@ -7,7 +7,7 @@ them as VRML nodes into a Webots PROTO file. Injection is idempotent: if a senso
 with the same name already exists in the PROTO, it is skipped (logged as already injected).
 
 Currently supports:
-- InertialUnit sensor nodes only
+- InertialUnit, Gyro sensor nodes
 - robot-attachment only (joint-attachment deferred for future work)
 
 Usage:
@@ -76,10 +76,10 @@ def load_sensor_config(yaml_path: str) -> List[Dict[str, Any]]:
 
         # Validate type
         sensor_type = sensor["type"]
-        if sensor_type not in ["InertialUnit"]:
+        if sensor_type not in ["InertialUnit", "Gyro"]:
             raise ValueError(
                 f"Sensor {i} ('{sensor['name']}'): unknown type '{sensor_type}'. "
-                f"Supported types: InertialUnit"
+                f"Supported types: InertialUnit, Gyro"
             )
 
         # Validate name uniqueness

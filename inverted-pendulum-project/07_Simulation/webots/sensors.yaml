@@ -8,7 +8,7 @@
 #
 # Schema:
 # sensors:
-#   - type: InertialUnit              # Sensor type (currently: InertialUnit only)
+#   - type: InertialUnit or Gyro      # Sensor type (currently: InertialUnit, Gyro)
 #     name: <sensor_name>             # Unique sensor name (must be unique within sensors[])
 #     attach_to: robot                # Attachment point (currently: "robot" only)
 #     description: <optional string>  # Human-readable description
@@ -24,6 +24,18 @@ sensors:
     name: imu
     attach_to: robot
     description: "Body-fixed IMU for orientation and acceleration sensing"
+    fields:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 1, 0]
+      xAxis: true
+      yAxis: true
+      zAxis: true
+  # Hardware Caveat (Stage E, Issue #217): Gyro availability is simulator-only.
+  # Real hardware (Stage F HAL) must check device availability and handle gracefully if absent.
+  - type: Gyro
+    name: gyro
+    attach_to: robot
+    description: "Body-fixed gyroscope for pitch-rate feedback (Stage E, Issue #217)"
     fields:
       translation: [0, 0, 0]
       rotation: [0, 0, 1, 0]
