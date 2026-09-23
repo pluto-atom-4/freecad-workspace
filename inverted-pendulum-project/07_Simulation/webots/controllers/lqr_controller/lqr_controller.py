@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Pendulum robot controller: LQR balance control with gyro feedback."""
+"""Pendulum robot controller: LQR balance control with gyro feedback.
+
+LQR state targets the true resting equilibrium (~-0.1086 rad) via a reference
+offset (THETA_REF_RAD), not an augmented integral state — see issue #220 for
+why this method was chosen over integral augmentation (avoids reintroducing
+windup risk and extra tuning).
+"""
 
 import sys
 import os
@@ -59,6 +65,11 @@ SENSOR_LOG_THROTTLE = int(os.environ.get("SENSOR_LOG_THROTTLE", "50"))
 # Simulation time limit for automated testing (0 = disabled)
 TEST_MAX_SIM_TIME_S = float(os.environ.get("TEST_MAX_SIM_TIME_S", "0"))
 
+# True resting-equilibrium tilt (robot asymmetry causes a nonzero rest point,
+# not the ideal theta=0 the LQR model assumes -- see issue #220). Consistent
+# across both PID and LQR live logs (~-0.1084 to -0.1086 rad).
+THETA_REF_RAD = float(os.environ.get("THETA_REF_RAD", "-0.1086"))
+
 # LQR gain matrix (computed once at import time)
 K = default_gain()
 
@@ -102,6 +113,7 @@ def main():
 
         log_msg("LQR controller started. Reading all sensors (IMU, Gyro, wheel position, pivot joints).", always_flush=True)
         log_msg(f"Control rate: {CONTROL_RATE_MS}ms ({1000.0/CONTROL_RATE_MS:.1f}Hz)", always_flush=True)
+        # LQR_Theta is offset-corrected (pitch - THETA_REF_RAD) to target true resting equilibrium; see issue #220
         log_msg("Time(s) IMU_Roll(rad) IMU_Pitch(rad) IMU_Yaw(rad) IMU_Ax(m/s2) IMU_Ay(m/s2) IMU_Az(m/s2) WheelL(rad) WheelR(rad) PivotL(rad) PivotR(rad) LQR_Theta(rad) LQR_ThetaDot(rad/s) LQR_Cmd_Raw LQR_Cmd_Clamped", always_flush=True)
 
         # Initialize motors: switch to velocity control mode
@@ -133,15 +145,16 @@ def main():
         def _run_control_step(t, roll, pitch, yaw, ax, ay, az, wl, wr, pl, pr, theta_dot_gyro):
             """LQR balance control: state vector [theta, theta_dot] from pitch + gyro.
 
-            theta = pitch (setpoint 0 = upright), theta_dot = gyro Y-axis rate.
-            Sign convention UNVERIFIED — requires empirical test: perturb robot
-            and confirm wheels drive to correct, not amplify, the fall.
+            theta = pitch - THETA_REF_RAD (offset-corrected to true resting equilibrium;
+            see issue #220), theta_dot = gyro Y-axis rate.
+            Sign convention verified empirically (#219): recovers from a manual
+            perturbation back to the resting tilt within under 1s, does not amplify.
             LQR gain matrix K pre-computed via plant_lqr.default_gain().
             """
             nonlocal control_prev_fire_time, saturation_count, theta, theta_dot, raw_cmd, cmd_velocity
 
             # State vector
-            theta = pitch
+            theta = pitch - THETA_REF_RAD
             theta_dot = theta_dot_gyro
 
             # Compute command: u = -K @ x
