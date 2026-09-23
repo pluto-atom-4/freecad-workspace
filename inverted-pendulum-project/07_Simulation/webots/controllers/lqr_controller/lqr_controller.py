@@ -12,6 +12,7 @@ import os
 if "_LQR_REEXEC" not in os.environ:
     try:
         import numpy  # noqa: F401
+        import scipy  # noqa: F401
     except ImportError:
         mamba_python = os.environ.get(
             "PENDULUM_TOOLS_PYTHON",
@@ -21,7 +22,7 @@ if "_LQR_REEXEC" not in os.environ:
             os.environ["_LQR_REEXEC"] = "1"
             os.execv(mamba_python, [mamba_python, "-u", __file__] + sys.argv[1:])
         raise RuntimeError(
-            f"numpy not importable under {sys.executable}, and fallback "
+            f"numpy/scipy not importable under {sys.executable}, and fallback "
             f"interpreter {mamba_python} does not exist. Set PENDULUM_TOOLS_PYTHON "
             f"to a python3 with numpy/scipy installed (see issue #219)."
         )
