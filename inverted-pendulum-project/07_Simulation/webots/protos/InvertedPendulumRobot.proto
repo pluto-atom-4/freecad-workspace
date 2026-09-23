@@ -49,6 +49,14 @@ PROTO InvertedPendulumRobot [
         zAxis TRUE
         name "imu"
       }
+      Gyro {
+        translation 0 0 0
+        rotation 0 0 1 0
+        xAxis TRUE
+        yAxis TRUE
+        zAxis TRUE
+        name "gyro"
+      }
       HingeJoint {
         jointParameters HingeJointParameters {
           axis 0.000000 1.000000 0.000000

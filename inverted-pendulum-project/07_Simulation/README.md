@@ -569,3 +569,9 @@ Watch the Webots console for test_imu controller output (same as Stage B3 test).
 - Config: `sensors.yaml` (per-robot sensor definitions)
 - Tests: `test_inject_sensors.py` (idempotency, schema validation, regression tests)
 - Related: Stage B3 ([Sensor Node Hand-Add](#stage-b3-imu-node-hand-add)) — manual pattern, now deprecated
+
+---
+
+# Hardware Compatibility: Gyro Availability (Stage E Caveat, Issue #217)
+
+The Webots simulator includes a Gyro device injected into the PROTO via Stage B4's YAML-driven `sensors.yaml` configuration. **Real hardware (Stage F ESP32-S3 HAL) may not have a native hardware gyroscope.** Any Stage F HAL implementation must check device availability at runtime and handle graceful fallback (e.g., disable gyro-based feedback or substitute IMU-derived rates) if the device is absent. Simulator-only sensors like Gyro should be optional in control law design — do not mandate them for Stage E proof-of-concept.
