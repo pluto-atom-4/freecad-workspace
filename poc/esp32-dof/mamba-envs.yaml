@@ -1,0 +1,53 @@
+# Mamba Environment Specification
+# ESP32 6-DOF IMU POC (issue #227)
+#
+# Single environment: esp32-dof
+#
+# Used for host-side monitoring of ESP32 IMU data, Python serial communication
+# over USB/UART, and optional Webots integration testing.
+#
+# Arduino IDE / PlatformIO firmware toolchain is NOT installed into this
+# environment — firmware compilation/flashing must be done externally in the
+# Arduino IDE or via PlatformIO CLI (separate install). Webots simulator is
+# also installed separately (not in conda). This environment provides only
+# the Python runtime and libraries needed for the host-side monitor script
+# and test infrastructure.
+#
+# Install with: mamba env create -f mamba-envs.lock.yml
+# Or manually (see setup_command below)
+
+environments:
+  esp32-dof:
+    python: "3.11"
+    channels:
+      - conda-forge
+    conda_packages:
+      - python=3.11
+      - numpy>=1.24
+      - pyserial>=3.5
+      - pytest>=9.1
+    description: >
+      ESP32 IMU 6-DOF POC: host-side monitor + Webots simulator integration.
+      Serial communication (pyserial), NumPy for data processing, pytest for
+      testing. Arduino/PlatformIO and Webots installed externally.
+    setup_command: |
+      mamba create -n esp32-dof -c conda-forge python=3.11 "numpy>=1.24" "pyserial>=3.5" "pytest>=9.1" -y
+
+# Quick Reference
+usage: |
+  # Activation
+  mamba activate esp32-dof
+
+  # Verify imports
+  mamba run -n esp32-dof python -c "import serial, numpy, pytest; print('OK')"
+
+  # Remove environment
+  mamba env remove -n esp32-dof -y
+
+# Note on environment file compatibility:
+# This recipe uses a custom schema (non-standard conda YAML) to match the
+# inverted-pendulum-project structure. Direct `mamba env create -f
+# mamba-envs.yaml` will NOT work — use the setup_command above or the
+# generated mamba-envs.lock.yml instead:
+#
+#   mamba env create -f mamba-envs.lock.yml

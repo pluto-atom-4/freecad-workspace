@@ -84,6 +84,11 @@ issue-content*.json
 /inverted-pendulum-project/07_Simulation/webots/worlds/.*.wbproj
 /inverted-pendulum-project/07_Simulation/webots/run_batch.log*
 
+# poc/esp32-dof (issue #227) — Webots temporary files
+/poc/esp32-dof/webots/worlds/.*.wbproj
+# poc/esp32-dof (issue #227) — simulation logs
+/poc/esp32-dof/webots/*.log*
+
 feat-idea.md
 
 NOTICE
