@@ -82,6 +82,10 @@ poc/esp32-dof/
     test_esp32dof_sources.py Source unit tests
     dof_serial.py         pyserial line source (serial_lines, list_ports; serial:// and loop:// URLs)
     test_esp32dof_serial.py Serial source unit tests (fake port + loop://, no hardware)
+    dof_stats.py          StreamStats: received/dropped/out_of_order/resets/bad_frames, windowed rate (pure)
+    test_esp32dof_stats.py StreamStats unit tests
+    dof_monitor.py        Monitor CLI: --port | --mock | --replay, table + summary (no fusion/UDP yet, see #238)
+    test_esp32dof_monitor.py Monitor CLI/run() unit tests (sources monkeypatched, no hardware)
   webots/                 Webots integration (world files, controllers)
     worlds/               Webots world files (`.wbt`) and temporary `.wbproj` (gitignored)
       .gitkeep            Placeholder for initial commit
@@ -241,6 +245,84 @@ Consumers should be aware that both `seq` and `t_us` wrap:
 - `seq` wraps at 65536 (wraparound every ~21.8 min at 50 Hz). Compute differences as `(seq2 - seq1) % 65536`.
 - `t_us` wraps at 2³²−1 microseconds (~71.6 min at 50 Hz). Compute deltas as `(t_us2 - t_us1) & 0xFFFFFFFF`.
 
+## Monitor
+
+**Live monitoring CLI for IMU streams** — prints a real-time table of frames and a final summary with stream quality metrics.
+
+**Usage:**
+
+```bash
+# Mock (synthetic) 50 Hz stream for 3 seconds
+mamba run -n esp32-dof python3 monitor/dof_monitor.py --mock --duration 3
+
+# Real device (auto-reconnect on disconnect)
+mamba run -n esp32-dof python3 monitor/dof_monitor.py --port /dev/ttyACM0
+
+# Replay a CSV capture (non-realtime, one row per line)
+mamba run -n esp32-dof python3 monitor/dof_monitor.py --replay capture.csv --quiet-every 1
+
+# List available serial ports
+mamba run -n esp32-dof python3 monitor/dof_monitor.py --list-ports
+```
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--port PATH` | Serial device or pyserial URL (e.g. `/dev/ttyACM0`, `loop://`, `socket://...`) |
+| `--mock` | Synthetic 50 Hz frames at real-time speed (deterministic motion, 0 drops) |
+| `--replay CSV` | Replay a CSV file with columns `seq,t_us,ax,ay,az,gx,gy,gz` |
+| `--baud N` | Serial baud rate (default 115200); ignored for replay/mock |
+| `--list-ports` | List available serial ports and exit |
+| `--duration SECONDS` | Stop after N seconds of wall-clock time (for mock/replay); for `--port`, stops cleanly if the device is silent |
+| `--quiet-every N` | Print every Nth frame to stdout (default 5); **all frames are still counted in statistics** |
+
+**Output:**
+
+Rows printed to stdout:
+```
+    seq    t(ms)    ax(g)    ay(g)    az(g)  gx(dps)  gy(dps)  gz(dps)  rate  drops
+      0       0.0    0.000   -0.063    0.998     0.00     0.00     0.00   0.0      0
+      1      20.0   -0.000   -0.062    0.998     0.05     0.00     0.00  50.0      0
+      2      40.0    0.002   -0.060    0.998     0.11     0.00     0.00  50.0      0
+    ...
+```
+
+Summary (always printed at end):
+```
+--- summary ---
+received         : 150
+dropped          : 0
+out_of_order     : 0
+resets           : 0
+bad_frames       : 0
+avg rate (Hz)    : 50.0 (device time, 3.00 s)
+```
+
+**Exit codes:**
+- `0` — normal completion or Ctrl-C (summary still printed)
+- `2` — argument error (e.g. invalid `--duration`, missing `--port`) or source error (e.g. `cannot open serial port /dev/ttyACM0: Permission denied` → check dialout group)
+
+Errors go to stderr; rows + summary to stdout. No Traceback on expected errors.
+
+**Stream quality metrics:**
+
+| Metric | Meaning |
+|--------|---------|
+| `received` | Total frames parsed (all sources, including garbled/out-of-order/duplicates) |
+| `dropped` | Gap in sequence number (modulo 65536 wraparound): counted as `(seq2-seq1) % 65536 - 1` for forward gaps |
+| `out_of_order` | Duplicates OR small backward jumps (seq decreases by ≤50); same stream continues (not a reset) |
+| `resets` | Large backward jump (seq decreases by >50) OR device time went backwards; stream re-baselined from this point (no drops charged retroactively) |
+| `bad_frames` | Lines that failed to parse (checksum error, malformed, etc.); ignored in rate/stats |
+| `rate (Hz)` | Instantaneous frame rate from last ≤50 accepted frames; based on device t_us deltas, not wall clock |
+| `avg rate (Hz)` | Average rate: `(accepted intervals) / (total device time)` since the last reset or start |
+
+**Known limitations:**
+
+- A dropped frame at the very **end** of a stream (after final line received) is **undetectable** — the monitor cannot distinguish "final frame N" from "final frame N+1 was dropped". This is inherent to the protocol.
+- `out_of_order` increments for small reversals (b ≤ 50), but the stream does **not** rebase — the next frame must be > the "high water mark" to resume. Frames between the reversal and the high water mark are counted as out_of_order, not reset.
+- No fusion here; orientation estimation is pending issue #238 (UDP sender + fusion).
+
 ## Webots IPC contract
 
 **Simulation integration**: Webots controller receives orientation updates from the host monitor over UDP.
@@ -283,5 +365,5 @@ Once verified in the Webots GUI, these conventions will be either confirmed or c
 
 See sub-issue #239 for the implementation plan:
 - Firmware: see firmware/README.md (issue #233)
-- Monitor: Python script to decode packets, validate checksums, and log telemetry.
-- Webots: world (#231) + follower controller (#236) done; monitor->UDP sender (#238) and GUI convention check (#239) pending.
+- Monitor: CLI done (#237: table + stats); fusion + UDP publisher pending (#238).
+- Webots: world (#231) + follower controller (#236) + monitor CLI (#237) done; monitor->UDP sender (#238) and GUI convention check (#239) pending.
