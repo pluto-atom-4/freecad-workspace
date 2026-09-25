@@ -84,8 +84,10 @@ poc/esp32-dof/
     test_esp32dof_serial.py Serial source unit tests (fake port + loop://, no hardware)
     dof_stats.py          StreamStats: received/dropped/out_of_order/resets/bad_frames, windowed rate (pure)
     test_esp32dof_stats.py StreamStats unit tests
-    dof_monitor.py        Monitor CLI: --port | --mock | --replay, table + summary (no fusion/UDP yet, see #238)
+    dof_monitor.py        Monitor CLI: --port | --mock | --replay, table + summary, optional --fuse / --publish (#237, #238)
     test_esp32dof_monitor.py Monitor CLI/run() unit tests (sources monkeypatched, no hardware)
+    dof_publisher.py      OrientationPublisher: localhost UDP JSON sender to the Webots follower (#238)
+    test_esp32dof_publisher.py Publisher + fuse/publish integration + UDP contract tests (no hardware)
   webots/                 Webots integration (world files, controllers)
     worlds/               Webots world files (`.wbt`) and temporary `.wbproj` (gitignored)
       .gitkeep            Placeholder for initial commit
@@ -255,6 +257,12 @@ Consumers should be aware that both `seq` and `t_us` wrap:
 # Mock (synthetic) 50 Hz stream for 3 seconds
 mamba run -n esp32-dof python3 monitor/dof_monitor.py --mock --duration 3
 
+# With fused orientation (complementary filter, adds columns)
+mamba run -n esp32-dof python3 monitor/dof_monitor.py --mock --fuse --duration 3
+
+# With UDP publisher to Webots (drives the box; world running with Play pressed; mock wobble roll 0.5 sin(2π0.2t), pitch 0.3 sin(2π0.1t))
+mamba run -n esp32-dof python3 monitor/dof_monitor.py --mock --publish --duration 10
+
 # Real device (auto-reconnect on disconnect)
 mamba run -n esp32-dof python3 monitor/dof_monitor.py --port /dev/ttyACM0
 
@@ -276,10 +284,14 @@ mamba run -n esp32-dof python3 monitor/dof_monitor.py --list-ports
 | `--list-ports` | List available serial ports and exit |
 | `--duration SECONDS` | Stop after N seconds of wall-clock time (for mock/replay); for `--port`, stops cleanly if the device is silent |
 | `--quiet-every N` | Print every Nth frame to stdout (default 5); **all frames are still counted in statistics** |
+| `--fuse` | Complementary-filter fusion; adds roll/pitch/yaw (deg) columns |
+| `--publish` | Send fused orientation to Webots over localhost UDP (implies --fuse); harmless if Webots is not running |
+| `--udp-port PORT` | UDP destination port for --publish (default 5005; 1..65535; ignored without --publish) |
+| `--alpha A` | Filter gyro weight in [0,1] (default 0.98; ignored without --fuse/--publish) |
 
 **Output:**
 
-Rows printed to stdout:
+Rows printed to stdout (without --fuse):
 ```
     seq    t(ms)    ax(g)    ay(g)    az(g)  gx(dps)  gy(dps)  gz(dps)  rate  drops
       0       0.0    0.000   -0.063    0.998     0.00     0.00     0.00   0.0      0
@@ -287,6 +299,8 @@ Rows printed to stdout:
       2      40.0    0.002   -0.060    0.998     0.11     0.00     0.00  50.0      0
     ...
 ```
+
+With `--fuse`, three columns are appended (roll/pitch/yaw in degrees); rate/drops columns unchanged. Out-of-order frames are not fused or published and their row repeats the previous angles. After a device reset the filter is reset (roll/pitch re-init from accel, yaw restarts at 0). Yaw drifts (no magnetometer).
 
 Summary (always printed at end):
 ```
@@ -298,6 +312,8 @@ resets           : 0
 bad_frames       : 0
 avg rate (Hz)    : 50.0 (device time, 3.00 s)
 ```
+
+With `--publish`, the summary gets `published : N` (successful sends only).
 
 **Exit codes:**
 - `0` — normal completion or Ctrl-C (summary still printed)
@@ -321,7 +337,7 @@ Errors go to stderr; rows + summary to stdout. No Traceback on expected errors.
 
 - A dropped frame at the very **end** of a stream (after final line received) is **undetectable** — the monitor cannot distinguish "final frame N" from "final frame N+1 was dropped". This is inherent to the protocol.
 - `out_of_order` increments for small reversals (b ≤ 50), but the stream does **not** rebase — the next frame must be > the "high water mark" to resume. Frames between the reversal and the high water mark are counted as out_of_order, not reset.
-- No fusion here; orientation estimation is pending issue #238 (UDP sender + fusion).
+- Fusion dt uses the real t_us delta, so a dropped slot integrates over 40 ms; --publish sends only accepted (in-order/forward/reset) frames at the source rate (about 50 Hz); the Webots controller applies the latest per step.
 
 ## Webots IPC contract
 
@@ -365,5 +381,5 @@ Once verified in the Webots GUI, these conventions will be either confirmed or c
 
 See sub-issue #239 for the implementation plan:
 - Firmware: see firmware/README.md (issue #233)
-- Monitor: CLI done (#237: table + stats); fusion + UDP publisher pending (#238).
-- Webots: world (#231) + follower controller (#236) + monitor CLI (#237) done; monitor->UDP sender (#238) and GUI convention check (#239) pending.
+- Monitor: CLI + fusion + UDP publisher done (#237, #238).
+- Webots: world (#231) + follower (#236) + monitor (#237) + UDP publisher (#238) done; GUI convention check (#239) pending.
