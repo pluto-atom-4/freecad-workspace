@@ -76,6 +76,8 @@ poc/esp32-dof/
     test_esp32dof_frame.py Frame protocol unit tests
     dof_fusion.py         Complementary filter, radians out
     test_esp32dof_fusion.py Complementary filter unit tests
+    dof_sources.py        Mock and CSV-replay frame line sources (Iterator[str])
+    test_esp32dof_sources.py Source unit tests
   webots/                 Webots integration (world files, controllers)
     worlds/               Webots world files (`.wbt`) and temporary `.wbproj` (gitignored)
       .gitkeep            Placeholder for initial commit
@@ -172,6 +174,48 @@ dt_s = 0.02                            # time step in seconds
 
 roll, pitch, yaw = fuse.update(accel_g, gyro_dps, dt_s)
 ```
+
+## Sources
+
+A **source** is an `Iterator[str]` of raw frame lines (non-empty, stripped of `\r\n` trailing whitespace; consumers pass each to `dof_frame.parse_line()`). This contract matches the serial source planned for issue #235.
+
+**Built-in sources:**
+
+- **`mock_lines(rate_hz=50.0, duration_s=None, realtime=True, drop_every=0) → Iterator[str]`**
+  - Deterministic synthetic motion: roll = 0.5·sin(2π·0.2·t), pitch = 0.3·sin(2π·0.1·t) radians.
+  - Accelerometer: derived from gravity + roll/pitch rotations (no linear acceleration).
+  - Gyroscope: gx = d(roll)/dt, gy = d(pitch)/dt (degrees/s), gz = 0 (matching the fusion model's simple axis-rate integration).
+  - `duration_s=None` yields infinite frames; use `itertools.islice()` to limit iteration.
+  - `drop_every=N` skips every Nth frame slot (N > 0): creates detectable seq gaps while time marches on; `drop_every=1` yields nothing (acceptable).
+  - `realtime=False` yields as fast as possible (useful for testing); `realtime=True` sleeps to match frame spacing (wall-clock replay).
+  - Argument errors (invalid rate_hz, duration_s, drop_every) are **eager** — raised at call time, before any frame is generated.
+
+- **`csv_replay_lines(path, realtime=True) → Iterator[str]`**
+  - Replays frame lines from a CSV file. Header row required with columns (any order, extras ignored): `seq`, `t_us`, `ax`, `ay`, `az`, `gx`, `gy`, `gz`.
+  - UTF-8 BOM (if present) is automatically stripped.
+  - Blank rows skipped by the CSV parser; row errors include file line number for debugging.
+  - `realtime=True`: sleeps by inter-frame t_us deltas (clamped to 1.0 s max); no sleep on first row or negative/zero deltas.
+  - `realtime=False`: yields as fast as possible.
+  - Argument errors (invalid path type, missing columns) are **eager**; row format/value errors are **lazy** (raised during iteration).
+
+**Usage example:**
+
+```python
+from itertools import islice
+from dof_frame import parse_line
+from dof_sources import mock_lines
+
+# Synthetic stream: 100 frames at 50 Hz, no wall-clock delay
+for line in islice(mock_lines(rate_hz=50.0, realtime=False), 100):
+    frame = parse_line(line)
+    print(f"seq={frame.seq}, roll/pitch gyro rates: {frame.gyro[0]:.1f}, {frame.gyro[1]:.1f} deg/s")
+```
+
+**Consumer notes for drift handling:**
+
+Consumers should be aware that both `seq` and `t_us` wrap:
+- `seq` wraps at 65536 (wraparound every ~21.8 min at 50 Hz). Compute differences as `(seq2 - seq1) % 65536`.
+- `t_us` wraps at 2³²−1 microseconds (~71.6 min at 50 Hz). Compute deltas as `(t_us2 - t_us1) & 0xFFFFFFFF`.
 
 ## Webots IPC contract
 
