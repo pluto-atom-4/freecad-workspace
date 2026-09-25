@@ -72,6 +72,8 @@ poc/esp32-dof/
   monitor/                Host-side Python monitor script + tests
     dof_frame.py          Frame protocol parser and formatter
     test_esp32dof_frame.py Frame protocol unit tests
+    dof_fusion.py         Complementary filter, radians out
+    test_esp32dof_fusion.py Complementary filter unit tests
   webots/                 Webots integration (world files, controllers)
     worlds/               Webots world files (`.wbt`) and temporary `.wbproj` (gitignored)
       .gitkeep            Placeholder for initial commit
@@ -133,6 +135,38 @@ IMU,12345,1234567890,0.500000,-9.806650,1.250000,10.500000,-5.500000,0.000000*52
 
 Body (checksum input): `IMU,12345,1234567890,0.500000,-9.806650,1.250000,10.500000,-5.500000,0.000000`  
 Checksum: `0x52` (82 decimal)
+
+*Note: Example values are illustrative. Accelerometer and gyroscope values are in units of g and deg/s respectively; the specific values shown are not necessarily representative of a typical physical device configuration.*
+
+## Fusion
+
+6-DOF complementary filter for orientation estimation (roll, pitch, yaw) from combined accelerometer and gyroscope data.
+
+**Inputs:**
+- Accelerometer: 3 values in units of *g* (Earth's gravity ≈ 9.81 m/s²)
+- Gyroscope: 3 values in units of *degrees per second* (dps)
+- Time step: in *seconds*
+
+**Output:**
+- Roll, pitch, yaw: all in *radians* (ZYX convention: R = Rz(yaw) Ry(pitch) Rx(roll))
+
+**Limitations:**
+- Yaw drifts unbounded over time without an external reference (no magnetometer).
+- Roll and pitch are ill-conditioned near pitch ≈ ±90° (gimbal lock region).
+- No free-fall or linear acceleration rejection; assumes +1 g on Z-axis when device is stationary and flat.
+- Euler-angle rate coupling ignored; simple gyro integration without accounting for Euler-rate transformation (POC trade-off; production systems should use quaternions).
+
+**Usage:**
+```python
+from dof_fusion import ComplementaryFilter
+
+fuse = ComplementaryFilter(alpha=0.98)  # 98% gyro, 2% accel correction
+accel_g = (ax, ay, az)                 # accelerometer in g
+gyro_dps = (gx, gy, gz)                # gyroscope in deg/s
+dt_s = 0.02                            # time step in seconds
+
+roll, pitch, yaw = fuse.update(accel_g, gyro_dps, dt_s)
+```
 
 ## TODO: run steps
 
