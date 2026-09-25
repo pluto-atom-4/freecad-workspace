@@ -60,6 +60,8 @@ sudo usermod -aG dialout $USER
 
 Do NOT run this command as part of automated setup — it requires an interactive login afterward and may not succeed in a headless environment.
 
+If `serial_lines` raises `DofSerialError` ("cannot open serial port ..."), the device is missing (see `list_ports()`), held by another program (e.g. ModemManager, Arduino serial monitor), or you are not in the dialout group (see above). (#239 will cover full docs.)
+
 ## Layout
 
 ```
@@ -78,6 +80,8 @@ poc/esp32-dof/
     test_esp32dof_fusion.py Complementary filter unit tests
     dof_sources.py        Mock and CSV-replay frame line sources (Iterator[str])
     test_esp32dof_sources.py Source unit tests
+    dof_serial.py         pyserial line source (serial_lines, list_ports; serial:// and loop:// URLs)
+    test_esp32dof_serial.py Serial source unit tests (fake port + loop://, no hardware)
   webots/                 Webots integration (world files, controllers)
     worlds/               Webots world files (`.wbt`) and temporary `.wbproj` (gitignored)
       .gitkeep            Placeholder for initial commit
@@ -177,7 +181,7 @@ roll, pitch, yaw = fuse.update(accel_g, gyro_dps, dt_s)
 
 ## Sources
 
-A **source** is an `Iterator[str]` of raw frame lines (non-empty, stripped of `\r\n` trailing whitespace; consumers pass each to `dof_frame.parse_line()`). This contract matches the serial source planned for issue #235.
+A **source** is an `Iterator[str]` of raw frame lines (non-empty, stripped of `\r\n` trailing whitespace; consumers pass each to `dof_frame.parse_line()`). The serial source (`dof_serial.serial_lines`) follows the same contract.
 
 **Built-in sources:**
 
@@ -197,6 +201,23 @@ A **source** is an `Iterator[str]` of raw frame lines (non-empty, stripped of `\
   - `realtime=True`: sleeps by inter-frame t_us deltas (clamped to 1.0 s max); no sleep on first row or negative/zero deltas.
   - `realtime=False`: yields as fast as possible.
   - Argument errors (invalid path type, missing columns) are **eager**; row format/value errors are **lazy** (raised during iteration).
+
+- **`dof_serial.serial_lines(port, baud=115200, timeout_s=1.0, reconnect=True, *, max_duration_s=None) → Iterator[str]`**
+  - Reads a real device (/dev/ttyACM0) or any pyserial URL (loop://) via serial.serial_for_url
+  - Yields decoded (UTF-8, errors="replace") non-empty lines with \r\n stripped
+  - Does NOT parse frames (pass each line to dof_frame.parse_line; garbled lines raise FrameError there)
+  - port opens on the first next() (lazy); argument errors (ValueError) eager
+  - Failed first open raises DofSerialError (a serial.SerialException) immediately even with reconnect=True; message names the dialout group
+  - Read timeouts don't end the iterator
+  - A partial line is held and completed when the rest arrives
+  - The first line after each (re)open is discarded (may be a fragment)
+  - A run of >4096 bytes with no newline is dropped
+  - If the device disappears after a successful open: reconnect=True logs to stderr, sleeps 1 s and reopens (retrying indefinitely); reconnect=False re-raises the SerialException
+  - max_duration_s (optional) ends the iterator cleanly once elapsed (checked at least every timeout_s) so a silent device cannot block a duration limit
+  - Ctrl-C propagates and closes the port
+
+- **`dof_serial.list_ports() → list[str]`**
+  - Sorted device names from serial.tools.list_ports.comports()
 
 **Usage example:**
 
