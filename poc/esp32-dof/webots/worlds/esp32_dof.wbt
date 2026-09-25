@@ -1,0 +1,90 @@
+#VRML_SIM R2025a utf8
+
+# esp32-dof I (issue #231, sub-issue of #227).
+# Minimal hand-rolled world: one supervisor-driven box that mirrors the
+# orientation of the ESP32 IMU. No network EXTERNPROTOs (Webots library PROTOs
+# are not shipped in the local install).
+#
+# Frame: ENU (x East/front, y North/left, z Up). Matches the IMU body frame
+# FLU and the ZYX euler convention (R = Rz(yaw) Ry(pitch) Rx(roll), see
+# poc/esp32-dof/monitor/dof_fusion.py). Flat sensor => roll=pitch=0 => box level.
+#
+# ESP32_BODY has NO physics and NO boundingObject on purpose: gravity must not
+# move it, and the supervisor controller (#236, esp32_dof_follower) sets
+# its rotation directly via getFromDef("ESP32_BODY").getField("rotation").
+# The controller does not exist until #236 -- Webots only warns until then.
+
+WorldInfo {
+  info [
+    "esp32-dof I (issue #231): supervisor-driven box following an ESP32 IMU."
+  ]
+  title "esp32_dof"
+  coordinateSystem "ENU"
+  basicTimeStep 16
+}
+
+Viewpoint {
+  orientation -0.3 0.3 0.9 1.2
+  position -0.29 -0.55 0.62
+}
+
+Background {
+  skyColor [0.6 0.75 0.95]
+}
+
+DirectionalLight {
+  direction -0.5 -0.5 -1.0
+  intensity 1.0
+  ambientIntensity 0.4
+}
+
+Solid {
+  translation 0 0 -0.01
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.75 0.75 0.75
+        }
+      }
+      geometry Box {
+        size 2.0 2.0 0.02
+      }
+    }
+  ]
+  name "floor"
+}
+
+DEF ESP32_BODY Robot {
+  translation 0 0 0.3
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.1 0.3 0.9
+        }
+      }
+      geometry Box {
+        size 0.2 0.1 0.03
+      }
+    }
+    Transform {
+      translation 0.085 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 1.0 0.5 0.0
+            }
+          }
+          geometry Box {
+            size 0.03 0.04 0.04
+          }
+        }
+      ]
+    }
+  ]
+  name "esp32_body"
+  controller "esp32_dof_follower"
+  supervisor TRUE
+}
