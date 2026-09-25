@@ -78,6 +78,14 @@ def parse_line(line: str) -> Frame:
     """
     Parse a single frame line.
 
+    The parser is lenient for float tokens: it accepts any finite decimal representation
+    that Python's float() recognizes, including exponent notation (1e-3, 2E+5) and leading
+    '+' signs (+2.5). It rejects embedded whitespace, underscores, and non-finite values
+    (nan, inf).
+
+    Note: The *sender* (firmware / format_frame) emits floats with fixed-point %.6f format
+    only; the receiver here is lenient for compatibility and robustness during validation.
+
     Args:
         line: Raw frame line (may contain trailing whitespace)
 

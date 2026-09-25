@@ -341,5 +341,21 @@ class TestGolden:
         assert line == expected
 
 
+class TestLenientFloats:
+    """Test: parser accepts exponent notation and leading + signs."""
+
+    def test_exponent_and_plus_notation(self):
+        """parse_line() accepts 1e-3, +2.5, and 2E+2 float tokens."""
+        body = "IMU,0,0,1e-3,+2.5,2E+2,1e-3,+2.5,2E+2"
+        line = _with_checksum(body)
+        f = parse_line(line)
+
+        # Verify the floats parsed to expected values
+        assert f.seq == 0
+        assert f.t_us == 0
+        assert f.accel == (0.001, 2.5, 200.0)
+        assert f.gyro == (0.001, 2.5, 200.0)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

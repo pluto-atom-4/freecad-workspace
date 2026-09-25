@@ -99,9 +99,16 @@ IMU,<seq>,<t_us>,<ax>,<ay>,<az>,<gx>,<gy>,<gz>*<HH>\n
 
 ### Float formatting
 
-- Format: `%.6f` (exactly 6 decimal places, no exponent notation)
-- Example: `0.500000`, `-9.806650`, `1.250000`
-- Special case: "-0.000000" is normalized to "0.000000" before checksum
+**Sender (firmware / format_frame):** MUST emit `%.6f` (exactly 6 decimal places, fixed-point, **no exponent notation**).
+  - Valid examples: `0.500000`, `-9.806650`, `1.250000`
+  - Special case: "-0.000000" is normalized to "0.000000" before checksum
+
+**Receiver (parse_line):** Tolerates any finite decimal float token matching Python's `float()` parser, including exponent notation and leading `+` sign. Rejects:
+  - Embedded whitespace (e.g., `1 .0`)
+  - Underscores (e.g., `1_000`)
+  - Non-finite values (`nan`, `inf`)
+  
+  Examples of tolerated input: `1e-3`, `+2.5`, `2E+2` (parser lenient for compatibility; format_frame still emits `%.6f` only).
 
 ### Checksum computation
 
