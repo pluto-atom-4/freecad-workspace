@@ -18,7 +18,7 @@ This POC is scaffolded as an empty skeleton. All three components (firmware, mon
 - **IMU Sensor**: LSM6DS3TR-C (STMicroelectronics), interfaced externally via I2C
   - 3-axis accelerometer (±2/4/8/16 g configurable)
   - 3-axis gyroscope (±125/250/500/1000/2000 dps configurable)
-  - Connected via I2C to GPIO pins 1 (SDA) + 0 (SCL) on the XIAO ESP32-S3 Sense
+  - Connected via I2C to D4 (GPIO5, SDA) + D5 (GPIO6, SCL) on the XIAO ESP32-S3 Sense; address 0x6A (0x6B if SDO high)
 
 ## Env setup
 
@@ -67,8 +67,10 @@ poc/esp32-dof/
   mamba-envs.yaml         Custom schema env recipe (use lock or setup_command instead)
   mamba-envs.lock.yml     Pinned/reproducible env export (use this with `mamba env create -f`)
   README.md               This file
-  firmware/               Arduino/PlatformIO sketches and build artifacts (gitignored)
-    .gitkeep              Placeholder for initial commit
+  firmware/               Arduino sketch and documentation (build artifacts gitignored)
+    README.md             Firmware setup, compilation, and testing guide
+    esp32_dof/            Firmware sketch directory (folder name matches .ino basename)
+      esp32_dof.ino       XIAO ESP32-S3 + LSM6DS3TR-C frame streamer
   monitor/                Host-side Python monitor script + tests
     dof_frame.py          Frame protocol parser and formatter
     test_esp32dof_frame.py Frame protocol unit tests
@@ -203,6 +205,6 @@ Once verified in the Webots GUI, these conventions will be either confirmed or c
 ## TODO: run steps
 
 See sub-issue #239 for the implementation plan:
-- Firmware: Arduino sketch to read LSM6DS3TR-C and stream IMU data over serial.
+- Firmware: see firmware/README.md (issue #233)
 - Monitor: Python script to decode packets, validate checksums, and log telemetry.
 - Webots: Minimal world + controller to visualize IMU orientation in simulation.
