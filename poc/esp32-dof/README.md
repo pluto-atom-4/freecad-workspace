@@ -70,13 +70,62 @@ poc/esp32-dof/
   firmware/               Arduino/PlatformIO sketches and build artifacts (gitignored)
     .gitkeep              Placeholder for initial commit
   monitor/                Host-side Python monitor script + tests
-    .gitkeep              Placeholder for initial commit
+    dof_frame.py          Frame protocol parser and formatter
+    test_esp32dof_frame.py Frame protocol unit tests
   webots/                 Webots integration (world files, controllers)
     worlds/               Webots world files (`.wbt`) and temporary `.wbproj` (gitignored)
       .gitkeep            Placeholder for initial commit
     controllers/          Webots robot controller scripts
       .gitkeep            Placeholder for initial commit
 ```
+
+## Frame protocol
+
+Binary telemetry from the ESP32 is encoded as ASCII frames, streamed over serial at 50 Hz (20 ms per frame), one frame per line:
+
+```
+IMU,<seq>,<t_us>,<ax>,<ay>,<az>,<gx>,<gy>,<gz>*<HH>\n
+```
+
+### Format specification
+
+- **Prefix**: `IMU` (literal ASCII)
+- **seq**: Sequence number (uint16, 0–65535); wraps at 65536
+- **t_us**: Device microseconds (uint32, 0–4,294,967,295); capped at 2^32−1
+- **ax, ay, az**: Accelerometer in g (3 × float); formatted as `%.6f` (6 decimal places, fixed-point, no exponent)
+- **gx, gy, gz**: Gyroscope in deg/s (3 × float); formatted as `%.6f`
+- **HH**: 2-digit UPPERCASE hexadecimal XOR checksum of every character from `IMU` to `*` (exclusive)
+- **Terminator**: `\n` (ASCII 10); receiver also accepts `\r\n` (CRLF)
+
+### Float formatting
+
+- Format: `%.6f` (exactly 6 decimal places, no exponent notation)
+- Example: `0.500000`, `-9.806650`, `1.250000`
+- Special case: "-0.000000" is normalized to "0.000000" before checksum
+
+### Checksum computation
+
+The checksum is the bitwise XOR of the ASCII ord value of every character in the frame body (from `I` in `IMU` to the character before `*`). Expressed in pseudocode:
+
+```c
+// C/C++ (firmware)
+uint8_t checksum = 0;
+for (const char* p = body; p < end; p++) {
+    checksum ^= (uint8_t)*p;
+}
+printf("%02X", checksum);  // 2-digit UPPERCASE hex
+```
+
+### Example
+
+Golden frame (firmware parity vector):
+
+```
+IMU,12345,1234567890,0.500000,-9.806650,1.250000,10.500000,-5.500000,0.000000*52
+```
+
+Body (checksum input): `IMU,12345,1234567890,0.500000,-9.806650,1.250000,10.500000,-5.500000,0.000000`  
+Checksum: `0x52` (82 decimal)
 
 ## TODO: run steps
 
