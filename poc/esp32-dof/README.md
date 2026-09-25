@@ -87,7 +87,10 @@ poc/esp32-dof/
       .gitkeep            Placeholder for initial commit
     controllers/          Webots robot controller scripts
       .gitkeep            Placeholder for initial commit
-      esp32_dof_follower/ Webots controller for ESP32 DOF tracking
+      esp32_dof_follower/ Webots supervisor controller (UDP -> ESP32_BODY rotation)
+        esp32_dof_follower.py Controller entry point (only file importing `controller`)
+        dof_udp_latest.py Non-blocking UDP drain: latest valid orientation + counts
+        test_esp32dof_udp_latest.py UDP drain unit tests (real localhost sockets)
         dof_webots_math.py Orientation parsing + Euler-to-axis-angle helpers
         test_esp32dof_webots_math.py Controller-side unit tests
 ```
@@ -261,6 +264,15 @@ Consumers should be aware that both `seq` and `t_us` wrap:
 
 - **Webots representation**: Output of `euler_to_axis_angle()` is a unit axis-angle tuple (x, y, z, angle) compatible with Webots rotation fields.
 
+**Controller (`esp32_dof_follower`, issue #236):**
+- Supervisor controller of `DEF ESP32_BODY Robot` in `webots/worlds/esp32_dof.wbt`; binds a non-blocking UDP socket on `127.0.0.1:5005` (no `SO_REUSEADDR`: a second instance fails loudly with a bind error instead of silently splitting datagrams).
+- Each simulation step it drains all queued datagrams, keeps the latest valid one and sets the node's `rotation` from `euler_to_axis_angle()`. Invalid datagrams are ignored (counted; first 3, then every 100th logged). Before the first message the box is left unchanged; if the sender stops, the box holds its last pose.
+- **The simulation must be RUNNING (press Play, or use `--mode=realtime`/`fast`); while paused the controller is not stepped and the box will not move.**
+- Console output: `esp32_dof_follower: listening on 127.0.0.1:5005`, then `first orientation message received`. Set `DOF_FOLLOWER_DEBUG=1` in Webots' environment to also print the applied rotation.
+- Manual smoke test (needs a display): open `poc/esp32-dof/webots/worlds/esp32_dof.wbt`, press Play, then
+  `printf '{"seq":1,"roll":0.5,"pitch":0.0,"yaw":0.0}' | nc -u -w1 127.0.0.1 5005` -- the box tilts about x.
+- Unit tests: `cd poc/esp32-dof/webots/controllers/esp32_dof_follower && mamba run -n esp32-dof python3 -m pytest -q`.
+
 **⚠️ GUI verification pending (#239):** Sign conventions between this ZYX Euler model and Webots' visual rendering have NOT yet been verified in the live simulation GUI. Expected behavior:
   - roll=π/2 → body tilts about +X with nose staying on +X axis
   - yaw=π/2 → nose points +Y (North, ENU frame)
@@ -272,4 +284,4 @@ Once verified in the Webots GUI, these conventions will be either confirmed or c
 See sub-issue #239 for the implementation plan:
 - Firmware: see firmware/README.md (issue #233)
 - Monitor: Python script to decode packets, validate checksums, and log telemetry.
-- Webots: Minimal world + controller to visualize IMU orientation in simulation.
+- Webots: world (#231) + follower controller (#236) done; monitor->UDP sender (#238) and GUI convention check (#239) pending.
