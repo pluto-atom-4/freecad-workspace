@@ -1,15 +1,15 @@
 # ESP32 6-DOF IMU POC (issue #227)
 
-Proof-of-concept integration of an external **XIAO ESP32-S3 Sense** microcontroller with a 6-DOF inertial measurement unit (IMU) for orientation tracking and control feedback in the inverted pendulum project. This scaffold provides the host-side monitoring, testing, and simulation integration framework; firmware authoring and hardware assembly remain external.
+Proof-of-concept integration of an external **XIAO ESP32-S3 Sense** microcontroller with a 6-DOF inertial measurement unit (IMU): firmware streams accelerometer + gyroscope frames over USB serial, a host-side Python monitor parses and fuses them into roll/pitch/yaw, and a Webots world shows a box that follows the orientation live. See "Reproducing end to end" to run it and "Manual verification checklist (human)" for what still needs a person with a display and the board.
 
 ## Purpose
 
 Establish a minimal, testable framework for:
 - **Firmware communication**: Serial protocol over USB/UART to stream IMU data (6-DOF: 3-axis accelerometer + 3-axis gyroscope) from the ESP32 to the host PC.
 - **Host-side monitor**: Python script that decodes incoming IMU packets, validates data integrity, and logs telemetry.
-- **Webots integration**: Optional simulation validation — drive a Webots robot model with recorded or live IMU data to visually confirm orientation tracking.
+- **Webots integration**: A Webots supervisor controller rotates a box (`ESP32_BODY`) to follow live, mock, or replayed IMU orientation received over localhost UDP, to visually confirm orientation tracking.
 
-This POC is scaffolded as an empty skeleton. All three components (firmware, monitor, Webots) will be populated in sub-issue #239.
+Status: firmware (#233), monitor (#234-#238), Webots world and controller (#231, #232, #236), and run scripts (#239) are all implemented. Hardware and GUI behavior are NOT yet human-verified; see "What is verified" below.
 
 ## Hardware
 
@@ -27,8 +27,8 @@ This project provides a mamba environment (`esp32-dof`) with Python 3.11, NumPy,
 ### One-time installation
 
 ```bash
-# Use the mamba-envs.lock.yml (pinned/reproducible):
-mamba env create -f mamba-envs.lock.yml
+# From the repo root, use the pinned lock file:
+mamba env create -n esp32-dof -f poc/esp32-dof/mamba-envs.lock.yml
 
 # OR use the setup_command from mamba-envs.yaml:
 mamba create -n esp32-dof -c conda-forge python=3.11 "numpy>=1.24" "pyserial>=3.5" "pytest>=9.1" -y
@@ -60,15 +60,17 @@ sudo usermod -aG dialout $USER
 
 Do NOT run this command as part of automated setup — it requires an interactive login afterward and may not succeed in a headless environment.
 
-If `serial_lines` raises `DofSerialError` ("cannot open serial port ..."), the device is missing (see `list_ports()`), held by another program (e.g. ModemManager, Arduino serial monitor), or you are not in the dialout group (see above). (#239 will cover full docs.)
+If `serial_lines` raises `DofSerialError` ("cannot open serial port ..."), the device is missing (see `dof_monitor.py --list-ports`), held by another program (e.g. ModemManager, Arduino serial monitor), or you are not in the dialout group (see above). More in "Troubleshooting".
 
 ## Layout
 
 ```
 poc/esp32-dof/
   mamba-envs.yaml         Custom schema env recipe (use lock or setup_command instead)
-  mamba-envs.lock.yml     Pinned/reproducible env export (use this with `mamba env create -f`)
+  mamba-envs.lock.yml     Pinned/reproducible env export (use this with `mamba env create -n esp32-dof -f`)
   README.md               This file
+  CLAUDE.md               Per-POC guidance for Claude Code
+  run_mock_demo.sh        One-command demo: Webots GUI + mock monitor publishing over UDP (#239)
   firmware/               Arduino sketch and documentation (build artifacts gitignored)
     README.md             Firmware setup, compilation, and testing guide
     esp32_dof/            Firmware sketch directory (folder name matches .ino basename)
@@ -89,10 +91,10 @@ poc/esp32-dof/
     dof_publisher.py      OrientationPublisher: localhost UDP JSON sender to the Webots follower (#238)
     test_esp32dof_publisher.py Publisher + fuse/publish integration + UDP contract tests (no hardware)
   webots/                 Webots integration (world files, controllers)
-    worlds/               Webots world files (`.wbt`) and temporary `.wbproj` (gitignored)
-      .gitkeep            Placeholder for initial commit
+    run_gui.sh            Launch the world in the Webots GUI, realtime (#239)
+    worlds/               Webots world files (`.wbt`); temporary `.wbproj` is gitignored
+      esp32_dof.wbt       World: floor + supervisor box ESP32_BODY (#231)
     controllers/          Webots robot controller scripts
-      .gitkeep            Placeholder for initial commit
       esp32_dof_follower/ Webots supervisor controller (UDP -> ESP32_BODY rotation)
         esp32_dof_follower.py Controller entry point (only file importing `controller`)
         dof_udp_latest.py Non-blocking UDP drain: latest valid orientation + counts
@@ -369,17 +371,168 @@ Errors go to stderr; rows + summary to stdout. No Traceback on expected errors.
 - Console output: `esp32_dof_follower: listening on 127.0.0.1:5005`, then `first orientation message received`. Set `DOF_FOLLOWER_DEBUG=1` in Webots' environment to also print the applied rotation.
 - Manual smoke test (needs a display): open `poc/esp32-dof/webots/worlds/esp32_dof.wbt`, press Play, then
   `printf '{"seq":1,"roll":0.5,"pitch":0.0,"yaw":0.0}' | nc -u -w1 127.0.0.1 5005` -- the box tilts about x.
+  Or use ./webots/run_gui.sh (from poc/esp32-dof) which starts the world in realtime mode.
 - Unit tests: `cd poc/esp32-dof/webots/controllers/esp32_dof_follower && mamba run -n esp32-dof python3 -m pytest -q`.
 
-**⚠️ GUI verification pending (#239):** Sign conventions between this ZYX Euler model and Webots' visual rendering have NOT yet been verified in the live simulation GUI. Expected behavior:
-  - roll=π/2 → body tilts about +X with nose staying on +X axis
-  - yaw=π/2 → nose points +Y (North, ENU frame)
+**Rotation handedness is not GUI-verified yet.** The sign conventions between the ZYX Euler model and Webots' rendering are covered by unit tests only. Expected in the live GUI: roll = π/2 tilts the box about +X with the orange nose staying on +X; yaw = π/2 turns the nose to +Y (North, ENU). Check item 2 of the "Manual verification checklist (human)". If a sign is off, fix `euler_to_axis_angle` (#232) or the `setSFRotation` call (#236); do not tweak by guesswork.
 
-Once verified in the Webots GUI, these conventions will be either confirmed or corrected (see issue #239).
+## Data flow
 
-## TODO: run steps
+```
+ LSM6DS3TR-C --I2C--> ESP32-S3 --USB serial 115200, 50 Hz ASCII frames--> monitor (parse + fuse)
+   (external IMU)      (esp32_dof.ino)     IMU,seq,t_us,ax..gz*HH        dof_monitor.py
+                                                                             |
+                                                          UDP JSON {"seq","roll","pitch","yaw"} rad
+                                                                             v
+                                       127.0.0.1:5005  -->  Webots supervisor (esp32_dof_follower)  -->  ESP32_BODY (box rotation)
+```
 
-See sub-issue #239 for the implementation plan:
-- Firmware: see firmware/README.md (issue #233)
-- Monitor: CLI + fusion + UDP publisher done (#237, #238).
-- Webots: world (#231) + follower (#236) + monitor (#237) + UDP publisher (#238) done; GUI convention check (#239) pending.
+Mock mode replaces the first three stages with a synthetic generator (`--mock`); replay mode reads a CSV (`--replay`).
+
+## Reproducing end to end
+
+Requires: the `esp32-dof` mamba env; Webots R2025a (`/usr/local/bin/webots`, or set `WEBOTS_BIN`) with a real X display for the GUI steps; for real hardware also a XIAO ESP32-S3 (Sense) with an external LSM6DS3TR-C wired as in `firmware/README.md`, and `arduino-cli` (or Arduino IDE).
+
+All commands below are from the repo root unless stated.
+
+### 1. Create the env
+
+```bash
+mamba env create -n esp32-dof -f poc/esp32-dof/mamba-envs.lock.yml
+mamba run -n esp32-dof python -c "import serial, numpy, pytest; print('OK')"
+```
+
+`mamba env create -f mamba-envs.yaml` does NOT work (custom schema); see "Env setup".
+
+### 2. Run the tests
+
+```bash
+cd poc/esp32-dof
+mamba run -n esp32-dof python3 -m pytest -q monitor webots/controllers/esp32_dof_follower
+```
+
+Pure-Python only: no hardware, no Webots, no display. They do not cover the firmware, the world file or the GUI.
+
+### 3. Mock demo (no hardware; needs a display)
+
+```bash
+cd poc/esp32-dof
+./run_mock_demo.sh              # runs until Ctrl-C
+./run_mock_demo.sh --duration 30
+```
+
+This starts Webots (`webots/run_gui.sh`, realtime), waits until the controller listens on UDP 5005, then runs `dof_monitor.py --mock --publish` in the `esp32-dof` env and closes Webots when it exits. Expect the blue box to wobble smoothly (mock: roll 0.5*sin(2*pi*0.2*t), pitch 0.3*sin(2*pi*0.1*t) rad, 50 Hz). `--mock` runs at real time forever unless `--duration` is given; Ctrl-C prints a summary (`published : N`). `DOF_DEMO_DRY_RUN=1 ./run_mock_demo.sh` prints what it would do without starting anything. See the checklist for the pass criteria.
+
+Manual equivalent (two terminals):
+
+```bash
+cd poc/esp32-dof
+./webots/run_gui.sh                                                      # terminal 1
+mamba run -n esp32-dof python3 monitor/dof_monitor.py --mock --publish   # terminal 2
+```
+
+To see the controller's applied rotations, start Webots with debug on (must be in Webots' OWN environment):
+
+```bash
+DOF_FOLLOWER_DEBUG=1 ./webots/run_gui.sh
+```
+
+Headless smoke (no window; proves the controller runs, not that it looks right; use a display or `xvfb-run` if the batch run complains about one):
+
+```bash
+cd poc/esp32-dof
+DOF_FOLLOWER_DEBUG=1 timeout 20 webots --batch --mode=realtime --no-rendering --minimize --stdout --stderr webots/worlds/esp32_dof.wbt &
+sleep 8; mamba run -n esp32-dof python3 monitor/dof_monitor.py --mock --publish --duration 8; wait
+```
+
+Expect `esp32_dof_follower: listening on 127.0.0.1:5005`, `first orientation message received`, and `rotation ...` lines whose angle changes.
+
+### 4. Real hardware
+
+Flash the sketch (details, wiring, and library versions in `firmware/README.md`; `arduino-cli` must be on your PATH):
+
+```bash
+arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32S3:CDCOnBoot=cdc poc/esp32-dof/firmware/esp32_dof
+arduino-cli board list                      # find the port, usually /dev/ttyACM0
+arduino-cli upload -p /dev/ttyACM0 --fqbn esp32:esp32:XIAO_ESP32S3:CDCOnBoot=cdc poc/esp32-dof/firmware/esp32_dof
+```
+
+Find the port, look at the raw stream, then drive Webots:
+
+```bash
+cd poc/esp32-dof
+mamba run -n esp32-dof python3 monitor/dof_monitor.py --list-ports
+mamba run -n esp32-dof python3 monitor/dof_monitor.py --port /dev/ttyACM0            # table only; expect rate ~50, drops 0
+./webots/run_gui.sh                                                                    # terminal 1
+mamba run -n esp32-dof python3 monitor/dof_monitor.py --port /dev/ttyACM0 --publish   # terminal 2
+```
+
+Add `--fuse` (implied by `--publish`) to see roll/pitch/yaw columns in degrees. Keep the board still and flat for the first second so roll/pitch initialize from gravity. If opening the port fails you get exit code 2 and a hint about the `dialout` group (see "Serial access (Linux)").
+
+## What is verified
+
+Verified headlessly (no GUI, no hardware), with this method:
+
+- **Unit tests**: `cd poc/esp32-dof && mamba run -n esp32-dof python3 -m pytest -q monitor webots/controllers/esp32_dof_follower` passes (frame parser, fusion, sources, serial with fake port/`loop://`, stats, monitor CLI, publisher, UDP drain, Euler-to-axis-angle math).
+- **Mock -> monitor -> UDP -> real Webots controller**: a reviewer ran Webots in headless batch mode (`webots --batch --mode=realtime --no-rendering --minimize --stdout --stderr <world>` under `timeout`) with `DOF_FOLLOWER_DEBUG=1` and `dof_monitor.py --mock --publish`; the controller logged `listening`, `first orientation message received`, and `rotation` lines whose angle varied over time and matched `euler_to_axis_angle(mock_angles(t))`.
+- **Firmware compiles**: arduino-cli 1.5.1, esp32:esp32 3.3.12, Seeed Arduino LSM6DS3 2.0.7 (never flashed).
+- **Parser/checksum parity**: the golden frame `IMU,12345,1234567890,0.500000,-9.806650,1.250000,10.500000,-5.500000,0.000000*52` parses and re-formats byte-for-byte in the Python parser, and the firmware source uses the same format/XOR.
+- **Run scripts**: `bash -n`, the `DOF_DEMO_DRY_RUN=1` dry run, and the DISPLAY / WEBOTS_BIN / port-in-use failure paths (no GUI launched).
+
+## NOT verified (needs a human with a display and/or the board)
+
+- Webots world look (#231): box reads level with z up, the camera framing is sensible, the orange +x nose marker is visible.
+- Rotation handedness in the GUI (#232, #236): roll = pi/2 tilts about +x with the nose staying on +x; yaw = pi/2 points the nose to +y (North, ENU).
+- Simulation running vs paused: the controller is not stepped while paused (box will not move). `run_gui.sh` uses `--mode=realtime` so it should start running; not yet seen in the GUI.
+- Firmware on real hardware (#233): I2C comms; whether the Seeed library's `begin()` accepts the LSM6DS3TR-C (its source accepts WHO_AM_I 0x69 and 0x6A); the DTR/RTS reset on port open printing ROM boot text (harmless: those lines fail parsing and are counted as `bad_frames`); the golden-frame self-test (`#define DOF_SELFTEST 1`, first line must end `*52`) and the Python parity snippet in `firmware/README.md`.
+- Serial reconnect (#235) with a real USB unplug; ModemManager grabbing `/dev/ttyACM*`; the `dialout` group on the test machine.
+- `run_gui.sh` and `run_mock_demo.sh` in a real GUI session (the Webots process-group cleanup on exit and the bind timing when Webots starts paused are unobserved).
+
+## Manual verification checklist (human)
+
+Tick a box only after doing it yourself. Nothing here was done by the automation that wrote this section. Record results in the "Verification log" below and as a comment on issue #227.
+
+- [ ] **1. Mock demo tilts the box smoothly** (needs display, no hardware)
+  Do: `cd poc/esp32-dof && ./run_mock_demo.sh` (add `DOF_FOLLOWER_DEBUG=1` in front to see rotation logs).
+  Pass: Webots window opens with a level blue box (top face up, z up) with a visible orange nose block at the +x end, floor grey, camera framing shows the whole box; console shows `esp32_dof_follower: listening on 127.0.0.1:5005` then `first orientation message received`; box tilts smoothly (no jumps) about roughly ±29° roll (period 5 s) and ±17° pitch (period 10 s); Ctrl-C prints the summary (`bad_frames 0`, `published` roughly 50/s) and the Webots window closes (check `pgrep -a webots` afterwards: no leftover process).
+  If it fails: box static -> simulation paused (press Play) or controller not bound (check `ss -uln | grep 5005`, port in use, Webots console errors); world look wrong -> fix `webots/worlds/esp32_dof.wbt` (#231), not the controller; jerky -> note timing and open an issue.
+- [ ] **2. Rotation handedness is correct** (needs display; can use mock or `nc`)
+  Do: with the world running, send single poses:
+  `printf '{"seq":1,"roll":1.5708,"pitch":0.0,"yaw":0.0}' | nc -u -w1 127.0.0.1 5005` then the same with roll 0 and yaw 1.5708.
+  Pass: roll = pi/2 -> box rotates about its long +x axis (rolls over onto its side) and the orange nose stays at the +x end; yaw = pi/2 -> nose points along +y (the world's North/left axis), box stays level.
+  If it fails: do NOT flip signs by guesswork. Open an issue with which axis/sign is wrong and fix `euler_to_axis_angle` (#232) or the `setSFRotation` call (#236) with a unit test.
+- [ ] **3. Real board: tilting the board tilts the box** (needs the board flashed and wired)
+  Do: flash the sketch, `dof_monitor.py --list-ports`, then `dof_monitor.py --port /dev/ttyACM0` (no publish): expect ~50 Hz, `drops 0`; then run with `--publish` alongside `./webots/run_gui.sh`; hold the board flat and still for a second, then tilt it.
+  Pass: box follows the same direction and magnitude of roll and pitch; yaw drift over minutes is expected and NOT a failure.
+  If it fails: IMU not found -> `ERR,imu_init` every second (wiring, address 0x6A/0x6B, 3V3, or the library rejecting the chip: report the WHO_AM_I); garbled frames -> use the golden-frame self-test and the parity snippet in `firmware/README.md`; no port -> Troubleshooting.
+- [ ] **4. Unplug USB, monitor reconnects** (needs the board)
+  Do: run `dof_monitor.py --port /dev/ttyACM0 --publish`, unplug the USB cable, wait ~5 s, plug it back in.
+  Pass: stderr shows reconnect messages while unplugged (retries every 1 s, no traceback); after replugging, rows resume and the box follows again; the summary reports a `resets` count if the sequence restarted.
+  If it fails: if the port name changes (e.g. `/dev/ttyACM1`) that is a known limitation, restart with the new port; otherwise open an issue with stderr output.
+
+### Verification log (fill in by hand)
+
+| Date | Who | Item(s) | Result (pass/fail) | Notes / issue link |
+|------|-----|---------|--------------------|--------------------|
+|      |     |         |                    |                    |
+
+## Troubleshooting
+
+- **`FATAL: $DISPLAY is not set`** (from `run_gui.sh` / `run_mock_demo.sh`): no X session. Export your display (`export DISPLAY=:1`) and re-run. There is no xvfb fallback for the GUI scripts. For a window-less smoke test use the headless command in "Reproducing end to end".
+- **`cannot open serial port ... Permission denied`, monitor exit code 2**: you are not in the `dialout` group (`groups`; `sudo usermod -aG dialout $USER`, then log out and back in). Or the port is missing (`--list-ports`) or held by another program.
+- **ModemManager grabs `/dev/ttyACM*`** (port opens then vanishes/garbles): stop it while testing (`sudo systemctl stop ModemManager`) or add a udev rule to ignore the board.
+- **Boot text / bad_frames right after opening the port**: opening the port toggles DTR/RTS and resets the ESP32, which prints ROM boot text. Those lines fail parsing and are counted in `bad_frames`; the first line after each (re)open is discarded by design. Harmless.
+- **Webots does not react**: (1) the simulation must be RUNNING (press Play; `--mode=realtime` starts running); (2) check that UDP 5005 is bound: `ss -uln | grep 5005`; (3) the controller log must show `listening on 127.0.0.1:5005`; (4) sender and controller must agree on port (`--udp-port`, default 5005); (5) the monitor `published : N` count in the summary must be > 0; (6) run Webots with `DOF_FOLLOWER_DEBUG=1` to see applied rotations (must be in Webots' own environment, e.g. `DOF_FOLLOWER_DEBUG=1 ./webots/run_gui.sh`).
+- **Controller logs `cannot bind UDP 127.0.0.1:5005` and exits**: port already in use (a second Webots or another program). There is no SO_REUSEADDR by design. Close the other instance (`ss -uanp | grep :5005`).
+- **`run_mock_demo.sh` says it cannot find python for env 'esp32-dof'**: create the env (step 1) or set `DOF_PYTHON=/path/to/python`.
+- **Publisher with Webots closed**: harmless; UDP datagrams are dropped, monitor keeps running.
+- **`ERR,imu_init` every second on the serial stream**: IMU not found; see `firmware/README.md`.
+
+## Known limitations
+
+- **Yaw drifts without bound** over time: there is no magnetometer, so heading has no absolute reference.
+- **6-DOF only**: accelerometer + gyroscope; no position, no magnetometer, no linear-acceleration or free-fall rejection.
+- Roll/pitch degrade near pitch = ±90 degrees (gimbal region, Euler angles).
+- Serial reconnect assumes the device comes back under the same port name.
+- Hardware, GUI look, and rotation handedness are not human-verified yet (see checklist).
+- Also see the Fusion and Monitor sections' limitation lists.
