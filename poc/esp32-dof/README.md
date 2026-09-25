@@ -79,6 +79,9 @@ poc/esp32-dof/
       .gitkeep            Placeholder for initial commit
     controllers/          Webots robot controller scripts
       .gitkeep            Placeholder for initial commit
+      esp32_dof_follower/ Webots controller for ESP32 DOF tracking
+        dof_webots_math.py Orientation parsing + Euler-to-axis-angle helpers
+        test_esp32dof_webots_math.py Controller-side unit tests
 ```
 
 ## Frame protocol
@@ -167,6 +170,35 @@ dt_s = 0.02                            # time step in seconds
 
 roll, pitch, yaw = fuse.update(accel_g, gyro_dps, dt_s)
 ```
+
+## Webots IPC contract
+
+**Simulation integration**: Webots controller receives orientation updates from the host monitor over UDP.
+
+**Protocol:**
+- Address: `127.0.0.1:5005` (localhost UDP only; no remote network transport)
+- Payload: One JSON datagram per UDP packet
+- Format: `{"seq": <uint>, "roll": <float>, "pitch": <float>, "yaw": <float>}`
+- Units: All angles in radians (ZYX Euler convention: R = Rz(yaw) Ry(pitch) Rx(roll))
+- Notes:
+  - `seq` (sequence number) is optional in the JSON; receiver ignores it if present.
+  - Extra keys are silently ignored by the parser.
+  - JSON parser rejects NaN, ±Infinity, and non-finite values.
+
+**Rotation convention:**
+- **ZYX Euler angles** (standard aviation convention):
+  - Roll: rotation about X-axis (±π)
+  - Pitch: rotation about Y-axis [−π/2, π/2]
+  - Yaw: rotation about Z-axis (−π, π]
+  - Composed as: R = Rz(yaw) · Ry(pitch) · Rx(roll)
+
+- **Webots representation**: Output of `euler_to_axis_angle()` is a unit axis-angle tuple (x, y, z, angle) compatible with Webots rotation fields.
+
+**⚠️ GUI verification pending (#239):** Sign conventions between this ZYX Euler model and Webots' visual rendering have NOT yet been verified in the live simulation GUI. Expected behavior:
+  - roll=π/2 → body tilts about +X with nose staying on +X axis
+  - yaw=π/2 → nose points +Y (North, ENU frame)
+
+Once verified in the Webots GUI, these conventions will be either confirmed or corrected (see issue #239).
 
 ## TODO: run steps
 
