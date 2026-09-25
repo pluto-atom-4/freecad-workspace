@@ -12,7 +12,8 @@
 # ESP32_BODY has NO physics and NO boundingObject on purpose: gravity must not
 # move it, and the supervisor controller (#236, esp32_dof_follower) sets
 # its rotation directly via getFromDef("ESP32_BODY").getField("rotation").
-# The controller does not exist until #236 -- Webots only warns until then.
+# Controller: controllers/esp32_dof_follower (issue #236). The simulation must
+# be running (not paused) for it to move the box.
 
 WorldInfo {
   info [
