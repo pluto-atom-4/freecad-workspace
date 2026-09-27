@@ -15,10 +15,13 @@ Status: firmware (#233), monitor (#234-#238), Webots world and controller (#231,
 
 - **Microcontroller**: XIAO ESP32-S3 Sense (Seeed Studio)
   - ⚠️ **IMPORTANT**: The Sense variant does *not* include an onboard IMU. Do NOT assume one is present.
-- **IMU Sensor**: LSM6DS3TR-C (STMicroelectronics), interfaced externally via I2C
-  - 3-axis accelerometer (±2/4/8/16 g configurable)
-  - 3-axis gyroscope (±125/250/500/1000/2000 dps configurable)
-  - Connected via I2C to D4 (GPIO5, SDA) + D5 (GPIO6, SCL) on the XIAO ESP32-S3 Sense; address 0x6A (0x6B if SDO high)
+- **IMU Sensor**: MPU-6050 (InvenSense, e.g. GY-521 module), interfaced externally via I2C
+  - 3-axis accelerometer (firmware configures +/-4 g)
+  - 3-axis gyroscope (firmware configures +/-500 dps)
+  - Connected via I2C to D4 (GPIO5, SDA) + D5 (GPIO6, SCL) on the XIAO ESP32-S3 Sense; address 0x68 (0x69 if AD0 high)
+  - The MPU-6050 gyro has a zero-rate offset that varies with temperature, so yaw drift can be noticeable (yaw drifts anyway: no magnetometer). The firmware averages the gyro for about 1 s at boot to remove the bias; keep the board still and flat for that first second after power-up or reset.
+  - Mounting: lay the module flat, component side up, with its printed X arrow toward the box's nose (+X). No axis remap is applied; +1 g must read on Z when flat.
+  - MPU-6050 support (#252) is **compile-checked only**. It has NOT been flashed or tested on hardware and needs human verification (`0x68` found, frames stream, tilt drives the box).
 
 ## Env setup
 
@@ -74,7 +77,7 @@ poc/esp32-dof/
   firmware/               Arduino sketch and documentation (build artifacts gitignored)
     README.md             Firmware setup, compilation, and testing guide
     esp32_dof/            Firmware sketch directory (folder name matches .ino basename)
-      esp32_dof.ino       XIAO ESP32-S3 + LSM6DS3TR-C frame streamer
+      esp32_dof.ino       XIAO ESP32-S3 + MPU-6050 frame streamer
   monitor/                Host-side Python monitor script + tests
     dof_frame.py          Frame protocol parser and formatter
     test_esp32dof_frame.py Frame protocol unit tests
@@ -379,7 +382,7 @@ Errors go to stderr; rows + summary to stdout. No Traceback on expected errors.
 ## Data flow
 
 ```
- LSM6DS3TR-C --I2C--> ESP32-S3 --USB serial 115200, 50 Hz ASCII frames--> monitor (parse + fuse)
+ MPU-6050 --I2C--> ESP32-S3 --USB serial 115200, 50 Hz ASCII frames--> monitor (parse + fuse)
    (external IMU)      (esp32_dof.ino)     IMU,seq,t_us,ax..gz*HH        dof_monitor.py
                                                                              |
                                                           UDP JSON {"seq","roll","pitch","yaw"} rad
@@ -391,7 +394,7 @@ Mock mode replaces the first three stages with a synthetic generator (`--mock`);
 
 ## Reproducing end to end
 
-Requires: the `esp32-dof` mamba env; Webots R2025a (`/usr/local/bin/webots`, or set `WEBOTS_BIN`) with a real X display for the GUI steps; for real hardware also a XIAO ESP32-S3 (Sense) with an external LSM6DS3TR-C wired as in `firmware/README.md`, and `arduino-cli` (or Arduino IDE).
+Requires: the `esp32-dof` mamba env; Webots R2025a (`/usr/local/bin/webots`, or set `WEBOTS_BIN`) with a real X display for the GUI steps; for real hardware also a XIAO ESP32-S3 (Sense) with an external MPU-6050 (GY-521) wired as in `firmware/README.md`, and `arduino-cli` (or Arduino IDE).
 
 All commands below are from the repo root unless stated.
 
@@ -475,7 +478,7 @@ Verified headlessly (no GUI, no hardware), with this method:
 
 - **Unit tests**: `cd poc/esp32-dof && mamba run -n esp32-dof python3 -m pytest -q monitor webots/controllers/esp32_dof_follower` passes (frame parser, fusion, sources, serial with fake port/`loop://`, stats, monitor CLI, publisher, UDP drain, Euler-to-axis-angle math).
 - **Mock -> monitor -> UDP -> real Webots controller**: a reviewer ran Webots in headless batch mode (`webots --batch --mode=realtime --no-rendering --minimize --stdout --stderr <world>` under `timeout`) with `DOF_FOLLOWER_DEBUG=1` and `dof_monitor.py --mock --publish`; the controller logged `listening`, `first orientation message received`, and `rotation` lines whose angle varied over time and matched `euler_to_axis_angle(mock_angles(t))`.
-- **Firmware compiles**: arduino-cli 1.5.1, esp32:esp32 3.3.12, Seeed Arduino LSM6DS3 2.0.7 (never flashed).
+- **Firmware compiles**: arduino-cli 1.5.1, esp32:esp32 3.3.12, Adafruit MPU6050 2.2.9 with BusIO 1.17.4 and Unified Sensor 1.1.15 (never flashed).
 - **Parser/checksum parity**: the golden frame `IMU,12345,1234567890,0.500000,-9.806650,1.250000,10.500000,-5.500000,0.000000*52` parses and re-formats byte-for-byte in the Python parser, and the firmware source uses the same format/XOR.
 - **Run scripts**: `bash -n`, the `DOF_DEMO_DRY_RUN=1` dry run, and the DISPLAY / WEBOTS_BIN / port-in-use failure paths (no GUI launched).
 
@@ -484,7 +487,7 @@ Verified headlessly (no GUI, no hardware), with this method:
 - Webots world look (#231): box reads level with z up, the camera framing is sensible, the orange +x nose marker is visible.
 - Rotation handedness in the GUI (#232, #236): roll = pi/2 tilts about +x with the nose staying on +x; yaw = pi/2 points the nose to +y (North, ENU).
 - Simulation running vs paused: the controller is not stepped while paused (box will not move). `run_gui.sh` uses `--mode=realtime` so it should start running; not yet seen in the GUI.
-- Firmware on real hardware (#233): I2C comms; whether the Seeed library's `begin()` accepts the LSM6DS3TR-C (its source accepts WHO_AM_I 0x69 and 0x6A); the DTR/RTS reset on port open printing ROM boot text (harmless: those lines fail parsing and are counted as `bad_frames`); the golden-frame self-test (`#define DOF_SELFTEST 1`, first line must end `*52`) and the Python parity snippet in `firmware/README.md`.
+- Firmware on real hardware (#233, #252): I2C comms with the MPU-6050 (WHO_AM_I `0x68`, library `begin()` accepting the chip); gyro-bias calibration; sign and axis of the mounting; the DTR/RTS reset on port open printing ROM boot text (harmless: those lines fail parsing and are counted as `bad_frames`); the golden-frame self-test (`#define DOF_SELFTEST 1`, first line must end `*52`) and the Python parity snippet in `firmware/README.md`.
 - Serial reconnect (#235) with a real USB unplug; ModemManager grabbing `/dev/ttyACM*`; the `dialout` group on the test machine.
 - `run_gui.sh` and `run_mock_demo.sh` in a real GUI session (the Webots process-group cleanup on exit and the bind timing when Webots starts paused are unobserved).
 
@@ -504,7 +507,7 @@ Tick a box only after doing it yourself. Nothing here was done by the automation
 - [ ] **3. Real board: tilting the board tilts the box** (needs the board flashed and wired)
   Do: flash the sketch, `dof_monitor.py --list-ports`, then `dof_monitor.py --port /dev/ttyACM0` (no publish): expect ~50 Hz, `drops 0`; then run with `--publish` alongside `./webots/run_gui.sh`; hold the board flat and still for a second, then tilt it.
   Pass: box follows the same direction and magnitude of roll and pitch; yaw drift over minutes is expected and NOT a failure.
-  If it fails: IMU not found -> `ERR,imu_init` every second (wiring, address 0x6A/0x6B, 3V3, or the library rejecting the chip: report the WHO_AM_I); garbled frames -> use the golden-frame self-test and the parity snippet in `firmware/README.md`; no port -> Troubleshooting.
+  If it fails: IMU not found -> `ERR,imu_init` every second (wiring, address 0x68/0x69, 3V3, or the library rejecting the chip; a following `ERR,imu_whoami,0xNN` line reports what the chip answered); garbled frames -> use the golden-frame self-test and the parity snippet in `firmware/README.md`; no port -> Troubleshooting.
 - [ ] **4. Unplug USB, monitor reconnects** (needs the board)
   Do: run `dof_monitor.py --port /dev/ttyACM0 --publish`, unplug the USB cable, wait ~5 s, plug it back in.
   Pass: stderr shows reconnect messages while unplugged (retries every 1 s, no traceback); after replugging, rows resume and the box follows again; the summary reports a `resets` count if the sequence restarted.
@@ -526,7 +529,7 @@ Tick a box only after doing it yourself. Nothing here was done by the automation
 - **Controller logs `cannot bind UDP 127.0.0.1:5005` and exits**: port already in use (a second Webots or another program). There is no SO_REUSEADDR by design. Close the other instance (`ss -uanp | grep :5005`).
 - **`run_mock_demo.sh` says it cannot find python for env 'esp32-dof'**: create the env (step 1) or set `DOF_PYTHON=/path/to/python`.
 - **Publisher with Webots closed**: harmless; UDP datagrams are dropped, monitor keeps running.
-- **`ERR,imu_init` every second on the serial stream**: IMU not found; see `firmware/README.md`.
+- **`ERR,imu_init` every second on the serial stream**: IMU not found; see `firmware/README.md`. For an MPU-6050 it is followed by `ERR,imu_whoami,0xNN` when the chip answered with an unexpected ID.
 
 ## Known limitations
 
