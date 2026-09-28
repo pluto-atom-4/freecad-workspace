@@ -1,6 +1,6 @@
 # ESP32 6-DOF IMU POC (issue #227)
 
-Proof-of-concept integration of an external **XIAO ESP32-S3 Sense** microcontroller with a 6-DOF inertial measurement unit (IMU): firmware streams accelerometer + gyroscope frames over USB serial, a host-side Python monitor parses and fuses them into roll/pitch/yaw, and a Webots world shows a box that follows the orientation live. See "Reproducing end to end" to run it and "Manual verification checklist (human)" for what still needs a person with a display and the board.
+Proof-of-concept integration of an external **XIAO ESP32-C3** microcontroller with a 6-DOF inertial measurement unit (IMU): firmware streams accelerometer + gyroscope frames over USB serial, a host-side Python monitor parses and fuses them into roll/pitch/yaw, and a Webots world shows a box that follows the orientation live. See "Reproducing end to end" to run it and "Manual verification checklist (human)" for what still needs a person with a display and the board.
 
 ## Purpose
 
@@ -13,12 +13,12 @@ Status: firmware (#233), monitor (#234-#238), Webots world and controller (#231,
 
 ## Hardware
 
-- **Microcontroller**: XIAO ESP32-S3 Sense (Seeed Studio)
-  - ⚠️ **IMPORTANT**: The Sense variant does *not* include an onboard IMU. Do NOT assume one is present.
+- **Microcontroller**: XIAO ESP32-C3 (Seeed Studio)
+  - ⚠️ **IMPORTANT**: The XIAO ESP32-C3 does *not* include an onboard IMU. Do NOT assume one is present.
 - **IMU Sensor**: MPU-6050 (InvenSense, e.g. GY-521 module), interfaced externally via I2C
   - 3-axis accelerometer (firmware configures +/-4 g)
   - 3-axis gyroscope (firmware configures +/-500 dps)
-  - Connected via I2C to D4 (GPIO5, SDA) + D5 (GPIO6, SCL) on the XIAO ESP32-S3 Sense; address 0x68 (0x69 if AD0 high)
+  - Connected via I2C to D4 (GPIO6, SDA) + D5 (GPIO7, SCL) on the XIAO ESP32-C3; address 0x68 (0x69 if AD0 high)
   - The MPU-6050 gyro has a zero-rate offset that varies with temperature, so yaw drift can be noticeable (yaw drifts anyway: no magnetometer). The firmware averages the gyro for about 1 s at boot to remove the bias; keep the board still and flat for that first second after power-up or reset.
   - Mounting: lay the module flat, component side up, with its printed X arrow toward the box's nose (+X). No axis remap is applied; +1 g must read on Z when flat.
   - MPU-6050 support (#252) is **compile-checked only**. It has NOT been flashed or tested on hardware and needs human verification (`0x68` found, frames stream, tilt drives the box).
@@ -77,7 +77,7 @@ poc/esp32-dof/
   firmware/               Arduino sketch and documentation (build artifacts gitignored)
     README.md             Firmware setup, compilation, and testing guide
     esp32_dof/            Firmware sketch directory (folder name matches .ino basename)
-      esp32_dof.ino       XIAO ESP32-S3 + MPU-6050 frame streamer
+      esp32_dof.ino       XIAO ESP32-C3 + MPU-6050 frame streamer
   monitor/                Host-side Python monitor script + tests
     dof_frame.py          Frame protocol parser and formatter
     test_esp32dof_frame.py Frame protocol unit tests
@@ -382,7 +382,7 @@ Errors go to stderr; rows + summary to stdout. No Traceback on expected errors.
 ## Data flow
 
 ```
- MPU-6050 --I2C--> ESP32-S3 --USB serial 115200, 50 Hz ASCII frames--> monitor (parse + fuse)
+ MPU-6050 --I2C--> ESP32-C3 --USB serial 115200, 50 Hz ASCII frames--> monitor (parse + fuse)
    (external IMU)      (esp32_dof.ino)     IMU,seq,t_us,ax..gz*HH        dof_monitor.py
                                                                              |
                                                           UDP JSON {"seq","roll","pitch","yaw"} rad
@@ -394,7 +394,7 @@ Mock mode replaces the first three stages with a synthetic generator (`--mock`);
 
 ## Reproducing end to end
 
-Requires: the `esp32-dof` mamba env; Webots R2025a (`/usr/local/bin/webots`, or set `WEBOTS_BIN`) with a real X display for the GUI steps; for real hardware also a XIAO ESP32-S3 (Sense) with an external MPU-6050 (GY-521) wired as in `firmware/README.md`, and `arduino-cli` (or Arduino IDE).
+Requires: the `esp32-dof` mamba env; Webots R2025a (`/usr/local/bin/webots`, or set `WEBOTS_BIN`) with a real X display for the GUI steps; for real hardware also a XIAO ESP32-C3 with an external MPU-6050 (GY-521) wired as in `firmware/README.md`, and `arduino-cli` (or Arduino IDE).
 
 All commands below are from the repo root unless stated.
 
@@ -455,9 +455,9 @@ Expect `esp32_dof_follower: listening on 127.0.0.1:5005`, `first orientation mes
 Flash the sketch (details, wiring, and library versions in `firmware/README.md`; `arduino-cli` must be on your PATH):
 
 ```bash
-arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32S3:CDCOnBoot=cdc poc/esp32-dof/firmware/esp32_dof
+arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32C3 poc/esp32-dof/firmware/esp32_dof
 arduino-cli board list                      # find the port, usually /dev/ttyACM0
-arduino-cli upload -p /dev/ttyACM0 --fqbn esp32:esp32:XIAO_ESP32S3:CDCOnBoot=cdc poc/esp32-dof/firmware/esp32_dof
+arduino-cli upload -p /dev/ttyACM0 --fqbn esp32:esp32:XIAO_ESP32C3 poc/esp32-dof/firmware/esp32_dof
 ```
 
 Find the port, look at the raw stream, then drive Webots:
@@ -478,7 +478,7 @@ Verified headlessly (no GUI, no hardware), with this method:
 
 - **Unit tests**: `cd poc/esp32-dof && mamba run -n esp32-dof python3 -m pytest -q monitor webots/controllers/esp32_dof_follower` passes (frame parser, fusion, sources, serial with fake port/`loop://`, stats, monitor CLI, publisher, UDP drain, Euler-to-axis-angle math).
 - **Mock -> monitor -> UDP -> real Webots controller**: a reviewer ran Webots in headless batch mode (`webots --batch --mode=realtime --no-rendering --minimize --stdout --stderr <world>` under `timeout`) with `DOF_FOLLOWER_DEBUG=1` and `dof_monitor.py --mock --publish`; the controller logged `listening`, `first orientation message received`, and `rotation` lines whose angle varied over time and matched `euler_to_axis_angle(mock_angles(t))`.
-- **Firmware compiles**: arduino-cli 1.5.1, esp32:esp32 3.3.12, Adafruit MPU6050 2.2.9 with BusIO 1.17.4 and Unified Sensor 1.1.15 (never flashed).
+- **Firmware compiles**: arduino-cli 1.5.1, esp32:esp32 3.3.12, Adafruit MPU6050 2.2.9 with BusIO 1.17.4 and Unified Sensor 1.1.15 for esp32:esp32:XIAO_ESP32C3 (never flashed).
 - **Parser/checksum parity**: the golden frame `IMU,12345,1234567890,0.500000,-9.806650,1.250000,10.500000,-5.500000,0.000000*52` parses and re-formats byte-for-byte in the Python parser, and the firmware source uses the same format/XOR.
 - **Run scripts**: `bash -n`, the `DOF_DEMO_DRY_RUN=1` dry run, and the DISPLAY / WEBOTS_BIN / port-in-use failure paths (no GUI launched).
 
