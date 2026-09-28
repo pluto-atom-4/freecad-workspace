@@ -1,5 +1,5 @@
 /*
- * esp32_dof.ino -- XIAO ESP32-S3 (Sense) + external MPU-6050 IMU frame streamer
+ * esp32_dof.ino -- XIAO ESP32-C3 + external MPU-6050 IMU frame streamer
  * (issue #233, part of #227; switched to the MPU-6050 in issue #252)
  *
  * Emits one ASCII frame per line at 50 Hz over USB CDC serial (115200):
@@ -7,17 +7,19 @@
  * Protocol is defined in poc/esp32-dof/README.md (Frame protocol) and implemented
  * host-side by poc/esp32-dof/monitor/dof_frame.py. Keep them in sync.
  *
- * Board:   Seeed XIAO ESP32S3 (FQBN esp32:esp32:XIAO_ESP32S3)
- * Setting: USB CDC On Boot = Enabled (FQBN option CDCOnBoot=cdc)
+ * Board:   Seeed XIAO ESP32-C3 (FQBN esp32:esp32:XIAO_ESP32C3)
+ * Setting: USB CDC On Boot = Enabled. That is the DEFAULT on this board -- do NOT
+ *          append a CDCOnBoot=cdc option to the FQBN: the XIAO "CDCOnBoot" menu is
+ *          inverted (cdc = Disabled), so that suffix turns USB serial OFF.
  * Library: "Adafruit MPU6050" (header <Adafruit_MPU6050.h>; needs Adafruit BusIO
  *          and Adafruit Unified Sensor)
- * NOTE: the XIAO ESP32-S3 Sense has NO onboard IMU. The IMU is an EXTERNAL module.
+ * NOTE: the XIAO ESP32-C3 has NO onboard IMU. The IMU is an EXTERNAL module.
  *
  * Wiring (external MPU-6050 module, e.g. GY-521, I2C):
  *   Module VCC -> XIAO 3V3
  *   Module GND -> XIAO GND
- *   Module SDA -> XIAO D4 (GPIO5)
- *   Module SCL -> XIAO D5 (GPIO6)
+ *   Module SDA -> XIAO D4 (GPIO6)
+ *   Module SCL -> XIAO D5 (GPIO7)
  *
  * I2C address: 0x68 (AD0 low or floating, default)
  *              0x69 (AD0 tied high)  -> change IMU_I2C_ADDR below.
@@ -36,6 +38,12 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+
+// Serial must be the USB CDC serial. On the Seeed XIAO boards the "CDCOnBoot"
+// menu is inverted (cdc = Disabled), so do NOT append CDCOnBoot=cdc.
+#if !defined(ARDUINO_USB_CDC_ON_BOOT) || !ARDUINO_USB_CDC_ON_BOOT
+#error "USB CDC On Boot is disabled: Serial would use UART0, not USB. Use FQBN esp32:esp32:XIAO_ESP32C3 (no CDCOnBoot suffix). See firmware/README.md."
+#endif
 
 // Set to 1 to print the golden parity frame once at boot (should end with *52).
 // May also be given as -DDOF_SELFTEST=1.
@@ -193,7 +201,7 @@ void setup() {
   uint32_t t0 = millis();
   while (!Serial && (millis() - t0) < 2000) { delay(10); }
 
-  Wire.begin(SDA, SCL);   // XIAO ESP32S3: SDA=D4/GPIO5, SCL=D5/GPIO6
+  Wire.begin(SDA, SCL);   // XIAO ESP32-C3: SDA=D4/GPIO6, SCL=D5/GPIO7
   Wire.setClock(400000);
 
   if (!imuBegin()) {
