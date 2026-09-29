@@ -1,0 +1,52 @@
+# Mamba Environment Specification
+# Servo-Wheel DOF Webots POC (issue #258)
+#
+# Single environment: servo-wheel-dof
+#
+# Used for Webots simulation of servo-driven wheel control, Python numeric
+# computation, and testing.
+#
+# Webots simulator is installed separately (not in conda). This environment
+# provides only the Python runtime and libraries needed for the Webots controller
+# and test infrastructure.
+#
+# Install with: mamba env create -f mamba-envs.lock.yml
+# Or manually (see setup_command below)
+
+environments:
+  servo-wheel-dof:
+    python: "3.11"
+    channels:
+      - conda-forge
+    conda_packages:
+      - python=3.11
+      - numpy>=1.24
+      - pytest>=9.1
+      # Note: Webots' Python 'controller' module ships inside the Webots
+      # install tree ($WEBOTS_HOME/lib/controller/python), not via pip/conda.
+      # It is added to PYTHONPATH at controller runtime, not in this env.
+    description: >
+      Servo-Wheel DOF Webots POC: simulation of servo-driven wheel control.
+      NumPy for numeric computation, pytest for testing. Webots installed
+      externally.
+    setup_command: |
+      mamba create -n servo-wheel-dof -c conda-forge python=3.11 "numpy>=1.24" "pytest>=9.1" -y
+
+# Quick Reference
+usage: |
+  # Activation
+  mamba activate servo-wheel-dof
+
+  # Verify imports
+  mamba run -n servo-wheel-dof python -c "import numpy, pytest; print('OK')"
+
+  # Remove environment
+  mamba env remove -n servo-wheel-dof -y
+
+# Note on environment file compatibility:
+# This recipe uses a custom schema (non-standard conda YAML) to match the
+# inverted-pendulum-project structure. Direct `mamba env create -f
+# mamba-envs.yaml` will NOT work — use the setup_command above or the
+# generated mamba-envs.lock.yml instead:
+#
+#   mamba env create -f mamba-envs.lock.yml
