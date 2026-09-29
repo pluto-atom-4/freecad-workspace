@@ -478,22 +478,21 @@ Verified headlessly (no GUI, no hardware), with this method:
 
 - **Unit tests**: `cd poc/esp32-dof && mamba run -n esp32-dof python3 -m pytest -q monitor webots/controllers/esp32_dof_follower` passes (frame parser, fusion, sources, serial with fake port/`loop://`, stats, monitor CLI, publisher, UDP drain, Euler-to-axis-angle math).
 - **Mock -> monitor -> UDP -> real Webots controller**: a reviewer ran Webots in headless batch mode (`webots --batch --mode=realtime --no-rendering --minimize --stdout --stderr <world>` under `timeout`) with `DOF_FOLLOWER_DEBUG=1` and `dof_monitor.py --mock --publish`; the controller logged `listening`, `first orientation message received`, and `rotation` lines whose angle varied over time and matched `euler_to_axis_angle(mock_angles(t))`.
-- **Firmware compiles**: arduino-cli 1.5.1, esp32:esp32 3.3.12, Adafruit MPU6050 2.2.9 with BusIO 1.17.4 and Unified Sensor 1.1.15 for esp32:esp32:XIAO_ESP32C3 (never flashed).
+- **Firmware compiles**: arduino-cli 1.5.1, esp32:esp32 3.3.12, Adafruit MPU6050 2.2.9 with BusIO 1.17.4 and Unified Sensor 1.1.15 for esp32:esp32:XIAO_ESP32C3 (now flashed and human-verified — see checklist items 2–5).
 - **Parser/checksum parity**: the golden frame `IMU,12345,1234567890,0.500000,-9.806650,1.250000,10.500000,-5.500000,0.000000*52` parses and re-formats byte-for-byte in the Python parser, and the firmware source uses the same format/XOR.
 - **Run scripts**: `bash -n`, the `DOF_DEMO_DRY_RUN=1` dry run, and the DISPLAY / WEBOTS_BIN / port-in-use failure paths (no GUI launched).
 
 ## NOT verified (needs a human with a display and/or the board)
 
-- Webots world look (#231): box reads level with z up, the camera framing is sensible, the orange +x nose marker is visible. (Rotation handedness itself is now human-verified — see checklist item 2 — this is only about the static visual look, e.g. from the mock demo.)
-- Firmware on real hardware, remaining items (#233, #252): the gyro-bias calibration's skip-if-moving behaviour (`INFO,gyro_cal_skipped`); the DTR/RTS reset on port open printing ROM boot text; the golden-frame self-test (`#define DOF_SELFTEST 1` / `-DDOF_SELFTEST=1`, first line must end `*52`) and the Python parity snippet in `firmware/README.md`. (I2C comms with the MPU-6050, WHO_AM_I `0x68` acceptance, and mounting sign/axis are now human-verified — see checklist items 2 and 3.)
-- Serial reconnect (#235) with a real USB unplug; ModemManager grabbing `/dev/ttyACM*`; the `dialout` group on the test machine.
-- `run_gui.sh` and `run_mock_demo.sh` in a real GUI session (the Webots process-group cleanup on exit and the bind timing when Webots starts paused are unobserved).
+- Firmware on real hardware, remaining item (#233, #252): the gyro-bias calibration's skip-if-moving behaviour (`INFO,gyro_cal_skipped`) and the Python parity snippet in `firmware/README.md`. (I2C comms with the MPU-6050, WHO_AM_I `0x68` acceptance, mounting sign/axis, the DTR/RTS reset on port open printing ROM boot text, and the golden-frame self-test are now human-verified — see checklist items 2, 3, and 5.)
+- ModemManager grabbing `/dev/ttyACM*` and the `dialout` group specifically interfering: not triggered either way in the runs done so far (serial reconnect itself is now human-verified — see checklist item 4).
+- The Webots process-group cleanup on exit and the bind timing when Webots starts paused (narrower claims than "does the mock demo work", which is now human-verified — see checklist item 1) are unobserved.
 
 ## Manual verification checklist (human)
 
 Tick a box only after doing it yourself. Nothing here was done by the automation that wrote this section. Record results in the "Verification log" below and as a comment on issue #227.
 
-- [ ] **1. Mock demo tilts the box smoothly** (needs display, no hardware)
+- [x] **1. Mock demo tilts the box smoothly** (needs display, no hardware)
   Do: `cd poc/esp32-dof && ./run_mock_demo.sh` (add `DOF_FOLLOWER_DEBUG=1` in front to see rotation logs).
   Pass: Webots window opens with a level blue box (top face up, z up) with a visible orange nose block at the +x end, floor grey, camera framing shows the whole box; console shows `esp32_dof_follower: listening on 127.0.0.1:5005` then `first orientation message received`; box tilts smoothly (no jumps) about roughly ±29° roll (period 5 s) and ±17° pitch (period 10 s); Ctrl-C prints the summary (`bad_frames 0`, `published` roughly 50/s) and the Webots window closes (check `pgrep -a webots` afterwards: no leftover process).
   If it fails: box static -> simulation paused (press Play) or controller not bound (check `ss -uln | grep 5005`, port in use, Webots console errors); world look wrong -> fix `webots/worlds/esp32_dof.wbt` (#231), not the controller; jerky -> note timing and open an issue.
@@ -506,10 +505,14 @@ Tick a box only after doing it yourself. Nothing here was done by the automation
   Do: flash the sketch, `dof_monitor.py --list-ports`, then `dof_monitor.py --port /dev/ttyACM0` (no publish): expect ~50 Hz, `drops 0`; then run with `--publish` alongside `./webots/run_gui.sh`; hold the board flat and still for a second, then tilt it.
   Pass: box follows the same direction and magnitude of roll and pitch; yaw drift over minutes is expected and NOT a failure.
   If it fails: IMU not found -> `ERR,imu_init` every second (wiring, address 0x68/0x69, 3V3, or the library rejecting the chip; a following `ERR,imu_whoami,0xNN` line reports what the chip answered); garbled frames -> use the golden-frame self-test and the parity snippet in `firmware/README.md`; no port -> Troubleshooting.
-- [ ] **4. Unplug USB, monitor reconnects** (needs the board)
+- [x] **4. Unplug USB, monitor reconnects** (needs the board)
   Do: run `dof_monitor.py --port /dev/ttyACM0 --publish`, unplug the USB cable, wait ~5 s, plug it back in.
   Pass: stderr shows reconnect messages while unplugged (retries every 1 s, no traceback); after replugging, rows resume and the box follows again; the summary reports a `resets` count if the sequence restarted.
   If it fails: if the port name changes (e.g. `/dev/ttyACM1`) that is a known limitation, restart with the new port; otherwise open an issue with stderr output.
+- [x] **5. Golden-frame self-test on real hardware** (needs the board)
+  Do: build/flash with `-DDOF_SELFTEST=1` (`arduino-cli compile --build-property "compiler.cpp.extra_flags=-DDOF_SELFTEST=1" ...` then upload), read the first line printed after reset.
+  Pass: first line is exactly `IMU,12345,1234567890,0.500000,-9.806650,1.250000,10.500000,-5.500000,0.000000*52`, matching the parser/checksum parity claim above byte-for-byte.
+  If it fails: checksum mismatch or garbled line -> firmware/README.md parity snippet and `buildFrame`/checksum code disagree; open an issue, do not hand-patch the checksum.
 
 ### Verification log (fill in by hand)
 
@@ -517,6 +520,9 @@ Tick a box only after doing it yourself. Nothing here was done by the automation
 |------|-----|---------|--------------------|--------------------|
 | 2026-09-29 | Akai Kaede | 3 | pass | XIAO ESP32-C3 + external MPU-6050 flashed and wired (an SSD1306 OLED was also on the breadboard/I2C bus but is not driven by this firmware). `dof_monitor.py --port ...` (no `--publish`): ~50 Hz, `drops 0`, no `ERR,imu_init`. |
 | 2026-09-29 | Akai Kaede | 2 | pass | Verified via live board tilting (item 3's method), not the documented synthetic `nc` single-pose method: tilting the board tilted the box in the correct direction (roll about the board's own +x axis, yaw about +z) with no observed sign/axis flip. |
+| 2026-09-29 | Akai Kaede | 1 | pass | `./run_mock_demo.sh`: box wobbled smoothly, no jumps; confirmed on the XIAO ESP32-C3 setup (Webots + monitor on the same host as documented). |
+| 2026-09-29 | Akai Kaede | 4 | pass | Unplugged/replugged the USB cable multiple times during `dof_monitor.py --port ... --publish`; monitor reconnected each time. |
+| 2026-09-29 | Akai Kaede | 5 | pass | Compiled with `-DDOF_SELFTEST=1`, flashed, read the first line right after a DTR/RTS reset (custom script, no `sleep` between reset and read, to beat the ~1.2 s window before the first real IMU frame): `IMU,12345,1234567890,0.500000,-9.806650,1.250000,10.500000,-5.500000,0.000000*52`, exact match. |
 |      |     |         |                    |                    |
 
 ## Troubleshooting
@@ -537,5 +543,5 @@ Tick a box only after doing it yourself. Nothing here was done by the automation
 - **6-DOF only**: accelerometer + gyroscope; no position, no magnetometer, no linear-acceleration or free-fall rejection.
 - Roll/pitch degrade near pitch = ±90 degrees (gimbal region, Euler angles).
 - Serial reconnect assumes the device comes back under the same port name.
-- Hardware, GUI look, and rotation handedness are not human-verified yet (see checklist).
+- Hardware, GUI look, and rotation handedness are human-verified (see checklist); the gyro-bias skip-if-moving behaviour and the Python parity snippet are the remaining unverified items.
 - Also see the Fusion and Monitor sections' limitation lists.
