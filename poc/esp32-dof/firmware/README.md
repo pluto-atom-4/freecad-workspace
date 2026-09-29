@@ -22,7 +22,7 @@ Power the module from 3V3.
 
 ## Status
 
-Compiled with arduino-cli 1.5.1, esp32:esp32 3.3.12, Adafruit MPU6050 2.2.9 (with Adafruit BusIO 1.17.4 and Adafruit Unified Sensor 1.1.15): the sketch uses 308138 bytes (23%) of program storage and 14908 bytes (4%) of dynamic memory on the XIAO ESP32-C3. NOT flashed or tested on hardware. MPU-6050 support is compile-checked only and needs human hardware verification.
+Compiled with arduino-cli 1.5.1, esp32:esp32 3.3.12, Adafruit MPU6050 2.2.9 (with Adafruit BusIO 1.17.4 and Adafruit Unified Sensor 1.1.15): the sketch uses 308138 bytes (23%) of program storage and 14908 bytes (4%) of dynamic memory on the XIAO ESP32-C3. Flashed and human-verified on a real XIAO ESP32-C3 + external MPU-6050 (see `../README.md`'s Manual verification checklist, items 2–5), including the golden-frame self-test below.
 
 ## Setup (arduino-cli)
 
