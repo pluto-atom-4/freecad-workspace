@@ -484,16 +484,15 @@ Verified headlessly (no GUI, no hardware), with this method:
 
 ## NOT verified (needs a human with a display and/or the board)
 
-- Webots world look (#231): box reads level with z up, the camera framing is sensible, the orange +x nose marker is visible. (Rotation handedness itself is now human-verified — see checklist item 2 — this is only about the static visual look, e.g. from the mock demo.)
-- Firmware on real hardware, remaining items (#233, #252): the gyro-bias calibration's skip-if-moving behaviour (`INFO,gyro_cal_skipped`); the DTR/RTS reset on port open printing ROM boot text; the golden-frame self-test (`#define DOF_SELFTEST 1` / `-DDOF_SELFTEST=1`, first line must end `*52`) and the Python parity snippet in `firmware/README.md`. (I2C comms with the MPU-6050, WHO_AM_I `0x68` acceptance, and mounting sign/axis are now human-verified — see checklist items 2 and 3.)
-- Serial reconnect (#235) with a real USB unplug; ModemManager grabbing `/dev/ttyACM*`; the `dialout` group on the test machine.
-- `run_gui.sh` and `run_mock_demo.sh` in a real GUI session (the Webots process-group cleanup on exit and the bind timing when Webots starts paused are unobserved).
+- Firmware on real hardware, remaining item (#233, #252): the gyro-bias calibration's skip-if-moving behaviour (`INFO,gyro_cal_skipped`); the DTR/RTS reset on port open printing ROM boot text; the golden-frame self-test (`#define DOF_SELFTEST 1` / `-DDOF_SELFTEST=1`, first line must end `*52`) and the Python parity snippet in `firmware/README.md`. (I2C comms with the MPU-6050, WHO_AM_I `0x68` acceptance, and mounting sign/axis are now human-verified — see checklist items 2 and 3.)
+- ModemManager grabbing `/dev/ttyACM*` and the `dialout` group specifically interfering: not triggered either way in the runs done so far (serial reconnect itself is now human-verified — see checklist item 4).
+- The Webots process-group cleanup on exit and the bind timing when Webots starts paused (narrower claims than "does the mock demo work", which is now human-verified — see checklist item 1) are unobserved.
 
 ## Manual verification checklist (human)
 
 Tick a box only after doing it yourself. Nothing here was done by the automation that wrote this section. Record results in the "Verification log" below and as a comment on issue #227.
 
-- [ ] **1. Mock demo tilts the box smoothly** (needs display, no hardware)
+- [x] **1. Mock demo tilts the box smoothly** (needs display, no hardware)
   Do: `cd poc/esp32-dof && ./run_mock_demo.sh` (add `DOF_FOLLOWER_DEBUG=1` in front to see rotation logs).
   Pass: Webots window opens with a level blue box (top face up, z up) with a visible orange nose block at the +x end, floor grey, camera framing shows the whole box; console shows `esp32_dof_follower: listening on 127.0.0.1:5005` then `first orientation message received`; box tilts smoothly (no jumps) about roughly ±29° roll (period 5 s) and ±17° pitch (period 10 s); Ctrl-C prints the summary (`bad_frames 0`, `published` roughly 50/s) and the Webots window closes (check `pgrep -a webots` afterwards: no leftover process).
   If it fails: box static -> simulation paused (press Play) or controller not bound (check `ss -uln | grep 5005`, port in use, Webots console errors); world look wrong -> fix `webots/worlds/esp32_dof.wbt` (#231), not the controller; jerky -> note timing and open an issue.
@@ -506,7 +505,7 @@ Tick a box only after doing it yourself. Nothing here was done by the automation
   Do: flash the sketch, `dof_monitor.py --list-ports`, then `dof_monitor.py --port /dev/ttyACM0` (no publish): expect ~50 Hz, `drops 0`; then run with `--publish` alongside `./webots/run_gui.sh`; hold the board flat and still for a second, then tilt it.
   Pass: box follows the same direction and magnitude of roll and pitch; yaw drift over minutes is expected and NOT a failure.
   If it fails: IMU not found -> `ERR,imu_init` every second (wiring, address 0x68/0x69, 3V3, or the library rejecting the chip; a following `ERR,imu_whoami,0xNN` line reports what the chip answered); garbled frames -> use the golden-frame self-test and the parity snippet in `firmware/README.md`; no port -> Troubleshooting.
-- [ ] **4. Unplug USB, monitor reconnects** (needs the board)
+- [x] **4. Unplug USB, monitor reconnects** (needs the board)
   Do: run `dof_monitor.py --port /dev/ttyACM0 --publish`, unplug the USB cable, wait ~5 s, plug it back in.
   Pass: stderr shows reconnect messages while unplugged (retries every 1 s, no traceback); after replugging, rows resume and the box follows again; the summary reports a `resets` count if the sequence restarted.
   If it fails: if the port name changes (e.g. `/dev/ttyACM1`) that is a known limitation, restart with the new port; otherwise open an issue with stderr output.
@@ -517,6 +516,8 @@ Tick a box only after doing it yourself. Nothing here was done by the automation
 |------|-----|---------|--------------------|--------------------|
 | 2026-09-29 | Akai Kaede | 3 | pass | XIAO ESP32-C3 + external MPU-6050 flashed and wired (an SSD1306 OLED was also on the breadboard/I2C bus but is not driven by this firmware). `dof_monitor.py --port ...` (no `--publish`): ~50 Hz, `drops 0`, no `ERR,imu_init`. |
 | 2026-09-29 | Akai Kaede | 2 | pass | Verified via live board tilting (item 3's method), not the documented synthetic `nc` single-pose method: tilting the board tilted the box in the correct direction (roll about the board's own +x axis, yaw about +z) with no observed sign/axis flip. |
+| 2026-09-29 | Akai Kaede | 1 | pass | `./run_mock_demo.sh`: box wobbled smoothly, no jumps; confirmed on the XIAO ESP32-C3 setup (Webots + monitor on the same host as documented). |
+| 2026-09-29 | Akai Kaede | 4 | pass | Unplugged/replugged the USB cable multiple times during `dof_monitor.py --port ... --publish`; monitor reconnected each time. |
 |      |     |         |                    |                    |
 
 ## Troubleshooting
