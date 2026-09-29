@@ -484,10 +484,8 @@ Verified headlessly (no GUI, no hardware), with this method:
 
 ## NOT verified (needs a human with a display and/or the board)
 
-- Webots world look (#231): box reads level with z up, the camera framing is sensible, the orange +x nose marker is visible.
-- Rotation handedness in the GUI (#232, #236): roll = pi/2 tilts about +x with the nose staying on +x; yaw = pi/2 points the nose to +y (North, ENU).
-- Simulation running vs paused: the controller is not stepped while paused (box will not move). `run_gui.sh` uses `--mode=realtime` so it should start running; not yet seen in the GUI.
-- Firmware on real hardware (#233, #252): I2C comms with the MPU-6050 (WHO_AM_I `0x68`, library `begin()` accepting the chip); gyro-bias calibration; sign and axis of the mounting; the DTR/RTS reset on port open printing ROM boot text (harmless: those lines fail parsing and are counted as `bad_frames`); the golden-frame self-test (`#define DOF_SELFTEST 1`, first line must end `*52`) and the Python parity snippet in `firmware/README.md`.
+- Webots world look (#231): box reads level with z up, the camera framing is sensible, the orange +x nose marker is visible. (Rotation handedness itself is now human-verified — see checklist item 2 — this is only about the static visual look, e.g. from the mock demo.)
+- Firmware on real hardware, remaining items (#233, #252): the gyro-bias calibration's skip-if-moving behaviour (`INFO,gyro_cal_skipped`); the DTR/RTS reset on port open printing ROM boot text; the golden-frame self-test (`#define DOF_SELFTEST 1` / `-DDOF_SELFTEST=1`, first line must end `*52`) and the Python parity snippet in `firmware/README.md`. (I2C comms with the MPU-6050, WHO_AM_I `0x68` acceptance, and mounting sign/axis are now human-verified — see checklist items 2 and 3.)
 - Serial reconnect (#235) with a real USB unplug; ModemManager grabbing `/dev/ttyACM*`; the `dialout` group on the test machine.
 - `run_gui.sh` and `run_mock_demo.sh` in a real GUI session (the Webots process-group cleanup on exit and the bind timing when Webots starts paused are unobserved).
 
@@ -499,12 +497,12 @@ Tick a box only after doing it yourself. Nothing here was done by the automation
   Do: `cd poc/esp32-dof && ./run_mock_demo.sh` (add `DOF_FOLLOWER_DEBUG=1` in front to see rotation logs).
   Pass: Webots window opens with a level blue box (top face up, z up) with a visible orange nose block at the +x end, floor grey, camera framing shows the whole box; console shows `esp32_dof_follower: listening on 127.0.0.1:5005` then `first orientation message received`; box tilts smoothly (no jumps) about roughly ±29° roll (period 5 s) and ±17° pitch (period 10 s); Ctrl-C prints the summary (`bad_frames 0`, `published` roughly 50/s) and the Webots window closes (check `pgrep -a webots` afterwards: no leftover process).
   If it fails: box static -> simulation paused (press Play) or controller not bound (check `ss -uln | grep 5005`, port in use, Webots console errors); world look wrong -> fix `webots/worlds/esp32_dof.wbt` (#231), not the controller; jerky -> note timing and open an issue.
-- [ ] **2. Rotation handedness is correct** (needs display; can use mock or `nc`)
+- [x] **2. Rotation handedness is correct** (needs display; can use mock or `nc`)
   Do: with the world running, send single poses:
   `printf '{"seq":1,"roll":1.5708,"pitch":0.0,"yaw":0.0}' | nc -u -w1 127.0.0.1 5005` then the same with roll 0 and yaw 1.5708.
   Pass: roll = pi/2 -> box rotates about its long +x axis (rolls over onto its side) and the orange nose stays at the +x end; yaw = pi/2 -> nose points along +y (the world's North/left axis), box stays level.
   If it fails: do NOT flip signs by guesswork. Open an issue with which axis/sign is wrong and fix `euler_to_axis_angle` (#232) or the `setSFRotation` call (#236) with a unit test.
-- [ ] **3. Real board: tilting the board tilts the box** (needs the board flashed and wired)
+- [x] **3. Real board: tilting the board tilts the box** (needs the board flashed and wired)
   Do: flash the sketch, `dof_monitor.py --list-ports`, then `dof_monitor.py --port /dev/ttyACM0` (no publish): expect ~50 Hz, `drops 0`; then run with `--publish` alongside `./webots/run_gui.sh`; hold the board flat and still for a second, then tilt it.
   Pass: box follows the same direction and magnitude of roll and pitch; yaw drift over minutes is expected and NOT a failure.
   If it fails: IMU not found -> `ERR,imu_init` every second (wiring, address 0x68/0x69, 3V3, or the library rejecting the chip; a following `ERR,imu_whoami,0xNN` line reports what the chip answered); garbled frames -> use the golden-frame self-test and the parity snippet in `firmware/README.md`; no port -> Troubleshooting.
@@ -517,6 +515,8 @@ Tick a box only after doing it yourself. Nothing here was done by the automation
 
 | Date | Who | Item(s) | Result (pass/fail) | Notes / issue link |
 |------|-----|---------|--------------------|--------------------|
+| 2026-09-29 | Akai Kaede | 3 | pass | XIAO ESP32-C3 + external MPU-6050 flashed and wired (an SSD1306 OLED was also on the breadboard/I2C bus but is not driven by this firmware). `dof_monitor.py --port ...` (no `--publish`): ~50 Hz, `drops 0`, no `ERR,imu_init`. |
+| 2026-09-29 | Akai Kaede | 2 | pass | Verified via live board tilting (item 3's method), not the documented synthetic `nc` single-pose method: tilting the board tilted the box in the correct direction (roll about the board's own +x axis, yaw about +z) with no observed sign/axis flip. |
 |      |     |         |                    |                    |
 
 ## Troubleshooting
