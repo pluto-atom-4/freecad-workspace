@@ -50,16 +50,16 @@ poc/servo-wheel-dof/
   README.md                                This file
   mamba-envs.yaml                          Custom schema env recipe (use lock or setup_command instead)
   mamba-envs.lock.yml                      Pinned/reproducible env export (use with `mamba env create -n servo-wheel-dof -f`)
-  run_demo.sh                              One-command demo script (not yet implemented)
+  run_demo.sh                              Headless/GUI demo launcher (--headless/--gui/DRY_RUN=1)
   webots/                                  Webots integration (world files, controllers)
     worlds/                                Webots world files (`.wbt`)
-      servo_wheel_dof.wbt                  World: procedural STS3032 servo + wheel (not yet implemented)
+      servo_wheel_dof.wbt                  World: procedural STS3032 servo + wheel, controller wired
     controllers/                           Webots robot controller scripts
       servo_wheel_dof/                     Controller directory
-        servo_wheel_dof.py                 Controller entry point (not yet implemented)
-        servo_sim.py                       Servo simulation logic (not yet implemented)
-        sensor_read.py                     Native sensor readout (not yet implemented)
-        test_servo_wheel_dof.py            Unit tests (not yet implemented)
+        servo_wheel_dof.py                 Controller entry point (only file importing `controller`)
+        servo_sim.py                       Servo motion-profile math (pure, no Webots dependency)
+        sensor_read.py                     Sensor readback + validation (pure, no Webots dependency)
+        test_servo_wheel_dof.py            Unit tests (22 passing)
 ```
 
 ## Reproducing end to end
