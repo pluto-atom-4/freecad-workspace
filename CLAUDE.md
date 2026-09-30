@@ -2,24 +2,6 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Workspace Structure
-
-```
-freecad-workspace/
-├── freecad-mcp-server/        # FreeCAD MCP Server dev (mamba/conda only)
-├── inverted-pendulum-project/ # Pendulum simulation & modeling (mamba/conda only)
-├── .gitignore
-├── README.md
-└── CLAUDE.md
-```
-
-Both projects are **mamba-only** — no `uv`, `pyproject.toml`, `uv.lock`, or `.venv` anywhere in
-this workspace. Each has its own env (`freecad-mcp`, `pendulum-tools`), its own
-`mamba-envs.yaml` (recipe) + `mamba-envs.lock.yml` (pinned export). FreeCAD itself is never
-installed into either env: `freecad-mcp-server` talks to it externally over XML-RPC/socket (GUI
-AppImage); `inverted-pendulum-project` invokes it externally as a headless `freecadcmd`
-subprocess, no MCP in its shipped pipeline. Don't assume `uv sync`/`uv run` work here.
-
 ## Projects Overview
 
 **freecad-mcp-server** — MCP bridge for AI assistants to control FreeCAD. PyPI package
@@ -83,14 +65,6 @@ full tool catalog (150+ tools) rather than enumerating it here.
 - `.gitignore` excludes `.FCStd`/`.FCBak` files, Python envs, build artifacts — these live on
   disk locally only; regenerate via each project's `0N_*.py` scripts, don't expect them tracked.
 
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `<project>/mamba-envs.yaml` | env recipe (unpinned) |
-| `<project>/mamba-envs.lock.yml` | env, pinned/reproducible export |
-| `.mcp.json` | MCP server configuration (project-level) |
-
 ## Troubleshooting
 
 **MCP client can't connect to FreeCAD:** verify FreeCAD's MCP bridge is running (console shows
@@ -103,86 +77,15 @@ full tool catalog (150+ tools) rather than enumerating it here.
 **pendulum-tools env broken:**
 `mamba env remove -n pendulum-tools -y && mamba env create -n pendulum-tools -f inverted-pendulum-project/mamba-envs.lock.yml`
 
-## FreeCAD Live Bridge — Known Limitations (freecad-mcp-workbench 0.6.2)
+## FreeCAD Live Bridge
 
-The live `mcp__freecad__*` bridge is occasionally borrowed by `inverted-pendulum-project` as an
-ad-hoc human-review aid (its own pipeline stays headless-only). Found while doing so:
+Known limitations of the live `mcp__freecad__*` bridge live in `inverted-pendulum-project/CLAUDE.md`
 
-- **`get_screenshot` is broken** (`AttributeError: 'dict' object has no attribute '__name__'` on
-  every call). Workaround: `execute_python` → `FreeCADGui.ActiveDocument.ActiveView.saveImage(path, w, h)`
-  directly, then read the file back off disk.
-- **`inspect_object` errors on `App::Part` container objects** (fine on `Part::Feature`/`Mesh::Feature`).
-  Workaround: read `.Group`/`.Placement` etc. directly via `execute_python`.
-- **Visibility and camera are GUI-only state** — no `ViewObject`/3D view exists in a true headless
-  `freecadcmd` run. Guard any such code with `if not getattr(App, "GuiUp", False): return` (see
-  `07_create_body_and_wheels.py`'s `_set_default_visibility()`/`_set_camera_framing()`). A camera
-  set this way only embeds in the `.FCStd` if the save itself happens under a GUI.
-- **A live GUI auto-tessellates shapes for display, which can shrink `Shape.BoundBox` reads** —
-  observed a 70.00mm cylinder reading ~69.90mm. Validate dimensions against a true headless run,
-  not a live-bridge session; when tessellating in a script, always tessellate a `.copy()` of the
-  shape, never `obj.Shape` itself (same contamination happens self-inflicted, even headlessly).
-- **To produce a fully-viewable `.FCStd` (visible objects + framed camera baked in), run the
-  generator script itself through the bridge** — its own `App.GuiUp`-guarded code needs a GUI to
-  fire. `execute_python(code="exec(open(path).read())")` alone silently no-ops: `__name__` in
-  that context is `"builtins"`, not `"__main__"`, so the script's `if __name__ == "__main__":`
-  guard never runs. Force it explicitly:
-  `exec(compile(open(path).read(), path, 'exec'), {'__name__': '__main__', '__file__': path})`.
-- **A `Mesh::Feature`'s own `Placement` is ignored when nested in an `App::Part`** — only the
-  immediate parent container's `getGlobalPlacement()` applied directly to its raw `.Mesh` data
-  matches what actually renders (verified by isolating one mesh + one plate, comparing to a
-  screenshot). `Part::Feature` follows the normal convention (own `Placement` composes
-  normally); only `Mesh::Feature` has this quirk. Not fully explained, but reproducible.
-- **`Mesh.transform()` with a reflection matrix (e.g. `Matrix().scale(-1,1,1)`) can silently
-  produce wrongly-offset geometry** on some meshes (observed: one coordinate shifted by a large,
-  consistent, unexplained amount) — a real bug, not a math error. Mirror via raw point data
-  instead: negate the coordinate on every vertex from `mesh.Topology`, reverse each facet's
-  vertex order to fix normals, rebuild with `Mesh.Mesh((points, facets))`.
-- **`distToShape() == 0` doesn't distinguish touching from overlapping** — for a real collision
-  check, use `shape_a.common(shape_b).Volume`; nonzero means genuine interpenetration, zero means
-  clear (even if `distToShape` also read 0).
-- **`Part.Compound` has no `.CenterOfMass` or `.MatrixOfInertia` attributes** (raises `AttributeError`
-  on either), even though it exposes `.Volume`. A `Part.Compound` typically wraps simpler solids
-  (e.g. a single `Part.Solid`). Workaround: extract `.Solids[0]` (or iterate `.Solids` for multi-body
-  compounds) and call `.CenterOfMass`/`.MatrixOfInertia` on the `Part.Solid` directly. Confirmed
-  empirically (issue #96): a `Part.Solid`'s `.MatrixOfInertia` is already about its own `CenterOfMass`,
-  no reverse parallel-axis shift needed when combining multiple solids via the parallel-axis theorem.
-- **A generator script that reuses FreeCAD objects by name (an idempotency convenience, so reruns don't duplicate/auto-rename objects) can silently keep stale data after you change an on-disk input file it originally imported from** — a rerun that finds the object already present skips re-reading the source file entirely, no error or warning. Confirmed instance: `inverted-pendulum-project/03_Parts/Generators/03_link_servo_to_assembly.py`'s `create_servo_body()` reuses `STS3032_Mount`'s mesh children by name and never re-imports the `.stl` once they exist — repairing the source STL (issue #76) and rerunning the pipeline kept the old mesh data all the way through to the final assembly until the cached objects were explicitly deleted first. See `inverted-pendulum-project/DESIGN.md`'s Known Limitations table for the exact fix. General rule: after replacing/repairing any file a "reuse existing objects" script consumes, verify the NEXT run actually re-imports (check its console output for "reusing" vs "created"/"imported", or compare a concrete property like `Mesh.CountFacets`/`Shape.BoundBox` against the new source) rather than trusting a clean rerun + passing tests as proof the new data propagated.
-- **Assembly::JointGroup/Joint object creation (native Assembly workbench, used by `03_Parts/Generators/08_configure_assembly_joints.py`) segfaults in true headless `freecadcmd` 1.1.3 whenever the `JointObject` module is imported** — reproducible and isolated via bisection: `doc.addObject('Assembly::JointGroup', ...)` alone works fine headlessly; add `import JointObject` (needed for the Joint proxy class) and any subsequent Assembly/JointGroup object creation crashes the process with "Application unexpectedly terminated" and no Python traceback — not an exception catchable in the script. The same code runs without crashing through the live FreeCAD MCP bridge (GUI-backed, `App.GuiUp=True`). Until FreeCAD fixes this upstream, any script creating Assembly workbench Joint objects must run via the bridge's `execute_python` (forcing `__name__ == "__main__"` per this file's documented compile/exec trick), not a plain `freecadcmd -c` invocation.
-- **A live `.FCStd` document's own mesh data and a separately-regenerated/re-centered STL asset used for export (e.g., `regenerate_servo_visual_mesh_local_frame.py`'s output) are DIFFERENT vertex sets in different local frames** — an export composition origin correct for one is not automatically correct for the other. Example: Issue #148 (servo visual mesh origin fix) required recentering the `feetech-STS3032-visual.stl` file independently, yielding a new BoundBox center; composing with the live `.FCStd` mesh's center instead produced a visually-correct but numerically-wrong placement in the exported URDF. Always verify export logic against the actual regenerated asset's frame, not the document-embedded mesh.
+## GitHub Issue Workflow
 
-## Claude Agents & Tools
-
-Local `.claude/agents/` team (configured in `.claude/settings.json`): architect (Sonnet), builder/reviewer/investigator (Haiku). Distinct from `caveman:cavecrew-*` plugin agents — cavecrew-builder is surgical (1–2 files only), cavecrew-investigator is read-only/location-only, cavecrew-reviewer is findings-only.
-
-## GitHub Issue Workflow (investigate → plan → build)
-
-The repeated cycle for turning a flaw/lead into a merged fix is codified as the project-level
-Claude Code Skill `investigate-plan-build` (`.claude/skills/investigate-plan-build/SKILL.md`,
-invoke as `/investigate-plan-build`). It's written repo-agnostic (falls back to generic
-architect/builder/reviewer agents if this repo's local `Architect`/`Builder` team or a
-`cavecrew-reviewer`-style plugin aren't present), so it's portable to other repos too. Summary
-for sessions that don't invoke it by name:
-
-- File a short GitHub issue (sub-issue of a parent if part of a tracked effort) → dispatch
-  `Architect` (read-only) for findings (file:line) + a plan + only genuine human decision-forks
-  (never manufactured ones) → surface forks via `AskUserQuestion` (≤4 per call, recommended
-  option first) → dispatch `Builder` to implement on a branch, add tests, run the suite, and
-  open a PR with "Closes #N" and this session's real attribution footer.
-- Optional capped review loop (`caveman:cavecrew-reviewer` ↔ `Builder`, default cap 4 rounds,
-  stop early once clean).
-- The PAT can't merge PRs — a human always merges manually. Never treat a PR as merged on
-  say-so; verify with `mcp__github__pull_request_read` (method `get`) first.
-- After a confirmed merge, regenerate any affected downstream artifacts and relaunch inspection
-  tooling in the background — an agent reports launch success only, never visual correctness.
-- If fresh human inspection shows the issue persists or something new surfaces, re-loop the
-  whole cycle; keep the umbrella issue open until genuinely resolved, and correct a wrong
-  close/assessment with an explicit comment rather than a silent reopen.
-
-## References
-
-- [FreeCAD](https://www.freecadweb.org/)
-- [Robust MCP Server Docs](https://spkane.github.io/freecad-addon-robust-mcp-server/)
-- [MCP Protocol](https://modelcontextprotocol.io/)
+Use the `investigate-plan-build` skill (`.claude/skills/investigate-plan-build/SKILL.md`, invoke as
+`/investigate-plan-build`). Repo rules: the PAT can't merge PRs — a human always merges manually;
+verify with `mcp__github__pull_request_read` (method `get`) before treating a PR as merged.
 
 <!-- code-review-graph MCP tools -->
 ## MCP Tools: code-review-graph
@@ -208,19 +111,6 @@ gives you structural context (callers, dependents, test coverage) that file sear
 - When the graph and the source disagree, the source wins. The graph may be stale or may not
   model that relationship.
 - An empty graph result can mean "not indexed" or "not statically visible", not "does not exist".
-
-### Key Tools
-
-| Tool | Use when |
-| ------ | ---------- |
-| `detect_changes_tool` | Reviewing code changes — gives risk-scored analysis |
-| `get_review_context_tool` | Need source snippets for review — token-efficient |
-| `get_impact_radius_tool` | Understanding blast radius of a change |
-| `get_affected_flows_tool` | Finding which execution paths are impacted |
-| `query_graph_tool` | Tracing callers, callees, imports, tests, dependencies |
-| `semantic_search_nodes_tool` | Finding functions/classes by name or keyword |
-| `get_architecture_overview_tool` | Understanding high-level codebase structure |
-| `refactor_tool` | Planning renames, finding dead code |
 
 ### Workflow
 
