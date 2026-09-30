@@ -113,5 +113,5 @@ DEF SERVO_WHEEL_DOF Robot {
     }
   ]
   name "servo_wheel_dof"
-  controller "<none>"
+  controller "servo_wheel_dof"
 }
