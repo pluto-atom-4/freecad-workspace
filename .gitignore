@@ -89,6 +89,11 @@ issue-content*.json
 # poc/esp32-dof (issue #227) — simulation logs
 /poc/esp32-dof/webots/*.log*
 
+# poc/servo-wheel-dof (issue #258) — Webots temporary files
+/poc/servo-wheel-dof/webots/worlds/.*.wbproj
+# poc/servo-wheel-dof (issue #258) — simulation logs
+/poc/servo-wheel-dof/webots/*.log*
+
 feat-idea.md
 
 NOTICE
