@@ -12,11 +12,15 @@
 #   PositionSensor  name: "wheel_sensor"
 #
 # Frame: ENU (x East, y North, z Up), matching this repo's other Webots worlds.
-# The wheel is a flat turntable on the +Z (top) face of the servo body. Its hinge
-# axis is Z (Up). A Webots Cylinder's axis is local Z, so the mesh axis already
-# matches the hinge axis: do NOT add a `rotation` to the wheel Solid. The
-# HingeJoint anchor and the wheel Solid translation must stay identical
-# (0 0 0.026 = body top face z=0.02 + half the wheel height 0.006).
+# The wheel stands UPRIGHT beside the servo body, its disc plane vertical, with
+# its rim (radius 0.03) resting on the floor at z=0. The Robot is rotated +90 deg
+# about X (rotation 1 0 0 1.57079633) and lifted to z=0.03 (= wheel radius), so
+# the Robot-local hinge axis Z maps to world -Y (horizontal). Wheel centre is at
+# world (0, -0.026, 0.03); the body box spans z 0.02..0.04, y -0.02..0.02. A
+# Webots Cylinder's axis is local Z, so do NOT add a `rotation` to the wheel
+# Solid. HingeJoint anchor and wheel translation must stay identical
+# (0 0 0.026 = body face 0.02 + half the wheel height 0.006). The Robot is
+# static (no Physics), so the wheel spins in place; it does not roll.
 
 WorldInfo {
   info [
@@ -63,7 +67,8 @@ Solid {
 }
 
 DEF SERVO_WHEEL_DOF Robot {
-  translation 0 0 0.02
+  translation 0 0 0.03
+  rotation 1 0 0 1.57079633
   children [
     Shape {
       appearance Appearance {
