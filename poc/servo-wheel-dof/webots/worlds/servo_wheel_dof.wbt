@@ -3,17 +3,20 @@
 # servo-wheel-dof Webots POC (issue #261, sub-issue of #258).
 # Static geometry only: procedural STS3032 servo body (box/cylinder primitives,
 # no PROTO/mesh, per locked decision on #258) with a wheel attached via a
-# HingeJoint + RotationalMotor + PositionSensor. Controller wiring is deferred
-# to a later sub-issue (#265): the `controller` field below is intentionally
-# "<none>".
+# HingeJoint + RotationalMotor + PositionSensor. The Robot's `controller` field
+# is wired to "servo_wheel_dof" (controllers/servo_wheel_dof/servo_wheel_dof.py,
+# added in sub-issue #265).
 #
 # Device names (exact, case-sensitive -- a later controller looks these up):
 #   RotationalMotor name: "wheel_motor"
 #   PositionSensor  name: "wheel_sensor"
 #
 # Frame: ENU (x East, y North, z Up), matching this repo's other Webots worlds.
-# The wheel's hinge axis is Y (North); the wheel is mounted on the +X (East)
-# face of the servo body and rolls toward +X/-X.
+# The wheel is a flat turntable on the +Z (top) face of the servo body. Its hinge
+# axis is Z (Up). A Webots Cylinder's axis is local Z, so the mesh axis already
+# matches the hinge axis: do NOT add a `rotation` to the wheel Solid. The
+# HingeJoint anchor and the wheel Solid translation must stay identical
+# (0 0 0.026 = body top face z=0.02 + half the wheel height 0.006).
 
 WorldInfo {
   info [
@@ -74,8 +77,8 @@ DEF SERVO_WHEEL_DOF Robot {
     }
     HingeJoint {
       jointParameters HingeJointParameters {
-        axis 0 1 0
-        anchor 0.05 0 0.01
+        axis 0 0 1
+        anchor 0 0 0.026
       }
       device [
         RotationalMotor {
@@ -86,7 +89,7 @@ DEF SERVO_WHEEL_DOF Robot {
         }
       ]
       endPoint Solid {
-        translation 0.05 0 0.01
+        translation 0 0 0.026
         children [
           Shape {
             appearance Appearance {
