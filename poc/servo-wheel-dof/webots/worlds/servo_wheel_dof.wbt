@@ -1,0 +1,117 @@
+#VRML_SIM R2025a utf8
+
+# servo-wheel-dof Webots POC (issue #261, sub-issue of #258).
+# Static geometry only: procedural STS3032 servo body (box/cylinder primitives,
+# no PROTO/mesh, per locked decision on #258) with a wheel attached via a
+# HingeJoint + RotationalMotor + PositionSensor. Controller wiring is deferred
+# to a later sub-issue (#265): the `controller` field below is intentionally
+# "<none>".
+#
+# Device names (exact, case-sensitive -- a later controller looks these up):
+#   RotationalMotor name: "wheel_motor"
+#   PositionSensor  name: "wheel_sensor"
+#
+# Frame: ENU (x East, y North, z Up), matching this repo's other Webots worlds.
+# The wheel's hinge axis is Y (North); the wheel is mounted on the +X (East)
+# face of the servo body and rolls toward +X/-X.
+
+WorldInfo {
+  info [
+    "servo-wheel-dof (issue #261): procedural STS3032 servo + wheel, static geometry only."
+  ]
+  title "servo_wheel_dof"
+  coordinateSystem "ENU"
+  basicTimeStep 16
+}
+
+Viewpoint {
+  orientation -0.3 0.3 0.9 1.2
+  position -0.25 -0.35 0.35
+}
+
+Background {
+  skyColor [0.6 0.75 0.95]
+}
+
+DirectionalLight {
+  direction -0.5 -0.5 -1.0
+  intensity 1.0
+  ambientIntensity 0.4
+}
+
+Solid {
+  translation 0 0 -0.01
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.75 0.75 0.75
+        }
+      }
+      geometry Box {
+        size 2.0 2.0 0.02
+      }
+    }
+  ]
+  name "floor"
+  boundingObject Box {
+    size 2.0 2.0 0.02
+  }
+}
+
+DEF SERVO_WHEEL_DOF Robot {
+  translation 0 0 0.02
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.15 0.15 0.15
+        }
+      }
+      geometry Box {
+        size 0.04 0.02 0.04
+      }
+    }
+    HingeJoint {
+      jointParameters HingeJointParameters {
+        axis 0 1 0
+        anchor 0.025 0 0
+      }
+      device [
+        RotationalMotor {
+          name "wheel_motor"
+        }
+        PositionSensor {
+          name "wheel_sensor"
+        }
+      ]
+      endPoint Solid {
+        translation 0.025 0 0
+        children [
+          Shape {
+            appearance Appearance {
+              material Material {
+                diffuseColor 0.05 0.05 0.05
+              }
+            }
+            geometry Cylinder {
+              radius 0.03
+              height 0.012
+            }
+          }
+        ]
+        name "wheel"
+        boundingObject Cylinder {
+          radius 0.03
+          height 0.012
+        }
+        physics Physics {
+          density -1
+          mass 0.05
+        }
+      }
+    }
+  ]
+  name "servo_wheel_dof"
+  controller "<none>"
+}
