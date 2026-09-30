@@ -53,11 +53,11 @@ poc/servo-wheel-dof/
   run_demo.sh                              One-command demo script (not yet implemented)
   webots/                                  Webots integration (world files, controllers)
     worlds/                                Webots world files (`.wbt`)
-      servo_wheel_dof.wbt                  World: procedural STS3032 servo + wheel (not yet implemented)
+      servo_wheel_dof.wbt                  World: procedural STS3032 servo + wheel
     controllers/                           Webots robot controller scripts
       servo_wheel_dof/                     Controller directory
-        servo_wheel_dof.py                 Controller entry point (not yet implemented)
-        servo_sim.py                       Servo simulation logic (not yet implemented)
-        sensor_read.py                     Native sensor readout (not yet implemented)
-        test_servo_wheel_dof.py            Unit tests (not yet implemented)
+        servo_wheel_dof.py                 Controller entry point
+        servo_sim.py                       Servo simulation logic
+        sensor_read.py                     Native sensor readout
+        test_servo_wheel_dof.py            Unit tests
 ```
