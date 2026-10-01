@@ -127,7 +127,6 @@ class TestParseRejects:
         """Each of the four keys is required, including wheel_angle."""
         obj = {k: v for k, v in VALID.items() if k != key}
         assert parse_imu_wheel_msg(_encode(obj)) is None
-        assert parse_imu_wheel_msg(_encode(obj)) is None
 
     @pytest.mark.parametrize("key", KEYS)
     def test_bool_rejected(self, key):
