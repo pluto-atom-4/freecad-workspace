@@ -21,6 +21,8 @@
 # Solid. HingeJoint anchor and wheel translation must stay identical
 # (0 0 0.026 = body face 0.02 + half the wheel height 0.006). The Robot is
 # static (no Physics), so the wheel spins in place; it does not roll.
+# The Robot is a supervisor: the controller sets the Robot rotation and
+# translation each step.
 # Sign convention: the hinge axis is Robot-local +Z = world -Y, so positive motor
 # velocity / wheel_sensor angle is a right-hand rotation about world -Y: the wheel
 # top moves toward -X, counter-clockwise seen from the -Y camera. The red box on the
@@ -142,4 +144,5 @@ DEF SERVO_WHEEL_DOF Robot {
   ]
   name "servo_wheel_dof"
   controller "servo_wheel_dof"
+  supervisor TRUE
 }
