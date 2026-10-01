@@ -1,11 +1,11 @@
 #VRML_SIM R2025a utf8
 
 # servo-wheel-dof Webots POC (issue #261, sub-issue of #258).
-# Static geometry only: procedural STS3032 servo body (box/cylinder primitives,
-# no PROTO/mesh, per locked decision on #258) with a wheel attached via a
-# HingeJoint + RotationalMotor + PositionSensor. The Robot's `controller` field
-# is wired to "servo_wheel_dof" (controllers/servo_wheel_dof/servo_wheel_dof.py,
-# added in sub-issue #265).
+# Procedural STS3032 servo body (box/cylinder primitives, no PROTO/mesh, per
+# locked decision on #258) with a wheel attached via a HingeJoint +
+# RotationalMotor + PositionSensor. The Robot's `controller` field is wired to
+# "servo_wheel_dof" (controllers/servo_wheel_dof/servo_wheel_dof.py, added in
+# sub-issue #265).
 #
 # Device names (exact, case-sensitive -- a later controller looks these up):
 #   RotationalMotor name: "wheel_motor"
@@ -21,10 +21,15 @@
 # Solid. HingeJoint anchor and wheel translation must stay identical
 # (0 0 0.026 = body face 0.02 + half the wheel height 0.006). The Robot is
 # static (no Physics), so the wheel spins in place; it does not roll.
+# Sign convention: the hinge axis is Robot-local +Z = world -Y, so positive motor
+# velocity / wheel_sensor angle is a right-hand rotation about world -Y: the wheel
+# top moves toward -X, counter-clockwise seen from the -Y camera. The red box on the
+# wheel rim (Transform at wheel-local 0.024 0 0) is a visual-only direction marker;
+# it moves up during the first positive half-cycle of the sinusoid.
 
 WorldInfo {
   info [
-    "servo-wheel-dof (issue #261): procedural STS3032 servo + wheel, static geometry only."
+    "servo-wheel-dof (issue #261): procedural STS3032 servo + wheel with active controller."
   ]
   title "servo_wheel_dof"
   coordinateSystem "ENU"
@@ -96,6 +101,21 @@ DEF SERVO_WHEEL_DOF Robot {
       endPoint Solid {
         translation 0 0 0.026
         children [
+          Transform {
+            translation 0.024 0 0
+            children [
+              Shape {
+                appearance Appearance {
+                  material Material {
+                    diffuseColor 1 0 0
+                  }
+                }
+                geometry Box {
+                  size 0.006 0.006 0.014
+                }
+              }
+            ]
+          }
           Shape {
             appearance Appearance {
               material Material {
