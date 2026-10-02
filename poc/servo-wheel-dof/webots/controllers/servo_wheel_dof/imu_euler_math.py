@@ -4,85 +4,9 @@ purpose, issue #285, sub-issue of #258, and "no controller, no numpy"
 converts roll, pitch and yaw to Webots axis-angle (x, y, z, angle). #291 and #286 will call it
 """
 
-
 from __future__ import annotations
 
-import json
 import math
-from typing import Optional
-
-
-def parse_orientation_msg(data: bytes) -> Optional[tuple[float, float, float]]:
-    """
-    Parse a UDP JSON datagram to extract roll, pitch, yaw Euler angles.
-
-    Args:
-        data: Byte string containing JSON payload.
-
-    Returns:
-        Tuple (roll, pitch, yaw) in radians, or None if parsing/validation fails.
-        - Accepts ints and floats for angle values; strings, null, bool rejected.
-        - Extra keys in the JSON are ignored.
-        - seq key is optional (ignored if present).
-        - Rejects NaN, ±Infinity, and values that overflow to infinity.
-
-    Raises:
-        None (all errors return None).
-    """
-
-    def _reject_constant(name: str) -> None:
-        """Reject NaN/Infinity during JSON parsing."""
-        raise ValueError(f"non-finite literal: {name}")
-
-    # Parse JSON with rejection of NaN/Infinity literals
-    try:
-        obj = json.loads(data, parse_constant=_reject_constant)
-    except (ValueError, TypeError, RecursionError):
-        return None
-
-    # Top-level must be a dict
-    if not isinstance(obj, dict):
-        return None
-
-    # Extract roll, pitch, yaw with type checking
-    roll_val = None
-    pitch_val = None
-    yaw_val = None
-
-    for key, var_name in [("roll", "roll"), ("pitch", "pitch"), ("yaw", "yaw")]:
-        v = obj.get(key)
-
-        # Reject bool (which is a subclass of int in Python)
-        if isinstance(v, bool):
-            return None
-
-        # Accept int or float only
-        if not isinstance(v, (int, float)):
-            return None
-
-        # Convert to float
-        try:
-            f = float(v)
-        except (OverflowError, ValueError):
-            return None
-
-        # Reject non-finite values
-        if not math.isfinite(f):
-            return None
-
-        if var_name == "roll":
-            roll_val = f
-        elif var_name == "pitch":
-            pitch_val = f
-        elif var_name == "yaw":
-            yaw_val = f
-
-    # All three values must have been present
-    if roll_val is None or pitch_val is None or yaw_val is None:
-        return None
-
-    return (roll_val, pitch_val, yaw_val)
-
 
 def euler_to_axis_angle(
     roll: float, pitch: float, yaw: float
