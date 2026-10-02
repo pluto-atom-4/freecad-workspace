@@ -1,12 +1,29 @@
 #!/usr/bin/env python3
 """
-purpose, issue #285, sub-issue of #258, and "no controller, no numpy"
-converts roll, pitch and yaw to Webots axis-angle (x, y, z, angle). #291 and #286 will call it
+Pure Euler-to-axis-angle conversion for the servo-wheel-dof POC (issue #285,
+sub-issue of #258).
+
+Converts roll, pitch and yaw (ZYX, radians) to Webots axis-angle
+(x, y, z, angle). Used by #291 (upright pose) and #286 (follower controller).
+Contains no Webots, serial or numpy dependency (must NOT `import controller`).
+
+COPIED (not imported) from esp32-dof. Fixes must be mirrored by hand:
+  - poc/esp32-dof/webots/controllers/esp32_dof_follower/dof_webots_math.py
+    (euler_to_axis_angle)
+
+Convention: R = Rz(yaw) * Ry(pitch) * Rx(roll); angle in [0, pi] (w >= 0
+canonical form); a zero or near-zero rotation returns (0.0, 0.0, 1.0, 0.0).
+
+Usage:
+    from imu_euler_math import euler_to_axis_angle
+
+    x, y, z, angle = euler_to_axis_angle(roll, pitch, yaw)
 """
 
 from __future__ import annotations
 
 import math
+
 
 def euler_to_axis_angle(
     roll: float, pitch: float, yaw: float
