@@ -1,170 +1,223 @@
 # Servo-Wheel DOF Webots POC (issue #258)
 
-Procedural STS3032 servo-driven wheel DOF proof-of-concept in Webots; no PROTO/mesh assets, native-sensor-only, no IMU-frame emulation.
+Procedural STS3032 servo + wheel in Webots. The wheel stands upright, rim on the
+floor, and a supervisor controller follows UDP IMU + wheel-angle datagrams
+(mock or replayed data today). No PROTO or mesh assets.
 
 ## Purpose
 
-Establish a minimal, testable framework for:
-- **Procedural STS3032 servo model**: Servo geometry and joint built entirely in code within Webots, no external PROTO files or mesh assets imported.
-- **Native Webots sensor readout**: PositionSensor and rotational motor feedback only; no synthetic IMU-frame emulation layer.
-- **Servo-driven wheel control**: Demonstrates end-to-end control of a wheel degree-of-freedom actuated by a procedural servo model, with sensor feedback loop closed in simulation.
+- **Upright follower mode**: the controller sets the Robot pose from IMU pitch and
+  yaw and drives the wheel hinge to the received `wheel_angle`.
+- **Hardware-free**: `monitor/mock_publisher.py` supplies synthetic or replayed data.
+- **Long-term goal**: data from an XIAO ESP32-C3 + MPU6050. The MPU6050 is 6-DOF
+  (accel + gyro), with no magnetometer. Today ONLY mock/replay data is supported;
+  nothing in this POC reads serial.
 
-Status: #258 is the umbrella issue. #259 (mamba environment recipe) is complete. #260 (this README) is in progress. Verification and usage workflows are deferred to #267.
-
-## Scope
-
-- **Procedural servo geometry and joints** built in Python/Webots code only; no imported PROTO workbench objects or mesh files.
-- **Native Webots sensors only**: PositionSensor for joint angle readout, motor torque control; explicitly NOT an IMU-frame emulation layer or synthetic sensor fusion.
-- **POC scope**: Procedural model and sensor integration only. No verification checklists, usage documentation, or manual testing procedures yet; those belong in #267.
+Status: #258 is the umbrella issue. The human GUI checklist is tracked in #289.
 
 ## Env setup
 
-Mamba environment `servo-wheel-dof` with Python 3.11, NumPy, and pytest for simulation scripting and testing. Webots is installed separately outside this environment.
-
-### One-time installation
+Mamba environment `servo-wheel-dof` (Python 3.11, NumPy, pytest). Webots is
+installed separately; its `controller` module exists only inside Webots.
 
 ```bash
-# Option 1: Use the pinned lock file (recommended)
+# Option 1: pinned lock file (recommended)
 mamba env create -n servo-wheel-dof -f poc/servo-wheel-dof/mamba-envs.lock.yml
-
-# Option 2: Use the setup_command from mamba-envs.yaml
+# Option 2: manual
 mamba create -n servo-wheel-dof -c conda-forge python=3.11 "numpy>=1.24" "pytest>=9.1" -y
-```
-
-⚠️ **Note**: This recipe uses a custom YAML schema (to match `inverted-pendulum-project`'s structure) — `mamba env create -f mamba-envs.yaml` will **fail**. Use the lock file or the manual `setup_command` above instead.
-
-Webots' `controller` Python module ships inside the Webots install tree (`$WEBOTS_HOME/lib/controller/python`) and is added to PYTHONPATH at controller runtime — it is NOT installed into this mamba environment.
-
-### Verification
-
-```bash
 mamba run -n servo-wheel-dof python -c "import numpy, pytest; print('OK')"
 ```
 
-Should print `OK`.
+`mamba env create -f mamba-envs.yaml` does NOT work (custom schema); use the lock
+file or the manual command. The last command should print `OK`.
 
 ## Layout
 
 ```
 poc/servo-wheel-dof/
-  README.md                                This file
-  mamba-envs.yaml                          Custom schema env recipe (use lock or setup_command instead)
-  mamba-envs.lock.yml                      Pinned/reproducible env export (use with `mamba env create -n servo-wheel-dof -f`)
-  run_demo.sh                              Headless/GUI demo launcher (--headless/--gui/DRY_RUN=1)
-  webots/                                  Webots integration (world files, controllers)
-    worlds/                                Webots world files (`.wbt`)
-      servo_wheel_dof.wbt                  World: procedural STS3032 servo + wheel, controller wired
-    controllers/                           Webots robot controller scripts
-      servo_wheel_dof/                     Controller directory
-        servo_wheel_dof.py                 Controller entry point (only file importing `controller`)
-        servo_sim.py                       Servo motion-profile math (pure, no Webots dependency)
-        sensor_read.py                     Sensor readback + validation (pure, no Webots dependency)
-        test_servo_wheel_dof.py            Unit tests (22 passing)
+  README.md  CLAUDE.md                 This file, and rules for working here
+  mamba-envs.yaml                      Custom-schema recipe (do not use with -f)
+  mamba-envs.lock.yml                  Pinned env export
+  run_demo.sh                          Launcher: --headless | --gui, optional --mock
+  monitor/
+    mock_publisher.py                  UDP publisher: --mock or --replay CSV
+    test_swd_publisher.py              Publisher tests
+  webots/
+    worlds/servo_wheel_dof.wbt         World: upright wheel on a static supervisor Robot
+    controllers/servo_wheel_dof/
+      servo_wheel_dof.py               Controller (the only file importing `controller`)
+      imu_wheel_msg.py                 Message parse/format/mock (copied from esp32-dof)
+      imu_udp_latest.py                Drain UDP, keep latest (copied from esp32-dof)
+      imu_euler_math.py                ZYX Euler to axis-angle (copied from esp32-dof)
+      upright_pose.py                  Robot translation + rotation from pitch, yaw
+      servo_sim.py, sensor_read.py     Older pure modules, still tested
+      test_swd_*.py, test_servo_wheel_dof.py   Pure-Python tests
 ```
 
-## Reproducing end to end
+The controller imports `sensor_read.read_sensor` (for the log lines) but no longer
+calls `servo_sim.py`; the old motion profile is not played.
 
-Requires: the `servo-wheel-dof` mamba env; Webots (with `WEBOTS_HOME`/`webots` on PATH, or set `WEBOTS_BIN`) with a real X display for the GUI step.
+## Pose and sign convention
 
-All commands below are from the repo root unless stated.
+- Frame: ENU (x East, y North, z Up). The wheel stands upright, rim on the floor.
+- The Robot is rotated +90 deg about X, so the Robot-local hinge axis Z maps to
+  world -Y. The wheel centre is at world (0, -0.026, 0.03).
+- Positive motor angle / `wheel_angle` is a right-hand rotation about world -Y:
+  the wheel top moves toward -X, counter-clockwise seen from the -Y camera.
+- The red marker box on the rim (wheel-local +X side) rises for positive
+  `wheel_angle`. Checked headlessly and by the maintainer in the live GUI (see
+  the PR #296 description); the full manual checklist is issue #289.
+- IMU pitch and yaw drive the Robot: rotation is Rz(yaw) * Ry(pitch) * Rx(+90 deg).
+  The wheel centre stays fixed and the rim stays on the floor.
+- IMU roll is ignored by design.
+- The same convention is stated in the header comment of
+  `webots/worlds/servo_wheel_dof.wbt`; keep the two in sync.
 
-### 1. Create the env
+## UDP protocol
+
+- Transport: UDP, one JSON datagram per message, to `127.0.0.1:5006`.
+- Port: default 5006, overridden by env `SWD_UDP_PORT` (integer 1..65535).
+  The esp32-dof follower uses 5005, so both can coexist.
+- Schema (angles in radians; roll/pitch/yaw are ZYX Euler angles):
+
+```json
+{"seq": 0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0, "wheel_angle": 0.0}
+```
+
+- All four angle keys are required numbers. `seq` and extra keys are ignored.
+- Rejected as invalid: missing key, string/null/bool/list values, NaN, Infinity.
+  The controller counts invalid datagrams and keeps the last valid pose.
+- The controller binds the port without SO_REUSEADDR. A second instance exits 1.
+
+Mock sample (`imu_wheel_msg.mock_imu_wheel`), t in seconds, all radians:
+
+| Field | Formula |
+|-------|---------|
+| roll | 0.5 sin(2 pi 0.2 t) |
+| pitch | 0.3 sin(2 pi 0.1 t) |
+| yaw | 0.8 sin(2 pi 0.05 t) |
+| wheel_angle | 1.5 sin(2 pi 0.25 t) |
+
+## Workflow
+
+All commands run from `poc/servo-wheel-dof` and need the `servo-wheel-dof` env.
+
+### One command: Webots plus mock publisher
 
 ```bash
-mamba env create -n servo-wheel-dof -f poc/servo-wheel-dof/mamba-envs.lock.yml
-mamba run -n servo-wheel-dof python -c "import numpy, pytest; print('OK')"
+./run_demo.sh --gui --mock        # window; publishes until Ctrl-C (exit 130 is normal)
+./run_demo.sh --headless --mock   # no window; stops by itself near TIMEOUT_S
 ```
 
-`mamba env create -f mamba-envs.yaml` does NOT work (custom schema); see "Env setup".
+With `--mock`, `run_demo.sh` runs Webots in the background in its own process
+group, waits until the controller binds the UDP port, then runs
+`monitor/mock_publisher.py --mock`. On exit, Ctrl-C or SIGTERM it stops only that
+Webots process group (never `pkill`). The exit code is the publisher's (130 after
+Ctrl-C, 143 after SIGTERM). In GUI mode the simulation must be RUNNING; press Play
+if it starts paused.
 
-### 2. Run the tests
+Environment variables:
+
+| Variable | Meaning |
+|----------|---------|
+| `WEBOTS_BIN` | Webots binary (default `/usr/local/bin/webots`) |
+| `TIMEOUT_S` | Headless wall-clock timeout, seconds (default 30) |
+| `DRY_RUN=1` | Print the resolved plan and exit 0; nothing is launched |
+| `SWD_UDP_PORT` | UDP port for controller and publisher (default 5006) |
+| `SWD_PYTHON` | Python for the publisher (default: python of the mamba env) |
+| `SWD_WAIT_S` | Max seconds to wait for the controller to bind (default 30) |
+| `MOCK_DURATION` | Publisher seconds (headless default: TIMEOUT_S minus startup, 3 s) |
+
+Fail-fast (exit 1): world file missing, `WEBOTS_BIN` not found, `$DISPLAY` unset
+with `--gui`, invalid `SWD_UDP_PORT`/`SWD_WAIT_S`/`MOCK_DURATION`, non-positive
+`TIMEOUT_S` (headless `--mock`), no `setsid`, no python for the env, UDP port
+already in use, Webots exits early, or the port is not bound within `SWD_WAIT_S`.
+`DRY_RUN=1` still requires `WEBOTS_BIN` to exist and validates `--mock` inputs.
+
+```bash
+DRY_RUN=1 ./run_demo.sh --headless --mock    # shows the full mock plan, launches nothing
+```
+
+Without `--mock`, `./run_demo.sh --gui` or `--headless` only launches Webots; the
+wheel holds the pose from the `.wbt` until the first valid datagram arrives.
+
+### Publisher alone (Webots running in another terminal)
+
+```bash
+mamba run -n servo-wheel-dof python3 monitor/mock_publisher.py --mock --duration 5
+mamba run -n servo-wheel-dof python3 monitor/mock_publisher.py --replay run.csv
+```
+
+- Exactly one of `--mock` or `--replay CSV`. Options: `--port` (default
+  `SWD_UDP_PORT` or 5006), `--rate` Hz (default 50), `--duration` seconds.
+- `--mock` runs until Ctrl-C or `--duration`. `--replay` stops at the end of file.
+- Exit codes: 0 on normal end or Ctrl-C; 2 for bad arguments or an invalid CSV.
+- It prints `published`, `errors` and `skipped` counts at the end.
+- Stdlib only: no numpy, no `controller`, no pyserial.
+
+Replay CSV columns: `roll,pitch,yaw,wheel_angle` (radians, required) and optional
+`t_us` (microseconds). Column order is free, extra columns are ignored, a UTF-8
+BOM is accepted. Without `t_us` rows are paced by `--rate`; with `t_us` the gaps
+are followed (each clamped to 1 s). Example:
+
+```csv
+roll,pitch,yaw,wheel_angle,t_us
+0.0,0.00,0.00,0.0,0
+0.0,0.10,0.20,0.5,20000
+0.0,0.20,0.40,1.0,40000
+```
+
+## Controller behavior
+
+- Binds `127.0.0.1:$SWD_UDP_PORT` (non-blocking); exits 1 if the bind fails.
+- Each Webots step (`basicTimeStep` 16 ms) it drains all queued datagrams and
+  keeps the newest valid one.
+- On a message: sets Robot translation and rotation from `upright_pose(pitch, yaw)`
+  and calls `wheel_motor.setPosition(wheel_angle)`.
+- Before the first valid message the `.wbt` pose is untouched.
+- Stdout/stderr lines, prefixed `servo_wheel_dof: `:
+  - `listening on 127.0.0.1:5006`
+  - `first message received`
+  - `ignored N invalid datagram(s) so far` (first 3, then every 100th)
+  - every step: `t=0.0160 angle_rad=0.000000 velocity_rad_s=nan` (`nan` on the
+    first step only; `angle_rad` is the `wheel_sensor` reading in radians)
+- Device names are exact: `wheel_motor` (RotationalMotor), `wheel_sensor`
+  (PositionSensor). A missing device prints `ERROR device '<name>' not found`.
+
+## Run the tests
 
 ```bash
 cd poc/servo-wheel-dof
-mamba run -n servo-wheel-dof python3 -m pytest -q webots/controllers/servo_wheel_dof
+mamba run -n servo-wheel-dof python3 -m pytest -q monitor webots/controllers/servo_wheel_dof
 ```
 
-Expect `22 passed`. Pure-Python unit tests only (`servo_sim.py`, `sensor_read.py`, controller helpers) — no Webots, no display, no hardware.
+Pure Python: no Webots, no display, no hardware. `test_swd_world_upright.py` is a
+text-level guard on the `.wbt`; set env `SWD_WORLD_PATH` to test a modified copy.
 
-### 3. Run the demo — GUI mode (needs a display)
+## Limits
 
-```bash
-cd poc/servo-wheel-dof
-./run_demo.sh --gui
-```
+- The Robot is static (no Physics for the Robot, no odometry): the wheel spins in
+  place and does not roll or move across the floor.
+- MPU6050 has no magnetometer, so real yaw would drift. Mock/replay yaw does not.
+- `imu_wheel_msg.py`, `imu_udp_latest.py` and `imu_euler_math.py` are copied, not
+  imported, from `poc/esp32-dof`. Fixes must be mirrored by hand (each file header
+  names its source).
+- The simulation must be running (not paused) for the controller to step.
+- Only mock/replay data is supported; serial/hardware input is not implemented.
 
-Opens Webots with `worlds/servo_wheel_dof.wbt` running, `wheel_motor`/`wheel_sensor` bound by the `servo_wheel_dof` controller. Expect the wheel to rotate smoothly and `servo_wheel_dof: ...` lines (see "Sensor output format" below) streaming in the console.
+## Human verification
 
-### 4. Run the demo — headless mode (no display; CI/agent-friendly)
+The marker direction for positive `wheel_angle` was checked by the maintainer in
+the live GUI (recorded in the PR #296 description). Not yet verified by a human:
+pose response to IMU pitch and yaw, and wheel jitter. The manual checklist and its
+result log live in issue #289. Only a human ticks those boxes; nothing here is
+ticked.
 
-```bash
-cd poc/servo-wheel-dof
-./run_demo.sh --headless
-```
+## Superseded: velocity-demo checklist
 
-Runs the same world/controller in Webots batch mode with no rendering window. Proves the controller starts, binds both devices, and streams sensor lines — it does NOT prove the GUI looks right (see "What is verified" / "NOT verified").
+The earlier checklist (issue #267) covered a self-driven velocity profile
+(`servo_sim.motion_profile()`) that the controller no longer plays. It is
+superseded by the UDP follower described above and by issue #289. Its items and
+log table were removed from this file; see git history for the old text.
 
-`DRY_RUN=1 ./run_demo.sh --headless` (or `--gui`) prints what would run without launching Webots.
-
-## Sensor output format
-
-Each simulation step the controller logs one line to stdout:
-
-```
-servo_wheel_dof: t=0.0160 angle_rad=0.000000 velocity_rad_s=nan
-servo_wheel_dof: t=0.0320 angle_rad=0.010525 velocity_rad_s=0.657835
-```
-
-Fields:
-- **`t`** — simulation time in seconds (`robot.getTime()`), fixed 4 decimal places.
-- **`angle_rad`** — `wheel_sensor` (PositionSensor) reading in radians, fixed 6 decimal places.
-- **`velocity_rad_s`** — angle derivative between consecutive steps, in rad/s, fixed 6 decimal places; `nan` on the very first step only (no previous sample to difference against).
-
-Only `servo_wheel_dof.py` imports the Webots `controller` module; the motion-profile math (`servo_sim.py`) and sensor-sample validation (`sensor_read.py`) are pure Python and unit-tested outside Webots.
-
-## What is verified
-
-Verified headlessly (no GUI, by automation), with this method:
-
-- **Unit tests**: `cd poc/servo-wheel-dof && mamba run -n servo-wheel-dof python3 -m pytest -q webots/controllers/servo_wheel_dof` passes, 22 tests (motion profile, sensor read/validation, controller helper logic).
-- **Controller log format**: `servo_wheel_dof.py`'s `_log()` produces `servo_wheel_dof: t=<4dp> angle_rad=<6dp> velocity_rad_s=<6dp|nan>` lines; confirmed against source and against a headless batch run's captured output (first line `nan` velocity, subsequent lines numeric).
-- **Device binding**: the controller looks up `wheel_motor` (RotationalMotor) and `wheel_sensor` (PositionSensor) by exact name and exits with an `ERROR device '<name>' not found` stderr line + nonzero exit code if either is missing, rather than silently no-op'ing.
-- **`run_demo.sh` argument parsing / dry-run path**: `bash -n run_demo.sh` and the `DRY_RUN=1` path (no Webots launch).
-
-## NOT verified (needs a human with a display)
-
-This POC has **not** been run through actual human-eyeball GUI verification as of writing this section — only headless batch runs and unit tests, by agents. Specifically NOT yet confirmed by a human:
-
-- **World loads and the wheel is visibly present** in the Webots GUI (`servo_wheel_dof.wbt` geometry, camera framing, floor/wheel look correct).
-- **The wheel actually rotates smoothly** when driven by the controller's velocity commands (no jitter, no snapping, matches the motion profile visually) — headless runs only confirm the numeric log stream, not the rendered motion.
-- **Sensor stream sustains >= 10 Hz** in a live GUI run over a sustained period (headless log lines have been read from source/short batch captures, not timed by a human over a long run).
-- **Headless batch mode runs clean end-to-end** for a full `run_demo.sh --headless` invocation (clean start, clean exit, no stray Webots processes) — this needs a human to run it, not just review the script.
-
-Do not tick any box in the checklist below until a human has actually done it.
-
-## Manual verification checklist (human)
-
-Tick a box only after doing it yourself. Nothing here was done by the automation that wrote this section. Record results in the "Verification log" below and as a comment on issue #267.
-
-- [ ] **1. World loads and wheel is visible** (needs display, no hardware)
-  Do: `cd poc/servo-wheel-dof && ./run_demo.sh --gui`.
-  Pass: Webots window opens, `servo_wheel_dof.wbt` loads with no console errors, the wheel geometry is visible and correctly placed (not floating/clipping), camera framing shows the whole model.
-  If it fails: window doesn't open -> check `$DISPLAY`/Webots install; wheel missing/mispositioned -> fix `worlds/servo_wheel_dof.wbt`, not the controller.
-- [ ] **2. Controller binds sensor and wheel rotates smoothly** (needs display)
-  Do: with the world running (Play pressed if not auto-run), watch the wheel and the console.
-  Pass: console shows `servo_wheel_dof: t=... angle_rad=... velocity_rad_s=...` lines starting immediately, no `ERROR device ... not found`; wheel rotation is smooth (no jumps/stutters) and visually tracks the velocity profile from `servo_sim.motion_profile()`.
-  If it fails: device-not-found -> device name mismatch between `servo_wheel_dof.py` and the `.wbt` (`wheel_motor`/`wheel_sensor` must match exactly); jerky motion -> check timestep vs. motion-profile assumptions in `servo_sim.py`, open an issue.
-- [ ] **3. Sensor stream sustained >= 10 Hz** (needs display or headless timing)
-  Do: capture console output over at least 5 real seconds (e.g. `./run_demo.sh --gui 2>&1 | ts '%.s'` or pipe through `awk` timing the `t=` deltas), count lines per second.
-  Pass: sustained rate >= 10 Hz (i.e. `t=` deltas average <= 0.1 s across the sample window); no long stalls.
-  If it fails: note the observed rate and whether Webots' `basicTimeStep` in the `.wbt` needs lowering, or whether logging/flush is the bottleneck (`_log()` already uses `flush=True`).
-- [ ] **4. Headless batch mode runs clean** (no display needed)
-  Do: `cd poc/servo-wheel-dof && ./run_demo.sh --headless`, let it run to completion or a fixed timeout, then check exit code and `pgrep -a webots` afterward.
-  Pass: exits 0 (or the script's documented timeout exit), `servo_wheel_dof: ...` lines stream throughout, no Python traceback, no leftover `webots` process after exit.
-  If it fails: leftover process -> fix `run_demo.sh` cleanup/trap logic; traceback -> fix the controller, not the script.
-
-### Verification log (fill in by hand)
-
-| Date | Who | Item(s) | Result (pass/fail) | Notes / issue link |
-|------|-----|---------|--------------------|--------------------|
-|      |     |         |                    |                    |
+<!-- end of servo-wheel-dof README -->
