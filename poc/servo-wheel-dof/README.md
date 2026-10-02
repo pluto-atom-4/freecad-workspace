@@ -112,8 +112,9 @@ All commands run from `poc/servo-wheel-dof` and need the `servo-wheel-dof` env.
 With `--mock`, `run_demo.sh` runs Webots in the background in its own process
 group, waits until the controller binds the UDP port, then runs
 `monitor/mock_publisher.py --mock`. On exit, Ctrl-C or SIGTERM it stops only that
-Webots process group (never `pkill`). The exit code is the publisher's (130 after
-Ctrl-C, 143 after SIGTERM). In GUI mode the simulation must be RUNNING; press Play
+Webots process group (never `pkill`). On a normal end the exit code is the
+publisher's (0, or 2 for bad arguments); Ctrl-C exits 130 and SIGTERM exits 143
+(the script's traps). In GUI mode the simulation must be RUNNING; press Play
 if it starts paused.
 
 Environment variables:
