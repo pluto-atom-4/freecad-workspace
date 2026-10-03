@@ -267,7 +267,7 @@ class TestIdle:
             assert state.x == 0.0
             assert state.y == 0.0
             assert state.clamped is False
-        for (angle, pitch, yaw), (_, t, _, _) in zip(samples, rows):
+        for (_, pitch, yaw), (_, t, _, _) in zip(samples, rows):
             assert t == upright_pose(pitch, yaw)[0]
 
     def test_idle_anchor_invariants(self):
