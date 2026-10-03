@@ -15,7 +15,7 @@ Behavior:
 - Each step prints "t=... angle_rad=... velocity_rad_s=..." read back from
   "wheel_sensor" via sensor_read.read_sensor().
 - Opt-in telemetry (issue #306): env SWD_TELEMETRY=1 emits one CSV row per step
-  (columns in telemetry.COLUMNS; pose columns stay nan until #308). With
+  (columns in telemetry.COLUMNS; pose columns need the wheel node, else nan). With
   SWD_TELEMETRY_FILE the rows go to that file (relative paths land in the
   controller directory), else to stdout with the prefix "telemetry: ". Unset
   SWD_TELEMETRY leaves all output unchanged.
@@ -39,6 +39,7 @@ from controller import Supervisor
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from alignment_metrics import anchor_metrics, relative_position  # noqa: E402
 from imu_udp_latest import drain_latest  # noqa: E402
 from sensor_read import read_sensor  # noqa: E402
 from telemetry import (  # noqa: E402
@@ -124,6 +125,22 @@ def _open_telemetry(cfg: TelemetryConfig) -> "TelemetryWriter | None":
     return writer
 
 
+def _find_wheel(node):
+    """Return the endPoint Solid of the first HingeJoint child of node, or None.
+
+    Read-only Supervisor calls only. May raise (caller wraps it).
+    """
+    children = node.getField("children")
+    if children is None:
+        return None
+    for i in range(children.getCount()):
+        child = children.getMFNode(i)
+        if child is not None and child.getTypeName() == "HingeJoint":
+            end_point = child.getField("endPoint")
+            return None if end_point is None else end_point.getSFNode()
+    return None
+
+
 def main() -> int:
     try:
         port = _read_port()
@@ -172,6 +189,17 @@ def main() -> int:
         _say(warning, err=True)
     telemetry = _open_telemetry(cfg)
 
+    # Wheel lookup happens only with telemetry on, so default runs touch no
+    # extra nodes. Missing wheel: ONE warning, pose columns stay nan.
+    wheel = None
+    if telemetry is not None:
+        try:
+            wheel = _find_wheel(node)
+        except Exception:  # best effort; never stop the sim
+            wheel = None
+        if wheel is None:
+            _say("WARN: wheel node not found, alignment metrics off", err=True)
+
     # PositionSensor must be enabled at the sim timestep, or getValue() -> nan.
     # The motor stays in its default position-control mode (no setPosition(inf)).
     sensor.enable(timestep)
@@ -183,10 +211,44 @@ def main() -> int:
     msgs_total = 0  # valid datagrams so far (telemetry only)
     t_last_msg = None  # sim time of the last valid datagram
     cmd = None  # last commanded wheel_angle (rad)
+    warn_total = 0  # steps flagged by anchor_metrics (telemetry only)
 
     try:
         while robot.step(timestep) != -1:
             t_s = robot.getTime()
+
+            # Pose columns (telemetry only). Read BEFORE the apply block below,
+            # so a row shows the effect of the PREVIOUS step's command.
+            # Read-only API: no set*, no resetPhysics.
+            pose = (None,) * 9
+            warn = 0
+            if telemetry is not None and wheel is not None:
+                try:
+                    rp = node.getPosition()
+                    ro = node.getOrientation()
+                    wp = wheel.getPosition()
+                    wo = wheel.getOrientation()
+                    am = anchor_metrics(rp, ro, wp, wo)
+                    rel = relative_position(rp, ro, wp)
+                    pose = (
+                        rp[0], rp[1], rp[2], am.wheel_z,
+                        rel[0], rel[1], rel[2], am.deviation_m, am.axis_dot,
+                    )
+                    warn = 1 if am.warn else 0
+                    if warn:
+                        warn_total += 1
+                        if warn_total <= 3 or warn_total % 100 == 0:
+                            _say(
+                                f"WARN t={t_s:.4f} dev_m={am.deviation_m:.6f} "
+                                f"dot={am.axis_dot:.6f}",
+                                err=True,
+                            )
+                except Exception as exc:  # telemetry must never stop the sim
+                    _say(f"ERROR: pose read failed ({exc!r}); telemetry off",
+                         err=True)
+                    telemetry.close()
+                    telemetry = None
+
             result = drain_latest(sock)
             msgs_total += result.valid
 
@@ -219,8 +281,7 @@ def main() -> int:
 
             if telemetry is not None:
                 try:
-                    # COLUMNS order. Pose columns (9 x None -> nan) are filled
-                    # by the wheel-node wiring (#308); warn is 0 until then.
+                    # COLUMNS order; pose and warn come from the read above.
                     kinematics = (
                         t_s,
                         msgs_total,
@@ -230,7 +291,7 @@ def main() -> int:
                         None if cmd is None else cmd - reading.angle_rad,
                         reading.velocity_rad_s,
                     )
-                    telemetry.write_row(kinematics + (None,) * 9 + (0,))
+                    telemetry.write_row(kinematics + pose + (warn,))
                 except Exception as exc:  # telemetry must never stop the sim
                     _say(f"ERROR: telemetry row failed ({exc!r}); telemetry off",
                          err=True)
