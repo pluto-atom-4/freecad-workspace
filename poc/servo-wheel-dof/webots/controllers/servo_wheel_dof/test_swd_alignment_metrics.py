@@ -27,7 +27,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from alignment_metrics import AlignmentMetrics, anchor_metrics  # noqa: E402
+from alignment_metrics import (  # noqa: E402
+    AlignmentMetrics,
+    anchor_metrics,
+    relative_position,
+)
 from upright_pose import WHEEL_OFFSET  # noqa: E402
 
 PI = math.pi
@@ -284,3 +288,159 @@ class TestFrozen:
         m = anchor_metrics(**_healthy_args())
         with pytest.raises(dataclasses.FrozenInstanceError):
             m.warn = True  # type: ignore[misc]
+
+
+# --- relative_position (issue #312) -----------------------------------------
+# Hand-checked numbers. With Rx(+90) (row-major [1,0,0, 0,0,-1, 0,1,0]) the
+# healthy wheel sits at world offset (0, -0.026, 0), so rel = (0, 0, 0.026).
+# ORI_YAW90 = Rz(90) @ Rx(90) = [0,0,1, 1,0,0, 0,1,0] has columns
+# col0 = (0,1,0), col1 = (0,0,1), col2 = (1,0,0). For world offset
+# (0.001, 0.002, 0.003): rel = (0.002, 0.003, 0.001), a pure permutation that
+# differs from the transpose result (0.003, 0.001, 0.002).
+ORI_YAW90 = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+
+
+def _rel_args() -> dict:
+    h = _healthy_args()
+    return {
+        "robot_pos": h["robot_pos"],
+        "robot_ori": h["robot_ori"],
+        "wheel_pos": h["wheel_pos"],
+    }
+
+
+def _col(ori: list[float], k: int) -> tuple[float, float, float]:
+    """Column k of a row-major 3x3."""
+    return (ori[k], ori[k + 3], ori[k + 6])
+
+
+class TestRelativePosition:
+    def test_healthy_is_zero_zero_offset(self):
+        rel = relative_position(**_rel_args())
+        assert rel[0] == pytest.approx(0.0, abs=1e-12)
+        assert rel[1] == pytest.approx(0.0, abs=1e-12)
+        assert rel[2] == pytest.approx(OFFSET, abs=1e-12)
+
+    def test_result_is_tuple_of_three_floats(self):
+        rel = relative_position(**_rel_args())
+        assert isinstance(rel, tuple)
+        assert len(rel) == 3
+        assert all(isinstance(v, float) for v in rel)
+
+    def test_world_x_push_gives_rel_x_only(self):
+        args = _rel_args()
+        args["wheel_pos"] = _shift(args["wheel_pos"], 0, 0.003)
+        rel = relative_position(**args)
+        assert rel[0] == pytest.approx(0.003, abs=1e-12)
+        assert rel[1] == pytest.approx(0.0, abs=1e-12)
+        assert rel[2] == pytest.approx(OFFSET, abs=1e-12)
+
+    def test_world_y_push_with_rx90_changes_rel_z(self):
+        # Robot Rx(+90): Robot z is world -Y, wheel y -0.026 -> -0.023,
+        # so the wheel is 0.023 along Robot z.
+        args = _rel_args()
+        args["wheel_pos"] = _shift(args["wheel_pos"], 1, 0.003)
+        rel = relative_position(**args)
+        assert rel[0] == pytest.approx(0.0, abs=1e-12)
+        assert rel[1] == pytest.approx(0.0, abs=1e-12)
+        assert rel[2] == pytest.approx(0.023, abs=1e-12)
+
+    def test_world_z_push_with_rx90_gives_rel_y(self):
+        # Robot Rx(+90): Robot y is world +Z (column 1 = (0, 0, 1)).
+        args = _rel_args()
+        args["wheel_pos"] = _shift(args["wheel_pos"], 2, 0.003)
+        rel = relative_position(**args)
+        assert rel[0] == pytest.approx(0.0, abs=1e-12)
+        assert rel[1] == pytest.approx(0.003, abs=1e-12)
+        assert rel[2] == pytest.approx(OFFSET, abs=1e-12)
+
+    def test_robot_yawed_is_invariant(self):
+        yaw = 0.7
+        c, s = math.cos(yaw), math.sin(yaw)
+        ori = [c, 0.0, s, s, 0.0, -c, 0.0, 1.0, 0.0]  # Rz(yaw) @ Rx(90)
+        pos = (0.1, 0.2, 0.03)
+        wheel = (pos[0] + s * OFFSET, pos[1] - c * OFFSET, pos[2])
+        rel = relative_position(pos, ori, wheel)
+        assert rel[0] == pytest.approx(0.0, abs=1e-12)
+        assert rel[1] == pytest.approx(0.0, abs=1e-12)
+        assert rel[2] == pytest.approx(OFFSET, abs=1e-12)
+
+    def test_distinct_axes_use_columns_not_rows(self):
+        rel = relative_position(
+            (0.0, 0.0, 0.0), ORI_YAW90, (0.001, 0.002, 0.003)
+        )
+        assert rel[0] == pytest.approx(0.002, abs=1e-12)
+        assert rel[1] == pytest.approx(0.003, abs=1e-12)
+        assert rel[2] == pytest.approx(0.001, abs=1e-12)
+
+    def test_matches_independent_column_dot(self):
+        offset = (0.004, -0.002, 0.001)
+        pos = (0.1, 0.2, 0.3)
+        wheel = (pos[0] + offset[0], pos[1] + offset[1], pos[2] + offset[2])
+        rel = relative_position(pos, ORI_YAW90, wheel)
+        for k in range(3):
+            col = _col(ORI_YAW90, k)
+            expected = sum(col[i] * offset[i] for i in range(3))
+            assert rel[k] == pytest.approx(expected, abs=1e-12)
+
+    @pytest.mark.parametrize(
+        "push",
+        [(0.003, 0.0, 0.0), (0.0, 0.002, -0.001), (0.001, -0.002, 0.004)],
+    )
+    def test_consistent_with_anchor_deviation(self, push):
+        args = _healthy_args()
+        args["wheel_pos"] = [a + b for a, b in zip(args["wheel_pos"], push)]
+        rel = relative_position(
+            args["robot_pos"], args["robot_ori"], args["wheel_pos"]
+        )
+        dev = anchor_metrics(**args).deviation_m
+        assert math.dist(rel, (0.0, 0.0, OFFSET)) == pytest.approx(
+            dev, abs=1e-12
+        )
+
+    def test_does_not_mutate_inputs(self):
+        args = _rel_args()
+        before = {k: list(v) for k, v in args.items()}
+        relative_position(**args)
+        assert args == before
+
+
+class TestRelativePositionNonFinite:
+    @pytest.mark.parametrize("key", ["robot_pos", "robot_ori", "wheel_pos"])
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    @pytest.mark.parametrize("idx", [0, 2])
+    def test_non_finite_input_gives_three_nan(self, key, bad, idx):
+        args = _rel_args()
+        args[key][idx] = bad
+        rel = relative_position(**args)
+        assert len(rel) == 3
+        assert all(math.isnan(v) for v in rel)
+
+    def test_overflow_gives_three_nan(self):
+        args = _rel_args()
+        args["robot_ori"] = [1e308] * 9
+        args["wheel_pos"] = [1e308, 1e308, 1e308]
+        rel = relative_position(**args)
+        assert all(math.isnan(v) for v in rel)
+
+
+class TestRelativePositionValidation:
+    @pytest.mark.parametrize(
+        "key, bad",
+        [
+            ("robot_pos", [0.0, 0.0]),
+            ("wheel_pos", [0.0, 0.0, 0.0, 0.0]),
+            ("robot_ori", IDENTITY[:8]),
+        ],
+    )
+    def test_wrong_length_raises(self, key, bad):
+        args = _rel_args()
+        args[key] = bad
+        with pytest.raises(ValueError, match=key):
+            relative_position(**args)
+
+    def test_robot_ori_too_long_raises(self):
+        args = _rel_args()
+        args["robot_ori"] = IDENTITY + [0.0]
+        with pytest.raises(ValueError, match="robot_ori"):
+            relative_position(**args)

@@ -17,6 +17,9 @@ Conventions:
 - axis_dot = dot(wheel column 2, Robot column 2), clamped to [-1, 1].
 - Non-finite input (or output) never raises: the three metrics become NaN and
   warn is True. Wrong sequence lengths raise ValueError.
+- relative_position (issue #312) gives the wheel centre relative to the Robot in
+  the Robot's local frame: rel_k = dot(Robot column k, wheel_pos - robot_pos).
+  Healthy value is (0, 0, anchor_offset). Non-finite input gives three NaN.
 
 Usage:
     from alignment_metrics import anchor_metrics
@@ -113,3 +116,46 @@ def anchor_metrics(
 
     warn = bool(deviation > dev_warn_m or dot < dot_warn)
     return AlignmentMetrics(deviation, dot, wheel_z, warn)
+
+
+def relative_position(
+    robot_pos: Sequence[float],
+    robot_ori: Sequence[float],
+    wheel_pos: Sequence[float],
+) -> tuple[float, float, float]:
+    """
+    Wheel centre position relative to the Robot, in the Robot's local frame.
+
+    Applies the transpose of the row-major Robot rotation to the world offset
+    (wheel_pos - robot_pos): rel_k = sum_i robot_ori[3*i + k] * offset[i], that
+    is the dot product of Robot column k with the offset. Healthy value is
+    (0, 0, anchor_offset); x/y show radial drift, z shows axial drift.
+
+    Args:
+        robot_pos: Robot world position (x, y, z), 3 floats (m).
+        robot_ori: Robot world orientation, 9 floats row-major.
+        wheel_pos: Wheel centre world position (x, y, z), 3 floats (m).
+
+    Returns:
+        (rel_x, rel_y, rel_z) in metres. If any input or computed value is
+        non-finite, all three are NaN.
+
+    Raises:
+        ValueError: A position is not 3 values or the orientation is not 9.
+    """
+    rp = _floats("robot_pos", robot_pos, 3)
+    ro = _floats("robot_ori", robot_ori, 9)
+    wp = _floats("wheel_pos", wheel_pos, 3)
+
+    nan = float("nan")
+    bad = (nan, nan, nan)
+    if not all(math.isfinite(v) for v in rp + ro + wp):
+        return bad
+
+    d = [wp[i] - rp[i] for i in range(3)]
+    rel_x, rel_y, rel_z = (
+        sum(ro[3 * i + k] * d[i] for i in range(3)) for k in range(3)
+    )
+    if not all(math.isfinite(v) for v in (rel_x, rel_y, rel_z)):
+        return bad
+    return (rel_x, rel_y, rel_z)
