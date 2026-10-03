@@ -55,3 +55,8 @@ Env: `servo-wheel-dof`. Create it with
   absolute file path. Pose columns are `nan` without the wheel node. `SWD_OVERLAY=1`
   needs telemetry and is GUI-only (human check). Read a CSV with
   `python3 monitor/telemetry_summary.py <csv>`; details in README "Telemetry".
+- Odometry: `SWD_ODOMETRY=1` enables kinematic odometry (opt-in, off by default). The
+  math lives in `odometry.py` (pure, `OFFSET_LIMIT_M` 0.9, radius from
+  `upright_pose.WHEEL_RADIUS`); `upright_pose` is unchanged and the controller adds
+  the offset (z untouched). The delta uses the command, not the sensor. Keep the
+  README pose bullet equal to `odometry.py`; the human GUI check is #328.
