@@ -19,8 +19,11 @@
 # world (0, -0.026, 0.03); the body box spans z 0.02..0.04, y -0.02..0.02. A
 # Webots Cylinder's axis is local Z, so do NOT add a `rotation` to the wheel
 # Solid. HingeJoint anchor and wheel translation must stay identical
-# (0 0 0.026 = body face 0.02 + half the wheel height 0.006). The Robot is
-# static (no Physics), so the wheel spins in place; it does not roll.
+# (0 0 0.026 = body face 0.02 + half the wheel height 0.006).
+# The Robot is static (no Physics). By default the wheel spins in place; with
+# env SWD_ODOMETRY=1 the controller also translates the Robot along the rim
+# direction by radius x delta wheel_angle (kinematic odometry, issue #301;
+# positive angle moves the Robot toward -X (west) at yaw 0).
 # The Robot is a supervisor: the controller sets the Robot rotation and
 # translation each step.
 # Sign convention: the hinge axis is Robot-local +Z = world -Y, so positive motor
