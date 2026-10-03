@@ -16,12 +16,12 @@ Input handling:
 - A cell that is not a number, or is nan/inf, counts as nan; every statistic
   ignores nan values. A BOM and CRLF line ends are tolerated.
 
-Printed (key : value lines): rows, skipped, t_start_s, t_end_s, duration_s,
+Printed (key : value lines): file, rows, skipped, t_start_s, t_end_s, duration_s,
 msgs_last (last finite msgs), wheel_err_max_abs and wheel_err_mean_abs
 (absolute values), anchor_dev_m_max, axis_dot_min, warn_rows, first_warn_t_s
 (first row in file order with warn == 1). When a warn row exists the rows
-whose t_s is within +-window of first_warn_t_s follow the window_rows line,
-as CSV (header first). A statistic with no finite value prints n/a.
+whose t_s is within +-window of first_warn_t_s follow the window_s and
+window_rows lines, as CSV (header first). A statistic with no finite value prints n/a.
 
 Exit codes: 0 summary printed (also for a header-only file); 2 bad arguments,
 unreadable file, empty file (no header) or a missing required column.
