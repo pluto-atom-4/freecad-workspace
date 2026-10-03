@@ -4,8 +4,7 @@ Kinematic odometry for the servo-wheel-dof POC (issues #321/#322, sub-issues of 
 
 Pure step function: turns the change of the COMMANDED wheel_angle (radians) into a
 world-frame offset of the wheel centre, assuming no-slip rolling on the floor.
-Pure Python: only `math`, `dataclasses` and `typing`; no Webots, serial or numpy
-dependency
+Pure Python: standard library only; no Webots, serial or numpy dependency
 (must NOT `import controller`).
 
 Conventions:
