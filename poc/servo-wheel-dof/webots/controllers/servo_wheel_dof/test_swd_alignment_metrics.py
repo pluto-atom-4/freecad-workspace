@@ -259,6 +259,25 @@ class TestThresholds:
         assert default.deviation_m == pytest.approx(0.024, abs=1e-9)
         assert default.warn is True
 
+    def test_deviation_exactly_at_threshold_does_not_warn(self):
+        args = _healthy_args()
+        args["wheel_pos"] = _shift(args["wheel_pos"], 2, 0.002)
+        measured = anchor_metrics(**args).deviation_m
+        assert anchor_metrics(**args, dev_warn_m=measured).warn is False
+
+    def test_dot_exactly_at_threshold_does_not_warn(self):
+        args = _healthy_args()
+        args["wheel_ori"] = _rx_ori(PI / 2 + math.radians(1.0))
+        measured = anchor_metrics(**args).axis_dot
+        assert anchor_metrics(**args, dot_warn=measured).warn is False
+
+    def test_negative_anchor_offset(self):
+        pos, ori = ROBOT_POS, ORI_X90
+        wheel = _anchor(pos, ori, -OFFSET)
+        m = anchor_metrics(pos, ori, wheel, ori, anchor_offset=-OFFSET)
+        assert m.deviation_m == pytest.approx(0.0, abs=1e-12)
+        assert m.warn is False
+
 
 class TestFrozen:
     def test_assignment_raises(self):
