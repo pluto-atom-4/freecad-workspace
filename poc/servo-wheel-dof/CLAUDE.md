@@ -31,6 +31,10 @@ Env: `servo-wheel-dof`. Create it with
 - Wire facts (UDP JSON, port 5006, radians, ZYX) live in `README.md`; keep code
   and README in sync.
 - Do not hard-code test counts or user-specific paths in docs.
+- **Telemetry stays in pure modules** (`telemetry.py`, `alignment_metrics.py`,
+  `overlay_text.py`) and must never raise or stall the sim: read-only Supervisor calls,
+  fail-soft, off by default. Keep the README column list equal to `telemetry.COLUMNS`
+  and the WARN thresholds equal to `alignment_metrics` (`DEV_WARN_M`, `DOT_WARN`).
 
 ## Validation
 
@@ -47,3 +51,7 @@ Env: `servo-wheel-dof`. Create it with
 - The simulation must be running (not paused) or the controller is not stepped.
 - `run_demo.sh --mock` stops only the Webots process group it started.
 - `mamba run` may buffer output; `run_demo.sh --mock` resolves the python once.
+- Telemetry: `SWD_TELEMETRY=1` enables it; `SWD_TELEMETRY_FILE` alone does not. Use an
+  absolute file path. Pose columns are `nan` without the wheel node. `SWD_OVERLAY=1`
+  needs telemetry and is GUI-only (human check). Read a CSV with
+  `python3 monitor/telemetry_summary.py <csv>`; details in README "Telemetry".
