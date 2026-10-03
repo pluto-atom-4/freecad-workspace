@@ -19,6 +19,10 @@ Behavior:
   SWD_TELEMETRY_FILE the rows go to that file (relative paths land in the
   controller directory), else to stdout with the prefix "telemetry: ". Unset
   SWD_TELEMETRY leaves all output unchanged.
+- Opt-in overlay (issue #313): env SWD_OVERLAY=1 (needs SWD_TELEMETRY=1 and the
+  wheel node) draws the alignment status over the 3D view with
+  Supervisor.setLabel, about 4 times per second. GUI only; unset SWD_OVERLAY
+  leaves all output unchanged.
 - The simulation must be RUNNING (not paused) for the controller to step.
 
 Only Webots-specific import is `controller`; message parsing, UDP draining and
@@ -41,6 +45,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from alignment_metrics import anchor_metrics, relative_position  # noqa: E402
 from imu_udp_latest import drain_latest  # noqa: E402
+from overlay_text import (  # noqa: E402
+    format_overlay,
+    overlay_color,
+    overlay_every_steps,
+    parse_overlay_env,
+)
 from sensor_read import read_sensor  # noqa: E402
 from telemetry import (  # noqa: E402
     TelemetryConfig,
@@ -200,6 +210,21 @@ def main() -> int:
         if wheel is None:
             _say("WARN: wheel node not found, alignment metrics off", err=True)
 
+    # Overlay (issue #313): needs telemetry AND the wheel node (it reuses the
+    # per-step metrics). Read-only; setLabel is GUI-only and harmless headless.
+    overlay_cfg = parse_overlay_env(os.environ)
+    for warning in overlay_cfg.warnings:
+        _say(warning, err=True)
+    overlay_on = (
+        overlay_cfg.enabled and telemetry is not None and wheel is not None
+    )
+    if overlay_cfg.enabled and not overlay_on:
+        _say("WARN: SWD_OVERLAY needs SWD_TELEMETRY=1 and the wheel node; "
+             "overlay off", err=True)
+    overlay_every = overlay_every_steps(timestep)
+    overlay_tick = 0
+    overlay_shown = False
+
     # PositionSensor must be enabled at the sim timestep, or getValue() -> nan.
     # The motor stays in its default position-control mode (no setPosition(inf)).
     sensor.enable(timestep)
@@ -222,6 +247,8 @@ def main() -> int:
             # Read-only API: no set*, no resetPhysics.
             pose = (None,) * 9
             warn = 0
+            am = None
+            rel = None
             if telemetry is not None and wheel is not None:
                 try:
                     rp = node.getPosition()
@@ -248,6 +275,22 @@ def main() -> int:
                          err=True)
                     telemetry.close()
                     telemetry = None
+
+            if overlay_on and am is not None and rel is not None:
+                try:  # overlay must never stop the sim
+                    if overlay_tick % overlay_every == 0:
+                        robot.setLabel(
+                            0,
+                            format_overlay(am.deviation_m, am.axis_dot, rel,
+                                           am.warn),
+                            0.01, 0.01, 0.05, overlay_color(am.warn), 0.0,
+                        )
+                        overlay_shown = True
+                    overlay_tick += 1
+                except Exception as exc:
+                    _say(f"ERROR: overlay failed ({exc!r}); overlay off",
+                         err=True)
+                    overlay_on = False
 
             result = drain_latest(sock)
             msgs_total += result.valid
@@ -301,6 +344,11 @@ def main() -> int:
             angle_prev_rad = reading.angle_rad
             t_prev_s = reading.t_s
     finally:
+        if overlay_shown:
+            try:
+                robot.setLabel(0, "", 0.01, 0.01, 0.05, 0, 1.0)  # clear
+            except Exception:  # sim may already be shutting down
+                pass
         if telemetry is not None:
             telemetry.close()  # never raises; flushes the last rows
         sock.close()
