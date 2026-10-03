@@ -73,8 +73,15 @@ calls `servo_sim.py`; the old motion profile is not played.
   `wheel_angle`. Checked headlessly and by the maintainer in the live GUI (see
   the PR #296 description); the full manual checklist is issue #289.
 - IMU pitch and yaw drive the Robot: rotation is Rz(yaw) * Ry(pitch) * Rx(+90 deg).
-  The wheel centre stays fixed and the rim stays on the floor.
+  The wheel centre stays fixed (unless odometry is on, see below) and the rim stays
+  on the floor.
 - IMU roll is ignored by design.
+- Odometry (opt-in, `SWD_ODOMETRY=1`): the Robot translates along the rim direction
+  (-cos yaw, -sin yaw) by r x delta `wheel_angle` (r = 0.03 m). At yaw 0 positive
+  `wheel_angle` moves the robot toward -X (west), the same way the wheel top moves.
+  The delta uses the COMMANDED angle; the first message does not move the robot;
+  `wheel_angle` is applied literally (no wrap; a 3 rad step jumps 9 cm); the offset
+  is clamped to a +-0.9 m box with one stderr WARN; roll and pitch do not affect it.
 - The same convention is stated in the header comment of
   `webots/worlds/servo_wheel_dof.wbt`; keep the two in sync.
 
@@ -186,6 +193,8 @@ roll,pitch,yaw,wheel_angle,t_us
 - Stdout/stderr lines, prefixed `servo_wheel_dof: `:
   - `listening on 127.0.0.1:5006`
   - `first message received`
+  - `odometry on` (only with `SWD_ODOMETRY=1`); stderr `WARN: odometry clamped to the
+    floor limit` (once per run) or `ERROR: odometry failed (...); odometry off`
   - `ignored N invalid datagram(s) so far` (first 3, then every 100th)
   - every step: `t=0.0160 angle_rad=0.000000 velocity_rad_s=nan` (`nan` on the
     first step only; `angle_rad` is the `wheel_sensor` reading in radians)
@@ -207,6 +216,7 @@ one stderr line, turns that feature off and lets the simulation keep running. Un
 | `SWD_TELEMETRY` | On: `1`, `true`, `yes`, `on`. Off: empty, `0`, `false`, `no`, `off` (case-insensitive). Anything else: off plus one stderr warning. Default off. |
 | `SWD_TELEMETRY_FILE` | CSV path; the file is opened with "w" (overwritten). Alone it does NOT enable telemetry. A relative path resolves against the controller process working directory (the controller directory under Webots); use an absolute path. Unusable path: one stderr `ERROR`, telemetry off. Unset or empty: stdout mode. |
 | `SWD_OVERLAY` | Same on/off values. Live alignment label in the 3D view (see Overlay). Default off. |
+| `SWD_ODOMETRY` | Same on/off values as `SWD_TELEMETRY`. On: the Robot rolls with `wheel_angle` (see "Pose and sign convention"). Anything else: off plus one stderr warning. Default off. The controller prints `odometry on` at start. |
 
 ```bash
 # file mode (advised, especially in the GUI)
@@ -232,7 +242,7 @@ the file grows for as long as the run lasts. One row is written per Webots step.
 | `wheel_sensor` | rad | `wheel_sensor` reading. |
 | `wheel_err` | rad | `wheel_cmd - wheel_sensor`; `nan` before the first message. |
 | `vel_rad_s` | rad/s | Sensor velocity; `nan` on the first step. |
-| `robot_x`, `robot_y`, `robot_z` | m | Robot world position. |
+| `robot_x`, `robot_y`, `robot_z` | m | Robot ORIGIN world position, not the wheel centre. With `SWD_ODOMETRY=1`, `robot_x` and `robot_y` include the odometry offset. |
 | `wheel_z` | m | Wheel centre world height. Healthy: about 0.03 (the wheel radius, rim on the floor). |
 | `rel_x`, `rel_y` | m | Wheel centre in the Robot frame: radial drift. Healthy: about 0. |
 | `rel_z` | m | Wheel centre in the Robot frame: axial drift. Healthy: 0.026 (the hinge anchor offset). |
@@ -247,6 +257,10 @@ the text `nan`. Without the wheel node (or if a pose read fails) the nine pose c
 
 Timing: poses are read after the step and BEFORE the new command is applied, so a row
 shows the effect of the PREVIOUS step's command. `age_s` and `t_s` are simulation time.
+
+Odometry adds no telemetry column. The offset moves only `robot_x` and `robot_y`; the
+other pose columns (`wheel_z`, `rel_*`, `anchor_dev_m`, `axis_dot`) keep their
+healthy values because the wheel moves with the Robot.
 
 ### WARN thresholds
 
@@ -328,8 +342,12 @@ text-level guard on the `.wbt`; set env `SWD_WORLD_PATH` to test a modified copy
 
 ## Limits
 
-- The Robot is static (no Physics for the Robot, no odometry): the wheel spins in
-  place and does not roll or move across the floor.
+- The Robot has no Physics. With odometry off (the default) it does not roll: the
+  wheel spins in place. Odometry (opt-in, `SWD_ODOMETRY=1`) is kinematic: no slip, no
+  friction model, no stopping on contact. A publisher restart jumps the robot by
+  the angle difference. The camera is fixed and the robot can drive out of view
+  (limit 0.9 m). If odometry fails at run time it turns off and the robot returns
+  to the pose without offset.
 - MPU6050 has no magnetometer, so real yaw would drift. Mock/replay yaw does not.
 - `imu_wheel_msg.py`, `imu_udp_latest.py` and `imu_euler_math.py` are copied, not
   imported, from `poc/esp32-dof`. Fixes must be mirrored by hand (each file header
@@ -344,6 +362,8 @@ the live GUI (recorded in the PR #296 description). Not yet verified by a human:
 pose response to IMU pitch and yaw, and wheel jitter. The manual checklist and its
 result log live in issue #289. Only a human ticks those boxes; nothing here is
 ticked.
+
+Odometry: not yet verified by a human; see the GUI sub-issue (#328). Nothing ticked.
 
 ## Superseded: velocity-demo checklist
 
