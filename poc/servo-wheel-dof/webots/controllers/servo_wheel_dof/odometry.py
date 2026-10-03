@@ -4,7 +4,8 @@ Kinematic odometry for the servo-wheel-dof POC (issues #321/#322, sub-issues of 
 
 Pure step function: turns the change of the COMMANDED wheel_angle (radians) into a
 world-frame offset of the wheel centre, assuming no-slip rolling on the floor.
-Pure Python: only `math` and `dataclasses`; no Webots, serial or numpy dependency
+Pure Python: only `math`, `dataclasses` and `typing`; no Webots, serial or numpy
+dependency
 (must NOT `import controller`).
 
 Conventions:
@@ -33,6 +34,10 @@ Conventions:
   commanded wheel_angle, so reversing the angle moves the robot back at once.
 - apply_offset(translation, state) adds (state.x, state.y) to the x, y of an
   upright_pose translation; z is returned untouched, so rim contact holds.
+- Opt-in (issue #323): parse_odometry_env reads SWD_ODOMETRY (on: 1,true,yes,on;
+  off: empty,0,false,no,off; case-insensitive, stripped; anything else is off
+  plus exactly one warning). A missing key or a None value is off, no warning.
+  Same rules as telemetry.parse_telemetry_env (not imported). Never raises.
 
 Usage:
     from odometry import OFFSET_LIMIT_M, OdomState, apply_offset, step_odometry
@@ -49,12 +54,18 @@ import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from upright_pose import WHEEL_RADIUS  # noqa: E402
 
 OFFSET_LIMIT_M = 0.9  # half-width of the allowed box on the 2 m x 2 m floor (m)
+
+ENV_ENABLE = "SWD_ODOMETRY"
+
+_ON = frozenset(("1", "true", "yes", "on"))
+_OFF = frozenset(("", "0", "false", "no", "off"))
 
 
 @dataclass(frozen=True)
@@ -143,3 +154,28 @@ def apply_offset(
     """
     tx, ty, tz = translation
     return (tx + state.x, ty + state.y, tz)
+
+
+@dataclass(frozen=True)
+class OdometryConfig:
+    """Result of parse_odometry_env."""
+
+    enabled: bool
+    warnings: tuple[str, ...]
+
+
+def parse_odometry_env(environ: Mapping[str, str]) -> OdometryConfig:
+    """Read SWD_ODOMETRY from a mapping; never raises, junk means off + warning."""
+    raw = environ.get(ENV_ENABLE)
+    text = "" if raw is None else str(raw).strip().lower()
+    if text in _ON:
+        return OdometryConfig(True, ())
+    if text in _OFF:
+        return OdometryConfig(False, ())
+    return OdometryConfig(
+        False,
+        (
+            f"{ENV_ENABLE}={raw!r} is not one of 1/true/yes/on or "
+            "0/false/no/off; odometry stays off",
+        ),
+    )
