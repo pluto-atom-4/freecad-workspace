@@ -23,6 +23,13 @@ Behavior:
   wheel node) draws the alignment status over the 3D view with
   Supervisor.setLabel, about 4 times per second. GUI only; unset SWD_OVERLAY
   leaves all output unchanged.
+- Opt-in odometry (issue #301): env SWD_ODOMETRY=1 adds a no-slip rolling offset,
+  from the change of the COMMANDED wheel_angle (never the sensor), to the x, y of
+  the upright translation (z untouched; clamped to a +-0.9 m box, ONE stderr WARN
+  on the first clamp). Positive wheel_angle rolls toward -X at yaw 0; the first
+  message never moves the robot. On any odometry error: ONE stderr ERROR line and
+  odometry stays off for the rest of the run. Unset SWD_ODOMETRY leaves all
+  output unchanged.
 - The simulation must be RUNNING (not paused) for the controller to step.
 
 Only Webots-specific import is `controller`; message parsing, UDP draining and
@@ -45,6 +52,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from alignment_metrics import anchor_metrics, relative_position  # noqa: E402
 from imu_udp_latest import drain_latest  # noqa: E402
+from odometry import (  # noqa: E402
+    OFFSET_LIMIT_M,
+    OdomState,
+    apply_offset,
+    parse_odometry_env,
+    step_odometry,
+)
 from overlay_text import (  # noqa: E402
     format_overlay,
     overlay_color,
@@ -225,6 +239,17 @@ def main() -> int:
     overlay_tick = 0
     overlay_shown = False
 
+    # Odometry (issue #301): opt-in, pure arithmetic on the COMMANDED wheel_angle.
+    # Unset SWD_ODOMETRY: no output and no extra Supervisor calls.
+    odo_cfg = parse_odometry_env(os.environ)
+    for warning in odo_cfg.warnings:
+        _say(warning, err=True)
+    odo_on = odo_cfg.enabled
+    if odo_on:
+        _say("odometry on")
+    odo_state = OdomState()
+    odo_clamp_warned = False
+
     # PositionSensor must be enabled at the sim timestep, or getValue() -> nan.
     # The motor stays in its default position-control mode (no setPosition(inf)).
     sensor.enable(timestep)
@@ -308,6 +333,23 @@ def main() -> int:
                     _say("first message received")
                 # Roll is ignored by design (issue #286): upright pose only.
                 translation, rotation = upright_pose(msg.pitch, msg.yaw)
+                if odo_on:
+                    try:  # odometry must never stop the sim
+                        new_state = step_odometry(
+                            odo_state, msg.wheel_angle, msg.yaw,
+                            limit=OFFSET_LIMIT_M,
+                        )
+                        shifted = apply_offset(translation, new_state)
+                        if new_state.clamped and not odo_clamp_warned:
+                            odo_clamp_warned = True
+                            _say("WARN: odometry clamped to the floor limit",
+                                 err=True)
+                        odo_state = new_state
+                        translation = shifted
+                    except Exception as exc:
+                        _say(f"ERROR: odometry failed ({exc!r}); odometry off",
+                             err=True)
+                        odo_on = False
                 translation_field.setSFVec3f(list(translation))
                 rotation_field.setSFRotation(list(rotation))
                 motor.setPosition(msg.wheel_angle)
