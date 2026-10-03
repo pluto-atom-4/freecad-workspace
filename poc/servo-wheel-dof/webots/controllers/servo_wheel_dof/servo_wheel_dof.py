@@ -14,6 +14,11 @@ Behavior:
   the pose from servo_wheel_dof.wbt.
 - Each step prints "t=... angle_rad=... velocity_rad_s=..." read back from
   "wheel_sensor" via sensor_read.read_sensor().
+- Opt-in telemetry (issue #306): env SWD_TELEMETRY=1 emits one CSV row per step
+  (columns in telemetry.COLUMNS; pose columns stay nan until #308). With
+  SWD_TELEMETRY_FILE the rows go to that file (relative paths land in the
+  controller directory), else to stdout with the prefix "telemetry: ". Unset
+  SWD_TELEMETRY leaves all output unchanged.
 - The simulation must be RUNNING (not paused) for the controller to step.
 
 Only Webots-specific import is `controller`; message parsing, UDP draining and
@@ -36,6 +41,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from imu_udp_latest import drain_latest  # noqa: E402
 from sensor_read import read_sensor  # noqa: E402
+from telemetry import (  # noqa: E402
+    TelemetryConfig,
+    TelemetryWriter,
+    parse_telemetry_env,
+)
 from upright_pose import upright_pose  # noqa: E402
 
 HOST = "127.0.0.1"
@@ -86,6 +96,34 @@ def _open_socket(port: int) -> socket.socket:
     return sock
 
 
+def _open_telemetry(cfg: TelemetryConfig) -> "TelemetryWriter | None":
+    """Return the telemetry writer for cfg, or None (off or file unusable).
+
+    File mode opens the path with "w"; stdout mode never owns sys.stdout.
+    Never raises: an unusable file prints ONE stderr line and returns None.
+    """
+    if not cfg.enabled:
+        return None
+    if not cfg.path:
+        _say("telemetry -> stdout")
+        return TelemetryWriter(sys.stdout, prefix="telemetry: ", owns_file=False)
+    path = os.path.abspath(cfg.path)
+    try:
+        fileobj = open(path, "w", encoding="utf-8", newline="")
+    except (OSError, ValueError) as exc:
+        _say(f"ERROR: cannot open telemetry file {path} ({exc}); telemetry off",
+             err=True)
+        return None
+    writer = TelemetryWriter(fileobj)
+    if writer.failed:
+        writer.close()
+        _say(f"ERROR: cannot write telemetry file {path}; telemetry off",
+             err=True)
+        return None
+    _say(f"telemetry -> {path}")
+    return writer
+
+
 def main() -> int:
     try:
         port = _read_port()
@@ -129,6 +167,11 @@ def main() -> int:
         return 1
     _say(f"listening on {HOST}:{port}")
 
+    cfg = parse_telemetry_env(os.environ)
+    for warning in cfg.warnings:
+        _say(warning, err=True)
+    telemetry = _open_telemetry(cfg)
+
     # PositionSensor must be enabled at the sim timestep, or getValue() -> nan.
     # The motor stays in its default position-control mode (no setPosition(inf)).
     sensor.enable(timestep)
@@ -137,11 +180,15 @@ def main() -> int:
     invalid_total = 0
     angle_prev_rad = None
     t_prev_s = None
+    msgs_total = 0  # valid datagrams so far (telemetry only)
+    t_last_msg = None  # sim time of the last valid datagram
+    cmd = None  # last commanded wheel_angle (rad)
 
     try:
         while robot.step(timestep) != -1:
             t_s = robot.getTime()
             result = drain_latest(sock)
+            msgs_total += result.valid
 
             if result.invalid:
                 before = invalid_total
@@ -159,6 +206,8 @@ def main() -> int:
                 translation_field.setSFVec3f(list(translation))
                 rotation_field.setSFRotation(list(rotation))
                 motor.setPosition(msg.wheel_angle)
+                t_last_msg = t_s
+                cmd = msg.wheel_angle
 
             reading = read_sensor(
                 t_s=t_s,
@@ -168,9 +217,31 @@ def main() -> int:
             )
             _log(reading.t_s, reading.angle_rad, reading.velocity_rad_s)
 
+            if telemetry is not None:
+                try:
+                    # COLUMNS order. Pose columns (9 x None -> nan) are filled
+                    # by the wheel-node wiring (#308); warn is 0 until then.
+                    kinematics = (
+                        t_s,
+                        msgs_total,
+                        None if t_last_msg is None else t_s - t_last_msg,
+                        cmd,
+                        reading.angle_rad,
+                        None if cmd is None else cmd - reading.angle_rad,
+                        reading.velocity_rad_s,
+                    )
+                    telemetry.write_row(kinematics + (None,) * 9 + (0,))
+                except Exception as exc:  # telemetry must never stop the sim
+                    _say(f"ERROR: telemetry row failed ({exc!r}); telemetry off",
+                         err=True)
+                    telemetry.close()
+                    telemetry = None
+
             angle_prev_rad = reading.angle_rad
             t_prev_s = reading.t_s
     finally:
+        if telemetry is not None:
+            telemetry.close()  # never raises; flushes the last rows
         sock.close()
     return 0
 
