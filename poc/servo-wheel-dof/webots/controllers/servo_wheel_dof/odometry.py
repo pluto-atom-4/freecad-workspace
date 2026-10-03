@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Kinematic odometry for the servo-wheel-dof POC (issue #321, sub-issue of #301).
+Kinematic odometry for the servo-wheel-dof POC (issues #321/#322, sub-issues of #301).
 
 Pure step function: turns the change of the COMMANDED wheel_angle (radians) into a
 world-frame offset of the wheel centre, assuming no-slip rolling on the floor.
@@ -20,15 +20,27 @@ Conventions:
   wheel_angle (None before the first message).
 - The first message never moves the robot: it only records prev_angle.
 - Non-finite wheel_angle or yaw: the state is returned unchanged, prev_angle
-  included, so the delta accumulates over the gap and is applied along the
-  next finite yaw.
+  and clamped included, so the delta accumulates over the gap and is applied
+  along the next finite yaw.
+- Floor clamp (issue #322): the floor is 2 m x 2 m centred at the origin and
+  OFFSET_LIMIT_M = 0.9 keeps the wheel centre inside a +-0.9 m box. With
+  step_odometry(..., limit=L) x and y are clamped independently into
+  [-L, +L] (a box, not a circle). OdomState.clamped is True only if THIS call
+  clamped a component; landing exactly on the limit is not clamped. limit=None
+  never clamps. A limit that is not finite or <= 0 raises ValueError, checked
+  first, before any other argument.
+- No windup: the clamped x, y are stored and prev_angle still follows the
+  commanded wheel_angle, so reversing the angle moves the robot back at once.
+- apply_offset(translation, state) adds (state.x, state.y) to the x, y of an
+  upright_pose translation; z is returned untouched, so rim contact holds.
 
 Usage:
-    from odometry import OdomState, step_odometry
+    from odometry import OFFSET_LIMIT_M, OdomState, apply_offset, step_odometry
 
     state = OdomState()
-    state = step_odometry(state, wheel_angle, yaw)
-    # state.x, state.y: offset of the wheel centre (m)
+    state = step_odometry(state, wheel_angle, yaw, limit=OFFSET_LIMIT_M)
+    # state.x, state.y: offset of the wheel centre (m); state.clamped: hit edge
+    translation = apply_offset(upright_translation, state)
 """
 
 from __future__ import annotations
@@ -42,6 +54,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from upright_pose import WHEEL_RADIUS  # noqa: E402
 
+OFFSET_LIMIT_M = 0.9  # half-width of the allowed box on the 2 m x 2 m floor (m)
+
 
 @dataclass(frozen=True)
 class OdomState:
@@ -50,6 +64,7 @@ class OdomState:
     x: float = 0.0
     y: float = 0.0
     prev_angle: float | None = None
+    clamped: bool = False  # True iff the last step_odometry call clamped x or y
 
 
 def rim_direction(yaw: float) -> tuple[float, float]:
@@ -71,6 +86,7 @@ def step_odometry(
     yaw: float,
     *,
     radius: float = WHEEL_RADIUS,
+    limit: float | None = None,
 ) -> OdomState:
     """
     Advance the odometry by one wheel_angle sample.
@@ -80,11 +96,20 @@ def step_odometry(
         wheel_angle: Commanded wheel angle (radians, unbounded).
         yaw: Robot heading about Z (radians).
         radius: Wheel radius (m).
+        limit: Box half-width (m). None disables the clamp. Otherwise x and y
+            are clamped independently into [-limit, +limit].
 
     Returns:
         The new OdomState. If wheel_angle or yaw is not finite the same state
-        is returned. On the first finite call only prev_angle is set.
+        is returned (clamped included). On the first finite call only
+        prev_angle is set. clamped is True iff this call clamped x or y.
+
+    Raises:
+        ValueError: limit is not None and is not finite or is <= 0. Checked
+            before anything else, also on the first call and for bad angles.
     """
+    if limit is not None and not (math.isfinite(limit) and limit > 0):
+        raise ValueError(f"limit must be a finite number > 0 or None, got {limit!r}")
     if not (math.isfinite(wheel_angle) and math.isfinite(yaw)):
         return state
     if state.prev_angle is None:
@@ -94,6 +119,27 @@ def step_odometry(
     ux, uy = rim_direction(yaw)
     x = state.x + radius * delta * ux
     y = state.y + radius * delta * uy
-    # Later issues (#322/#323): clamp x, y to the floor box right here,
-    # before building the new state.
-    return OdomState(x, y, wheel_angle)
+    if limit is None:
+        return OdomState(x, y, wheel_angle)
+    cx = min(max(x, -limit), limit)
+    cy = min(max(y, -limit), limit)
+    # Compare after clamping: landing exactly on the limit is not "clamped".
+    return OdomState(cx, cy, wheel_angle, clamped=(cx != x or cy != y))
+
+
+def apply_offset(
+    translation: tuple[float, float, float], state: OdomState
+) -> tuple[float, float, float]:
+    """
+    Add the odometry offset to an upright_pose translation.
+
+    Args:
+        translation: (tx, ty, tz) from upright_pose (metres).
+        state: Odometry state; only x and y are used.
+
+    Returns:
+        (tx + state.x, ty + state.y, tz). z is the same value, untouched, so
+        the lowest rim point stays on the floor.
+    """
+    tx, ty, tz = translation
+    return (tx + state.x, ty + state.y, tz)
