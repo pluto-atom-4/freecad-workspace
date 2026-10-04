@@ -41,6 +41,23 @@ mamba activate pendulum-tools
 python3 <script.py>
 ```
 
+### Companion Project: balancing-robot-controller (separate repository)
+
+The firmware side of the inverted pendulum lives in its own PlatformIO repository,
+[balancing-robot-controller](https://github.com/pluto-atom-4/balancing-robot-controller)
+(C++, Seeed XIAO ESP32-C3, MPU-6050, Dynamixel wheel servos). This workspace stays
+Python-only: the Webots simulation, the PID/LQR reference cores, and the HAL
+(hardware abstraction layer) that lets the same controller code target either Webots or
+real hardware.
+
+- **Source of truth:** the Python side. The C++ repo holds committed, *generated* copies of
+  the LQR/PID gains header and the golden parity vectors, produced from this workspace
+  (planned: `export_cpp.py`, [#353](https://github.com/pluto-atom-4/freecad-workspace/issues/353)).
+- **Tracking:** Stage F of [#10](https://github.com/pluto-atom-4/freecad-workspace/issues/10),
+  parent [#338](https://github.com/pluto-atom-4/freecad-workspace/issues/338); the C++ work is
+  umbrella [balancing-robot-controller#22](https://github.com/pluto-atom-4/balancing-robot-controller/issues/22).
+- **Status:** Stage F is in progress; nothing is validated on real hardware yet.
+
 ## Environment Setup
 
 Each project has its own isolated mamba/conda environment — no `uv`, no `pyproject.toml`,

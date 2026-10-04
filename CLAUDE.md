@@ -15,6 +15,18 @@ generation (cadquery → OCP, trimesh). FreeCAD integration is headless-subproce
 `FREECAD_BIN` (see below), never imported into the `pendulum-tools` env — it bundles its own
 OpenCASCADE build, which conflicts with OCP's if mixed in-process.
 
+**balancing-robot-controller** (separate repo, NOT part of this workspace) — C++/PlatformIO
+firmware for the real robot (XIAO ESP32-C3, MPU-6050, Dynamixel wheels). Local checkout:
+`~/Documents/platform-io-workspace/balancing-robot-controller`; GitHub:
+[pluto-atom-4/balancing-robot-controller](https://github.com/pluto-atom-4/balancing-robot-controller).
+Keep the split: **Python here, C++ there** — don't add C++ firmware sources to this repo.
+Python is the source of truth; the C++ repo commits *generated* gains header + golden parity
+vectors exported from here (planned `export_cpp.py`, #353), so edit the Python generators
+(#347/#348), never the generated C++ copies. Changes to the HAL contract (units, pitch sign,
+`THETA_REF`, dt semantics) must bump `HAL_CONTRACT_VERSION` (#339) and be mirrored in the C++
+repo's `lib/hal_iface`. Tracking: Stage F parent #338; C++ umbrella
+balancing-robot-controller#22. Target board is ESP32-C3 only (S3 is a future enhancement).
+
 ## Common Development Commands
 
 ```bash
