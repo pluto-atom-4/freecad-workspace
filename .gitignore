@@ -105,3 +105,8 @@ NOTICE
 graphify-out/
 .graphify_cache/
 GRAPH_REPORT.md
+/poc/servo-wheel-dof/odo_gui.csv
+/poc/servo-wheel-dof/run1.csv
+/poc/servo-wheel-dof/run_gui.csv
+/poc/servo-wheel-dof/run_gui2.csv
+/poc/servo-wheel-dof/webots/controllers/servo_wheel_dof/swd_sender.py

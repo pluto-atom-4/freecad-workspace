@@ -21,6 +21,11 @@ tools:
   - mcp__code-review-graph__get_impact_radius_tool
   - mcp__code-review-graph__get_affected_flows_tool
   - mcp__code-review-graph__get_minimal_context_tool
+  - mcp__github__list_issues
+  - mcp__github__search_issues
+  - mcp__github__issue_read
+  - mcp__github__list_pull_requests
+  - mcp__github__pull_request_read
 thinking:
   effort: medium
 ---
