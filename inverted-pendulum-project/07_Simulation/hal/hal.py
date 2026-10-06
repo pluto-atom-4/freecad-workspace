@@ -6,7 +6,7 @@ All angles in radians, all rates in rad/s, all times in seconds. NOT degrees. (D
 
 pitch_rad has the same sign convention as Webots InertialUnit getRollPitchYaw()[1]. The Webots backend passes it through unchanged. The MCU backend applies exactly ONE sign constant (kPitchSign, balancing-robot-controller#30); that sign is verified only in hardware-in-the-loop, not in this repo.
 
-gyro_rad_s is rad/s in body axes; index 1 is pitch rate d(pitch)/dt. Webots Gyro is rad/s per the Webots reference manual (NOT checked locally); lqr_controller.py feeds gyro_vals[1] unconverted into K. Sign agreement of gyro_y with d(pitch)/dt is not independently verified.
+gyro_rad_s is rad/s in body axes; index 1 is pitch rate d(pitch)/dt. Webots Gyro is rad/s per the Webots reference manual (NOT checked locally); LqrBalance.step (hal/control_core.py) feeds imu.gyro_rad_s[1] unconverted into K (the Webots LQR controller did the same inline before #346). Sign agreement of gyro_y with d(pitch)/dt is not independently verified.
 
 Gyro/IMU bias calibration (risk R7) is applied INSIDE the backend before an ImuSample is returned; callers never see raw biased data. A backend must not return samples (HalFault) until calibration succeeded.
 
