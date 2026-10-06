@@ -177,7 +177,7 @@ def make_jittered_periods(nominal_s, jitter_s, n, seed):
 def webots_fire_periods(n, timestep_ms=16, control_ms=20):
     """Reproduce Webots accumulator-based firing pattern.
 
-    Emulates the control loop in lqr_controller.py lines 204-211:
+    Emulates the accumulator in WebotsHal.wait_next_tick (hal/webots_hal.py; it was inline in the Webots controllers before #346):
     Fixed-rate control gating via accumulator pattern.
 
     Args:

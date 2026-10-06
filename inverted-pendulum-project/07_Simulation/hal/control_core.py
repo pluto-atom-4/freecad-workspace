@@ -76,7 +76,7 @@ class PidBalance:
             ControlOutput with clamped command and debug info
 
         Note:
-            error = -pitch (same as pendulum_controller.py:132; do NOT change; sign UNVERIFIED)
+            error = -pitch (carried over unchanged from the PID controller's inline code before #346, see git history; do NOT change; sign UNVERIFIED, #359)
         """
         pitch = float(imu.pitch_rad)
         dt = float(dt_s)
