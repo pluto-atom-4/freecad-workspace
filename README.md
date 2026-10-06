@@ -52,11 +52,11 @@ real hardware.
 
 - **Source of truth:** the Python side. The C++ repo holds committed, *generated* copies of
   the LQR/PID gains header and the golden parity vectors, produced from this workspace
-  (planned: `export_cpp.py`, [#353](https://github.com/pluto-atom-4/freecad-workspace/issues/353)).
+  (`07_Simulation/hal/export_cpp.py`, [#353](https://github.com/pluto-atom-4/freecad-workspace/issues/353), a manual local step).
 - **Tracking:** Stage F of [#10](https://github.com/pluto-atom-4/freecad-workspace/issues/10),
   parent [#338](https://github.com/pluto-atom-4/freecad-workspace/issues/338); the C++ work is
   umbrella [balancing-robot-controller#22](https://github.com/pluto-atom-4/balancing-robot-controller/issues/22).
-- **Status:** Stage F is in progress; nothing is validated on real hardware yet.
+- **Status:** the Stage F Python side (HAL contract, FakeHal, WebotsHal, the ported Webots controllers, float32 and jitter-budget spikes, parity vectors, gains header and the exporter) is merged; the C++ side is in progress (umbrella balancing-robot-controller#22). Nothing is validated on real hardware, and PID sign/stability is untested ([#359](https://github.com/pluto-atom-4/freecad-workspace/issues/359)).
 
 ## Environment Setup
 

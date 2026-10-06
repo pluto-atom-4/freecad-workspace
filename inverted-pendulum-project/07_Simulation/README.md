@@ -574,4 +574,14 @@ Watch the Webots console for test_imu controller output (same as Stage B3 test).
 
 # Hardware Compatibility: Gyro Availability (Stage E Caveat, Issue #217)
 
-The Webots simulator includes a Gyro device injected into the PROTO via Stage B4's YAML-driven `sensors.yaml` configuration. **Real hardware (Stage F ESP32-S3 HAL) may not have a native hardware gyroscope.** Any Stage F HAL implementation must check device availability at runtime and handle graceful fallback (e.g., disable gyro-based feedback or substitute IMU-derived rates) if the device is absent. Simulator-only sensors like Gyro should be optional in control law design — do not mandate them for Stage E proof-of-concept.
+The Webots simulator includes a Gyro device injected into the PROTO via Stage B4's YAML-driven `sensors.yaml` configuration. The Stage F target hardware (Seeed XIAO ESP32-C3 with MPU-6050) includes a native hardware gyroscope. The HAL contract (`hal/hal.py`) treats the gyro as required: `read_imu()` returns `gyro_rad_s` in rad/s (index 1 = pitch rate), and a backend raises `HalFault` when the device is missing or the reading is None, NaN, infinite, or wrong length, with no fabricated zeros (see `hal/webots_hal.py` implementation). The Webots Gyro unit (rad/s per the Webots reference manual) and sign agreement with pitch rate are NOT verified locally; PID sign and stability are untested (issue #359). The Stage E proof-of-concept did not mandate gyro support—the PID controller design does not use the gyroscope.
+
+## Stage F HAL Package
+
+The HAL package (`hal/`) contains the contract (`hal.py`), simulation backends (`FakeHal`, `WebotsHal`), control cores, float32 emulation, jitter budget utilities, loop support, LQR header generator (`gen_lqr_header.py`), parity vector generator (`gen_parity_vectors.py`) with its golden vector set (`parity_vectors.json`), and a C++ exporter (`export_cpp.py`). Test the HAL layer from the repo root:
+
+```bash
+mamba run -n pendulum-tools python3 -m pytest -q inverted-pendulum-project/07_Simulation/hal
+```
+
+Webots controllers now run through `WebotsHal` and log a data row every Nth control tick (`SENSOR_LOG_THROTTLE`, default 50, so about 1.0 s with the 20 ms mean control period) instead of every Nth 16 ms Webots step (about 0.8 s before issue #346).
