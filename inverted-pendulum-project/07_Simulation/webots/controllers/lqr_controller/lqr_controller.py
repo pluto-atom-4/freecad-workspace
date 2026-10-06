@@ -5,6 +5,12 @@ LQR state targets the true resting equilibrium (~-0.1086 rad) via a reference
 offset (THETA_REF_RAD), not an augmented integral state — see issue #220 for
 why this method was chosen over integral augmentation (avoids reintroducing
 windup risk and extra tuning).
+
+Logging cadence: data rows are logged every Nth control tick (mean 20 ms), not
+every Nth 16 ms Webots step (changed in #346).
+
+Loop runs through hal.webots_hal.WebotsHal and hal.control_core.LqrBalance;
+Webots behavior is unverified.
 """
 
 import sys
@@ -33,12 +39,23 @@ if "_LQR_REEXEC" not in os.environ:
             f"to a python3 with numpy/scipy installed (see issue #219)."
         )
 
-from controller import Robot, Supervisor
+from controller import Supervisor
 from pathlib import Path
-import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from plant_lqr import default_gain
+from hal.hal import HalFault
+from hal.webots_hal import WebotsHal
+from hal.control_core import LqrBalance
+from hal.loop_support import (
+    is_saturated,
+    should_log_row,
+    time_limit_reached,
+    require_value,
+    format_startup_rate_line,
+    format_wheel_motors_line,
+    format_data_row,
+    format_summary_lines,
+)
 
 # TODO(#187): Replace hardcoded SENSOR_NAMES with manifest resolver
 SENSOR_NAMES = {
@@ -60,6 +77,7 @@ CONTROL_RATE_MS = int(os.environ.get("CONTROL_RATE_MS", "20"))
 CONTROL_PERIOD_S = CONTROL_RATE_MS / 1000.0
 
 # Sensor log throttling (configurable via env var)
+# every Nth control tick (mean 20 ms); before #346 it was every Nth 16 ms Webots step
 SENSOR_LOG_THROTTLE = int(os.environ.get("SENSOR_LOG_THROTTLE", "50"))
 
 # Simulation time limit for automated testing (0 = disabled)
@@ -70,41 +88,21 @@ TEST_MAX_SIM_TIME_S = float(os.environ.get("TEST_MAX_SIM_TIME_S", "0"))
 # across both PID and LQR live logs (~-0.1084 to -0.1086 rad).
 THETA_REF_RAD = float(os.environ.get("THETA_REF_RAD", "-0.1086"))
 
-# LQR gain matrix (computed once at import time)
-K = default_gain()
+# Log file path
+LOG_PATH = Path(__file__).parent / "controller.log"
 
 def main():
     robot = Supervisor()
-    timestep = int(robot.getBasicTimeStep())
-
-    # Validate that timestep < CONTROL_RATE_MS (required for single-fire-per-step assumption)
-    if timestep >= CONTROL_RATE_MS:
-        print(f"ERROR: basicTimeStep ({timestep}ms) >= CONTROL_RATE_MS ({CONTROL_RATE_MS}ms). Adjust world or CONTROL_RATE_MS env var.", file=sys.stderr)
+    try:
+        hal = WebotsHal(robot, SENSOR_NAMES, MOTOR_NAMES, control_period_ms=CONTROL_RATE_MS)
+    except HalFault as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    # Get sensor devices
-    sensors = {}
-    for key, device_name in SENSOR_NAMES.items():
-        device = robot.getDevice(device_name)
-        if device is None:
-            print(f"ERROR: Sensor '{device_name}' (key: {key}) not found", file=sys.stderr)
-            return 1
-        sensors[key] = device
-        device.enable(timestep)
+    core = LqrBalance(theta_ref_rad=THETA_REF_RAD)
+    sensor_log_count = 0
 
-    # Get motor devices
-    motors = {}
-    for key, device_name in MOTOR_NAMES.items():
-        device = robot.getDevice(device_name)
-        if device is None:
-            print(f"ERROR: Motor '{device_name}' (key: {key}) not found", file=sys.stderr)
-            return 1
-        motors[key] = device
-
-    # Log output (dual-sink: stdout + file)
-    log_path = Path(__file__).parent / "controller.log"
-
-    with open(log_path, "w") as log_file:
+    with open(LOG_PATH, "w") as log_file:
         def log_msg(msg, always_flush=False):
             print(msg)
             log_file.write(msg + "\n")
@@ -112,123 +110,60 @@ def main():
                 log_file.flush()
 
         log_msg("LQR controller started. Reading all sensors (IMU, Gyro, wheel position, pivot joints).", always_flush=True)
-        log_msg(f"Control rate: {CONTROL_RATE_MS}ms ({1000.0/CONTROL_RATE_MS:.1f}Hz)", always_flush=True)
+        log_msg(format_startup_rate_line(CONTROL_RATE_MS), always_flush=True)
         # LQR_Theta is offset-corrected (pitch - THETA_REF_RAD) to target true resting equilibrium; see issue #220
         log_msg("Time(s) IMU_Roll(rad) IMU_Pitch(rad) IMU_Yaw(rad) IMU_Ax(m/s2) IMU_Ay(m/s2) IMU_Az(m/s2) WheelL(rad) WheelR(rad) PivotL(rad) PivotR(rad) LQR_Theta(rad) LQR_ThetaDot(rad/s) LQR_Cmd_Raw LQR_Cmd_Clamped", always_flush=True)
 
-        # Initialize motors: switch to velocity control mode
-        for key, motor in motors.items():
-            motor.setPosition(float('inf'))
-            motor.setVelocity(0)
-
-        wheel_left_max_vel = motors["wheel_left"].getMaxVelocity()
-        wheel_left_max_torque = motors["wheel_left"].getMaxTorque()
-        wheel_right_max_vel = motors["wheel_right"].getMaxVelocity()
-        wheel_right_max_torque = motors["wheel_right"].getMaxTorque()
-        log_msg(f"Wheel motors: mode=velocity, wheel_left maxVelocity={wheel_left_max_vel:.2f} maxTorque={wheel_left_max_torque:.2f}, wheel_right maxVelocity={wheel_right_max_vel:.2f} maxTorque={wheel_right_max_torque:.2f}", always_flush=True)
+        wheel_left_max_vel = float(hal.robot.getDevice(MOTOR_NAMES["wheel_left"]).getMaxVelocity())
+        wheel_left_max_torque = float(hal.robot.getDevice(MOTOR_NAMES["wheel_left"]).getMaxTorque())
+        wheel_right_max_vel = float(hal.robot.getDevice(MOTOR_NAMES["wheel_right"]).getMaxVelocity())
+        wheel_right_max_torque = float(hal.robot.getDevice(MOTOR_NAMES["wheel_right"]).getMaxTorque())
+        log_msg(format_wheel_motors_line(wheel_left_max_vel, wheel_left_max_torque, wheel_right_max_vel, wheel_right_max_torque), always_flush=True)
         log_msg("NOTE: Pivot servo motors (pendulum_pivot_joint/pendulum_pivot_right_joint) intentionally left at Webots default position-hold this stage.", always_flush=True)
 
-        # Fixed-rate control loop state
-        control_accum_ms = 0.0
         control_step_count = 0
-        control_fire_times = []  # for jitter measurement at shutdown
-        control_prev_fire_time = None  # for computing dt in LQR step
-        saturation_count = 0  # for tracking output saturation events
-        sensor_log_count = 0  # for throttling sensor log lines
+        control_fire_times = []
+        saturation_count = 0
 
-        # LQR state and command tracking for telemetry logging
-        theta = 0.0
-        theta_dot = 0.0
-        raw_cmd = 0.0
-        cmd_velocity = 0.0
-
-        def _run_control_step(t, roll, pitch, yaw, ax, ay, az, wl, wr, pl, pr, theta_dot_gyro):
-            """LQR balance control: state vector [theta, theta_dot] from pitch + gyro.
-
-            theta = pitch - THETA_REF_RAD (offset-corrected to true resting equilibrium;
-            see issue #220), theta_dot = gyro Y-axis rate.
-            Sign convention verified empirically (#219): recovers from a manual
-            perturbation back to the resting tilt within under 1s, does not amplify.
-            LQR gain matrix K pre-computed via plant_lqr.default_gain().
-            """
-            nonlocal control_prev_fire_time, saturation_count, theta, theta_dot, raw_cmd, cmd_velocity
-
-            # State vector
-            theta = pitch - THETA_REF_RAD
-            theta_dot = theta_dot_gyro
-
-            # Compute command: u = -K @ x
-            state = np.array([theta, theta_dot])
-            raw_cmd = float(-(K @ state)[0])
-
-            # Clamp to actuator maxVelocity
-            cmd_velocity = max(-1.0, min(1.0, raw_cmd))
-
-            # Track saturation events (BEFORE clamping, to reflect true saturation)
-            if abs(raw_cmd) >= 0.95 * 1.0:
-                saturation_count += 1
-
-            # Command both wheels
-            motors["wheel_left"].setVelocity(cmd_velocity)
-            motors["wheel_right"].setVelocity(cmd_velocity)
-
-        # Main loop: run indefinitely until Webots quit signal (-1)
         try:
-            while robot.step(timestep) != -1:
-                t = robot.getTime()
+            while True:
+                dt = hal.wait_next_tick()
+                if dt < 0:
+                    break
 
-                # Check simulated time limit (for automated testing)
-                if TEST_MAX_SIM_TIME_S > 0 and t >= TEST_MAX_SIM_TIME_S:
+                t = hal.now_s()
+
+                if time_limit_reached(t, TEST_MAX_SIM_TIME_S):
                     log_msg(f"Simulated time limit reached ({t:.3f}s >= {TEST_MAX_SIM_TIME_S}s), stopping.", always_flush=True)
                     robot.simulationQuit(0)
 
-                # Read sensors
-                imu_device = sensors["imu"]
-                rpy = imu_device.getRollPitchYaw()
-                gyro_device = sensors["gyro"]
-                gyro_vals = gyro_device.getValues()
-                wl = sensors["wheel_left"].getValue()
-                wr = sensors["wheel_right"].getValue()
-                pl = sensors["pivot_left"].getValue()
-                pr = sensors["pivot_right"].getValue()
-
-                # Log (check for NaN)
-                if None in [rpy, gyro_vals, wl, wr, pl, pr] or any(x is None for x in rpy) or any(x is None for x in gyro_vals):
-                    log_msg(f"{t:.3f} READING_ERROR: sensor returned None", always_flush=True)
+                try:
+                    imu = hal.read_imu()
+                    enc = hal.read_encoders()
+                    pl = require_value(hal.sensor("pivot_left").getValue(), "pivot_left")
+                    pr = require_value(hal.sensor("pivot_right").getValue(), "pivot_right")
+                except HalFault as exc:
+                    log_msg(f"{t:.3f} READING_ERROR: {exc}", always_flush=True)
                     continue
 
-                roll, pitch, yaw = rpy
-                ax, ay, az = 0.0, 0.0, 0.0  # No Accelerometer device on this robot; InertialUnit has no getAcceleration() (see #202)
-                theta_dot_gyro = gyro_vals[1]  # pitch-rate is Y-axis, index 1
+                control_step_count += 1
+                control_fire_times.append(t)
 
-                # Fixed-rate control loop gating (accumulator pattern)
-                # Note: if (not while) assumes timestep < CONTROL_RATE_MS per startup validation above.
-                # Single fire per step ensures all samples have unique t values for jitter measurement.
-                control_accum_ms += timestep
-                if control_accum_ms >= CONTROL_RATE_MS:
-                    control_accum_ms -= CONTROL_RATE_MS  # carry remainder
-                    control_step_count += 1
-                    control_fire_times.append(t)
-                    _run_control_step(t, roll, pitch, yaw, ax, ay, az, wl, wr, pl, pr, theta_dot_gyro)
+                out = core.step(imu, dt)
 
-                # Log sensor data with throttle gate
+                if is_saturated(out.raw_cmd):
+                    saturation_count += 1
+
+                hal.write_wheel_velocity(out.cmd_rad_s, out.cmd_rad_s)
+
                 sensor_log_count += 1
-                if sensor_log_count % SENSOR_LOG_THROTTLE == 0:
-                    log_msg(f"{t:.3f} {roll:.4f} {pitch:.4f} {yaw:.4f} {ax:.4f} {ay:.4f} {az:.4f} {wl:.4f} {wr:.4f} {pl:.4f} {pr:.4f} {theta:.4f} {theta_dot:.4f} {raw_cmd:.4f} {cmd_velocity:.4f}")
+                if should_log_row(sensor_log_count, SENSOR_LOG_THROTTLE):
+                    log_msg(format_data_row(t, imu, enc, pl, pr, out.debug + (out.raw_cmd, out.cmd_rad_s)))
+
         finally:
-            log_msg(f"Controller finished at t={robot.getTime():.3f}s", always_flush=True)
-
-            # Jitter and frequency measurement
-            if control_fire_times and len(control_fire_times) > 1:
-                diffs = [control_fire_times[i+1] - control_fire_times[i] for i in range(len(control_fire_times)-1)]
-                mean_period_ms = sum(diffs) * 1000 / len(diffs)
-                mean_freq_hz = 1000 / mean_period_ms if mean_period_ms > 0 else 0
-                min_period_ms = min(diffs) * 1000
-                max_period_ms = max(diffs) * 1000
-                max_jitter_ms = max(abs(d * 1000 - CONTROL_RATE_MS) for d in diffs) if diffs else 0
-                log_msg(f"Control rate: {mean_freq_hz:.2f}Hz (target {1000/CONTROL_RATE_MS:.2f}Hz), periods {min_period_ms:.1f}-{max_period_ms:.1f}ms (target {CONTROL_RATE_MS}ms), max deviation {max_jitter_ms:.2f}ms", always_flush=True)
-
-            log_msg(f"Saturation events: {saturation_count} of {control_step_count} control steps", always_flush=True)
+            log_msg(f"Controller finished at t={hal.now_s():.3f}s", always_flush=True)
+            for line in format_summary_lines(control_fire_times, CONTROL_RATE_MS, saturation_count, control_step_count):
+                log_msg(line, always_flush=True)
 
     return 0
 
