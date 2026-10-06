@@ -21,8 +21,11 @@ firmware for the real robot (XIAO ESP32-C3, MPU-6050, Dynamixel wheels). Local c
 [pluto-atom-4/balancing-robot-controller](https://github.com/pluto-atom-4/balancing-robot-controller).
 Keep the split: **Python here, C++ there** — don't add C++ firmware sources to this repo.
 Python is the source of truth; the C++ repo commits *generated* gains header + golden parity
-vectors exported from here (planned `export_cpp.py`, #353), so edit the Python generators
-(#347/#348), never the generated C++ copies. Changes to the HAL contract (units, pitch sign,
+vectors exported from here by `inverted-pendulum-project/07_Simulation/hal/export_cpp.py`
+(#353; a manual LOCAL step: writes the two generated files into a local C++ checkout, no
+git, no network, no cross-repo CI), so edit the Python generators (`gen_lqr_header.py` #348,
+`gen_parity_vectors.py` #347; `hal/parity_vectors.json` is generated, never hand-edited),
+never the generated C++ copies. Changes to the HAL contract (units, pitch sign,
 `THETA_REF`, dt semantics) must bump `HAL_CONTRACT_VERSION` (#339) and be mirrored in the C++
 repo's `lib/hal_iface`. Tracking: Stage F parent #338; C++ umbrella
 balancing-robot-controller#22. Target board is ESP32-C3 only (S3 is a future enhancement).
@@ -41,7 +44,14 @@ mamba run -n freecad-mcp freecad-mcp --version  # also confirms the required "mc
 cd inverted-pendulum-project
 export FREECAD_BIN=~/.local/bin/freecadcmd1.1   # or rely on "freecadcmd" on PATH
 mamba run -n pendulum-tools python3 -m pytest -q
+
+# Stage F HAL, vectors and C++ exporter (inverted-pendulum-project/07_Simulation/hal)
+mamba run -n pendulum-tools python3 -m pytest -q inverted-pendulum-project/07_Simulation/hal  # HAL tests
+mamba run -n pendulum-tools python3 inverted-pendulum-project/07_Simulation/hal/gen_parity_vectors.py --check  # Python-only drift check; C++ copies NOT checked
+mamba run -n pendulum-tools python3 inverted-pendulum-project/07_Simulation/hal/export_cpp.py --cpp-repo ~/Documents/platform-io-workspace/balancing-robot-controller --check  # byte-compare the C++ copies; omit --cpp-repo for a Python-only check
 ```
+
+In `hal/` code import `from hal.hal import ...` with `07_Simulation` on `sys.path` (`sys.path.insert(0, str(Path(__file__).resolve().parents[1]))`); never put `hal/` itself on `sys.path` (the module `hal/hal.py` would shadow the package).
 
 **`freecadcmd` 1.1.3 in this environment does not set `__name__ == "__main__"` for a plain
 positional or `--python` script argument** — a script's `if __name__ == "__main__":` guard
