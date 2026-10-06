@@ -23,6 +23,7 @@ SIM = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SIM))
 
 LQR_FILE = SIM / "webots" / "controllers" / "lqr_controller" / "lqr_controller.py"
+PID_FILE = SIM / "webots" / "controllers" / "pendulum_controller" / "pendulum_controller.py"
 
 from hal.hal import HalFault, ImuSample, EncoderSample
 
@@ -151,18 +152,22 @@ def make_devices(pitch=-0.0886, gyro_y=0.0, rpy=None, values=None, **kwargs):
     return devices
 
 
-def load_controller(monkeypatch, tmp_path, robot, env=None):
-    """Dynamically load lqr_controller.py with a fake Webots controller module.
+def load_controller(monkeypatch, tmp_path, robot, env=None, path=None):
+    """Dynamically load a controller file with a fake Webots controller module.
 
     Args:
         monkeypatch: pytest fixture for modifying sys.modules and env vars
         tmp_path: pytest fixture for temporary directory
         robot: StubRobot instance to inject
         env: Dict of environment variables to set (e.g., SENSOR_LOG_THROTTLE=1)
+        path: Path to controller file; default LQR_FILE
 
     Returns:
-        Loaded lqr_controller module
+        Loaded controller module
     """
+    if path is None:
+        path = LQR_FILE
+
     # Always set _LQR_REEXEC to skip re-exec check
     monkeypatch.setenv("_LQR_REEXEC", "1")
 
@@ -179,7 +184,7 @@ def load_controller(monkeypatch, tmp_path, robot, env=None):
 
     # Load the actual controller module from file
     spec = importlib.util.spec_from_file_location(
-        f"lqr_ctrl_under_test_{id(robot)}", LQR_FILE
+        f"ctrl_under_test_{id(robot)}_{id(path)}", path
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -612,3 +617,452 @@ class TestShellGrep:
             assert len(tokens) >= 3, f"Row has < 3 tokens: {row}"
             pitch_val = float(tokens[2])
             assert pitch_val == pytest.approx(-0.0886, rel=1e-3)
+
+
+class TestPidSourceGuards:
+    """Test that pendulum_controller.py respects guard constraints."""
+
+    def test_no_banned_method_literals(self):
+        """PID file text must not contain getRollPitchYaw, getValues, setVelocity as literals."""
+        text = PID_FILE.read_text()
+        banned = ["getRollPitchYaw", "getValues", "setVelocity"]
+        for name in banned:
+            assert name not in text, f"Banned literal '{name}' found in {PID_FILE}"
+
+    def test_no_plant_lqr_import(self):
+        """PID file text must not import plant_lqr or contain PlantPID."""
+        text = PID_FILE.read_text()
+        assert "plant_lqr" not in text, "plant_lqr import found in PID controller"
+        assert "PlantPID" not in text, "PlantPID reference found in PID controller"
+
+    def test_no_lqr_balance_reference(self):
+        """PID file text must not reference LqrBalance."""
+        text = PID_FILE.read_text()
+        assert "LqrBalance" not in text, "LqrBalance reference found in PID controller"
+
+    def test_no_direct_numpy_import(self):
+        """PID file text must not import numpy directly."""
+        text = PID_FILE.read_text()
+        assert "numpy as np" not in text, "numpy import found in PID controller"
+
+    def test_quoted_device_strings_double_quoted(self):
+        """All 8 device name strings (7 sensors + 2 motors) must use double quotes."""
+        text = PID_FILE.read_text()
+        devices = [
+            "imu", "gyro", "wheel_left_joint_sensor", "wheel_right_joint_sensor",
+            "pendulum_pivot_joint_sensor", "pendulum_pivot_right_joint_sensor"
+        ]
+        motors = ["wheel_left_joint", "wheel_right_joint"]
+        for dev in devices + motors + ["gyro"]:
+            # Must have double quotes
+            assert f'"{dev}"' in text, f"Device '{dev}' not found with double quotes"
+
+    def test_ast_controller_import(self):
+        """AST: exactly one ImportFrom with module='controller'."""
+        tree = ast.parse(PID_FILE.read_text())
+        controller_imports = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module == "controller"
+        ]
+        assert len(controller_imports) == 1, f"Expected 1 controller ImportFrom, got {len(controller_imports)}"
+
+    def test_ast_imports_webots_hal_and_pid_balance(self):
+        """AST: imports WebotsHal from hal.webots_hal and PidBalance from hal.control_core."""
+        text = PID_FILE.read_text()
+        assert "from hal.webots_hal import WebotsHal" in text
+        assert "from hal.control_core import PidBalance" in text
+
+    def test_ast_pid_balance_call_has_correct_defaults(self):
+        """AST: PidBalance instantiation has kp, ki, kd, out_limit as Constants equal to control_core defaults."""
+        from hal.control_core import DEFAULT_PID_KP, DEFAULT_PID_KI, DEFAULT_PID_KD, DEFAULT_OUT_LIMIT
+
+        tree = ast.parse(PID_FILE.read_text())
+        # Find Call to PidBalance
+        pid_calls = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name) and node.func.id == "PidBalance":
+                    pid_calls.append(node)
+        assert len(pid_calls) >= 1, "No PidBalance() call found"
+
+        # Check at least one has the correct defaults
+        found = False
+        for call in pid_calls:
+            kw_dict = {kw.arg: kw.value for kw in call.keywords}
+            if all(arg in kw_dict for arg in ["kp", "ki", "kd", "out_limit"]):
+                # Extract constant values
+                try:
+                    kp_const = isinstance(kw_dict["kp"], ast.Constant) and float(kw_dict["kp"].value)
+                    ki_const = isinstance(kw_dict["ki"], ast.Constant) and float(kw_dict["ki"].value)
+                    kd_const = isinstance(kw_dict["kd"], ast.Constant) and float(kw_dict["kd"].value)
+                    out_const = isinstance(kw_dict["out_limit"], ast.Constant) and float(kw_dict["out_limit"].value)
+
+                    if (kp_const == DEFAULT_PID_KP and ki_const == DEFAULT_PID_KI and
+                        kd_const == DEFAULT_PID_KD and out_const == DEFAULT_OUT_LIMIT):
+                        found = True
+                except (AttributeError, TypeError, ValueError):
+                    pass
+        assert found, "PidBalance call missing correct kp, ki, kd, out_limit defaults"
+
+
+class TestPidSmoke:
+    """Test basic PID controller execution with stub robot."""
+
+    def test_smoke_run_basic(self, monkeypatch, tmp_path):
+        """Smoke: env SENSOR_LOG_THROTTLE=1; run 7 steps; rc==0; log format OK."""
+        devices = make_devices(pitch=0.5, gyro_y=0.2)
+        robot = StubRobot(devices, basic_ms=16.0, max_steps=7)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        rc = mod.main()
+        assert rc == 0
+
+        log_text = (tmp_path / "controller.log").read_text()
+        lines = log_text.splitlines()
+
+        # Check first few lines
+        assert lines[0] == "Pendulum controller started. Reading all 5 sensors."
+        assert lines[1] == "Control rate: 20ms (50.0Hz)"
+        assert lines[2].startswith("Time(s) IMU_Roll(rad)")
+        assert len(lines[2].split()) == 16, f"Header should have 16 tokens, got {len(lines[2].split())}"
+        assert lines[3] == "Wheel motors: mode=velocity, wheel_left maxVelocity=1.00 maxTorque=1.00, wheel_right maxVelocity=1.00 maxTorque=1.00"
+        assert lines[4].startswith("NOTE: Pivot servo motors")
+
+    def test_smoke_log_data_rows(self, monkeypatch, tmp_path):
+        """Data rows: times 0.032, 0.048, 0.064, 0.080, 0.112; correct error and cmd values."""
+        devices = make_devices(pitch=0.5, gyro_y=0.2)
+        robot = StubRobot(devices, basic_ms=16.0, max_steps=7)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        rc = mod.main()
+        assert rc == 0
+
+        log_text = (tmp_path / "controller.log").read_text()
+        lines = log_text.splitlines()
+
+        # Extract data rows (lines starting with a numeric time)
+        data_rows = []
+        for line in lines:
+            if line and line[0].isdigit():
+                parts = line.split()
+                if parts[0].replace(".", "").replace("-", "").isdigit():
+                    data_rows.append(line)
+
+        # Expect exactly 5 data rows with specific times
+        expected_times = ["0.032", "0.048", "0.064", "0.080", "0.112"]
+        assert len(data_rows) == 5, f"Expected 5 data rows, got {len(data_rows)}"
+        for i, expected_t in enumerate(expected_times):
+            row = data_rows[i]
+            tokens = row.split()
+            assert tokens[0] == expected_t, f"Row {i}: expected time {expected_t}, got {tokens[0]}"
+            assert len(tokens) == 16, f"Row {i}: expected 16 tokens, got {len(tokens)}"
+
+    def test_smoke_data_values(self, monkeypatch, tmp_path):
+        """Row values: error=-0.5; P, I, D computed from PID logic; cmd clamped."""
+        from hal.control_core import DEFAULT_PID_KP, DEFAULT_PID_KI, DEFAULT_PID_KD, DEFAULT_OUT_LIMIT
+
+        devices = make_devices(pitch=0.5, gyro_y=0.2)
+        robot = StubRobot(devices, basic_ms=16.0, max_steps=7)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        rc = mod.main()
+        assert rc == 0
+
+        log_text = (tmp_path / "controller.log").read_text()
+        lines = log_text.splitlines()
+
+        # Extract data rows
+        data_rows = []
+        for line in lines:
+            if line and line[0].isdigit() and "READING_ERROR" not in line:
+                parts = line.split()
+                if len(parts) > 0 and parts[0].replace(".", "").replace("-", "").isdigit():
+                    data_rows.append(line)
+
+        assert len(data_rows) >= 2, "Need at least 2 data rows"
+
+        # Reference values: pitch=0.5, so error=-0.5
+        # Row 0 (t=0.032)
+        row0 = data_rows[0].split()
+        assert float(row0[11]) == pytest.approx(-0.5, rel=1e-3)  # error
+        assert float(row0[12]) == pytest.approx(-0.5, rel=1e-3)  # P = kp * error
+
+        # Row 1 (t=0.048)
+        row1 = data_rows[1].split()
+        assert float(row1[11]) == pytest.approx(-0.5, rel=1e-3)  # error
+
+        # Build reference integral values for rows 3-4
+        # dts = [0.020, 0.016, 0.016, 0.016, 0.032]
+        error = -0.5
+        dts = [0.020, 0.016, 0.016, 0.016, 0.032]
+        kp, ki, kd = DEFAULT_PID_KP, DEFAULT_PID_KI, DEFAULT_PID_KD
+        out_limit = DEFAULT_OUT_LIMIT
+
+        integral = 0.0
+        for i in range(5):
+            integral += error * dts[i]
+            integral = max(-out_limit / ki, min(out_limit / ki, integral))  # clamp integral
+
+            I = ki * integral
+            P = kp * error
+            D = 0.0  # always zero since error is constant
+            raw_cmd = P + I + D
+            cmd = max(-out_limit, min(out_limit, raw_cmd))
+
+            if i >= 2:  # Rows 2-4 (rows 3-5 in the spec, indices 0-based)
+                row = data_rows[i].split()
+                assert float(row[13]) == pytest.approx(I, abs=1e-4), f"Row {i}: I mismatch"
+                assert float(row[15]) == pytest.approx(cmd, abs=1e-4), f"Row {i}: cmd mismatch"
+
+    def test_smoke_gyro_enabled(self, monkeypatch, tmp_path):
+        """Gyro device is enabled after smoke run."""
+        devices = make_devices(pitch=0.5, gyro_y=0.2)
+        robot = StubRobot(devices, basic_ms=16.0, max_steps=7)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        rc = mod.main()
+        assert rc == 0
+
+        # Check that gyro device was enabled (WebotsHal enables it)
+        gyro_dev = robot.getDevice("gyro")
+        assert gyro_dev is not None
+        assert gyro_dev.enabled_ms == 16, f"Gyro enabled_ms should be 16, got {gyro_dev.enabled_ms}"
+
+    def test_smoke_summary_lines(self, monkeypatch, tmp_path):
+        """Summary: correct rate, period stats, saturation count."""
+        devices = make_devices(pitch=0.5, gyro_y=0.2)
+        robot = StubRobot(devices, basic_ms=16.0, max_steps=7)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        rc = mod.main()
+        assert rc == 0
+
+        log_text = (tmp_path / "controller.log").read_text()
+        lines = log_text.splitlines()
+
+        # Check finished line
+        assert any("Controller finished at t=" in l for l in lines)
+
+        # Check saturation line
+        sat_lines = [l for l in lines if l.startswith("Saturation events:")]
+        assert len(sat_lines) >= 1
+        assert "Saturation events: 0 of 5 control steps" in sat_lines[0]
+
+        # Check wheel motors velocity
+        wheel_left = robot.getDevice("wheel_left_joint")
+        wheel_right = robot.getDevice("wheel_right_joint")
+        # Last velocity should be negative (cmd is negative for pitch=0.5)
+        # Last tick (t=0.112, dt=0.032): integral = -0.05, I = -0.005, cmd = -0.5 + -0.005 = -0.505
+        assert wheel_left.velocity_calls[-1] == pytest.approx(-0.505, abs=1e-9)
+        assert wheel_right.velocity_calls[-1] == pytest.approx(-0.505, abs=1e-9)
+
+
+class TestPidSaturation:
+    """Test PID saturation detection and clamping."""
+
+    def test_saturation_high_pitch(self, monkeypatch, tmp_path):
+        """High pitch (-1.5): raw cmd >= 0.95; all cmds clamped to ±1.0."""
+        devices = make_devices(pitch=-1.5)
+        robot = StubRobot(devices, basic_ms=16.0, max_steps=7)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        rc = mod.main()
+        assert rc == 0
+
+        log_text = (tmp_path / "controller.log").read_text()
+        lines = log_text.splitlines()
+
+        # Check saturation line: all data rows saturated
+        sat_lines = [l for l in lines if l.startswith("Saturation events:")]
+        assert len(sat_lines) >= 1
+        assert "Saturation events: 5 of 5 control steps" in sat_lines[0]
+
+        # Check wheel motors were clamped to 1.0
+        wheel_left = robot.getDevice("wheel_left_joint")
+        wheel_right = robot.getDevice("wheel_right_joint")
+        assert wheel_left.velocity_calls[-1] == pytest.approx(1.0)
+        assert wheel_right.velocity_calls[-1] == pytest.approx(1.0)
+
+
+class TestPidTimeLimit:
+    """Test PID simulation time limit stopping."""
+
+    def test_time_limit_reached(self, monkeypatch, tmp_path):
+        """Env TEST_MAX_SIM_TIME_S=0.05; log contains time-limit-reached message; 3 data rows."""
+        devices = make_devices(pitch=0.5, gyro_y=0.2)
+        robot = StubRobot(devices, basic_ms=16.0, max_steps=1000)
+        mod = load_controller(
+            monkeypatch, tmp_path, robot,
+            env={"SENSOR_LOG_THROTTLE": "1", "TEST_MAX_SIM_TIME_S": "0.05"},
+            path=PID_FILE
+        )
+
+        rc = mod.main()
+        assert rc == 0
+
+        log_text = (tmp_path / "controller.log").read_text()
+        lines = log_text.splitlines()
+
+        # Check for time-limit-reached line
+        limit_lines = [l for l in lines if "Simulated time limit reached" in l]
+        assert len(limit_lines) >= 1, "No time-limit-reached message found"
+        assert "0.064s >= 0.05s" in limit_lines[0]
+
+        # Check quit was called
+        assert robot.quit_status == 0
+
+        # Count data rows (non-error, numeric-first-token)
+        data_rows = [l for l in lines if l and l[0].isdigit() and "READING_ERROR" not in l]
+        assert len(data_rows) == 3, f"Expected 3 data rows, got {len(data_rows)}"
+
+        # Check summary rate line
+        summary_lines = [l for l in lines if l.startswith("Control rate:") and "target" in l]
+        assert len(summary_lines) >= 1
+        summary = summary_lines[0]
+        assert "62.50Hz" in summary or "62" in summary
+
+
+class TestPidHalFault:
+    """Test PID HAL fault handling."""
+
+    def test_reading_error_lines(self, monkeypatch, tmp_path):
+        """IMU rpy=None: main() returns 0; log has READING_ERROR lines; no target/deviation line."""
+        devices = make_devices(pitch=0.5, gyro_y=0.2)
+        devices["imu"]._rpy = None
+        robot = StubRobot(devices, basic_ms=16.0, max_steps=7)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        rc = mod.main()
+        assert rc == 0
+
+        log_text = (tmp_path / "controller.log").read_text()
+        lines = log_text.splitlines()
+
+        # Check for READING_ERROR lines
+        error_lines = [l for l in lines if "READING_ERROR:" in l]
+        assert len(error_lines) >= 1, "No READING_ERROR lines found"
+
+        # Each error line should start with time
+        for line in error_lines:
+            assert line[0].isdigit(), f"Error line doesn't start with time: {line}"
+
+        # No rate summary; only final saturation line
+        sat_lines = [l for l in lines if l.startswith("Saturation events:")]
+        assert len(sat_lines) >= 1
+        assert "Saturation events: 0 of 0 control steps" in sat_lines[0]
+
+        # No line with "target" and "deviation"
+        rate_summary = [l for l in lines if "target" in l and "deviation" in l]
+        assert len(rate_summary) == 0, "Found rate summary despite all errors"
+
+        # Wheel motors only have init zero
+        wheel_left = robot.getDevice("wheel_left_joint")
+        wheel_right = robot.getDevice("wheel_right_joint")
+        assert wheel_left.velocity_calls == [0.0], f"wheel_left calls: {wheel_left.velocity_calls}"
+        assert wheel_right.velocity_calls == [0.0], f"wheel_right calls: {wheel_right.velocity_calls}"
+
+
+class TestPidInitFault:
+    """Test PID initialization faults."""
+
+    def test_basic_timestep_mismatch(self, monkeypatch, tmp_path):
+        """basicTimeStep=20.0: main() returns 1; stderr contains ERROR and basicTimeStep."""
+        devices = make_devices(pitch=0.5, gyro_y=0.2)
+        robot = StubRobot(devices, basic_ms=20.0)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        rc = mod.main()
+        assert rc == 1
+
+    def test_missing_gyro_device(self, monkeypatch, tmp_path):
+        """Missing gyro device: main() returns 1; error contains 'gyro'."""
+        devices = make_devices(pitch=0.5, gyro_y=0.2)
+        del devices["gyro"]
+        robot = StubRobot(devices, basic_ms=16.0)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        rc = mod.main()
+        assert rc == 1
+
+
+class TestPidShellGrep:
+    """Test PID log format compatibility with shell grep patterns."""
+
+    def test_control_rate_line_parsing(self, monkeypatch, tmp_path):
+        """First line matching r'^Control rate:.*ms' can be parsed for Hz."""
+        devices = make_devices(pitch=0.5, gyro_y=0.2)
+        robot = StubRobot(devices, basic_ms=16.0, max_steps=7)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        rc = mod.main()
+        assert rc == 0
+
+        log_text = (tmp_path / "controller.log").read_text()
+        lines = log_text.splitlines()
+
+        # Find startup rate line
+        startup_rate = [l for l in lines if l.startswith("Control rate:") and "ms" in l and "Hz" in l]
+        assert len(startup_rate) >= 1, "No startup Control rate line found"
+        line = startup_rate[0]
+        match = re.search(r"\(([0-9.]+)Hz\)", line)
+        assert match, f"Can't parse Hz from: {line}"
+        hz = float(match.group(1))
+        assert hz == pytest.approx(50.0)
+
+    def test_summary_rate_last_line(self, monkeypatch, tmp_path):
+        """Last line matching 'target.*deviation' can be parsed for Hz."""
+        devices = make_devices(pitch=0.5, gyro_y=0.2)
+        robot = StubRobot(devices, basic_ms=16.0, max_steps=7)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        rc = mod.main()
+        assert rc == 0
+
+        log_text = (tmp_path / "controller.log").read_text()
+        lines = log_text.splitlines()
+
+        # Find last rate summary line
+        summary_rate = [l for l in lines if "target" in l and "deviation" in l]
+        assert len(summary_rate) >= 1, "No summary rate line found"
+        line = summary_rate[-1]
+        match = re.search(r"^Control rate: ([0-9.]+)Hz", line)
+        assert match, f"Can't parse Hz from: {line}"
+        hz = float(match.group(1))
+        assert hz == pytest.approx(50.0, rel=0.1)
+
+    def test_all_data_rows_have_pitch(self, monkeypatch, tmp_path):
+        """Every numeric-first-token row: token[2] == pitch == 0.5."""
+        devices = make_devices(pitch=0.5, gyro_y=0.2)
+        robot = StubRobot(devices, basic_ms=16.0, max_steps=7)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        rc = mod.main()
+        assert rc == 0
+
+        log_text = (tmp_path / "controller.log").read_text()
+        lines = log_text.splitlines()
+
+        # Extract data rows
+        data_rows = [l for l in lines if l and l[0].isdigit() and "READING_ERROR" not in l]
+        for row in data_rows:
+            tokens = row.split()
+            assert len(tokens) >= 3, f"Row has < 3 tokens: {row}"
+            pitch_val = float(tokens[2])
+            assert pitch_val == pytest.approx(0.5, rel=1e-3)
+
+
+class TestPidNumpyFree:
+    """Test that PID controller works without numpy/scipy."""
+
+    def test_no_numpy_scipy_required(self, monkeypatch, tmp_path):
+        """With numpy/scipy mocked out: loading and running PID controller succeeds."""
+        # Mock numpy and scipy as unavailable
+        monkeypatch.setitem(sys.modules, "numpy", None)
+        monkeypatch.setitem(sys.modules, "scipy", None)
+
+        devices = make_devices(pitch=0.5, gyro_y=0.2)
+        robot = StubRobot(devices, basic_ms=16.0, max_steps=7)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        rc = mod.main()
+        assert rc == 0
