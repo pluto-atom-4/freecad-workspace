@@ -20,26 +20,24 @@ core's output before the HAL clamps it to +-1 rad/s (the HAL clamps only the int
 the HAL integral is not used.
 
 Arming: ticks before the HAL is armed (the arm window, failed "moving" attempts, and a re-arm
-after a device reset) are not published, not recorded and not counted as faults. --duration
-includes this arm window (about 1 s of device time), so a duration under about 1 s ends before
-arming and exits 2 "never armed".
+after a device reset) are not published, not recorded and not counted as faults. Every fresh arm
+(first arm, or re-arm after a device reset) resets the core, so its integrator starts clean.
+--duration includes this arm window (about 1 s of device time), so a duration under about 1 s ends
+before arming and exits 2.
 
 Faults: once armed, a HalFault (stale frame gap or wall-stale) holds: write 0, core.reset(), the
 last good roll/pitch are published with cmd 0 and the wheel angle unchanged.
 
-Poll ticks: a source that yields None (serial stall, see PolledSource) makes wait_next_tick()
-return NOMINAL_DT_S without a new frame. The HAL does not block on that, so the bridge paces
-non-frame ticks to NOMINAL_DT_S of wall time (injectable sleep) so an unpaced idle source cannot
-run the wheel integral faster than wall time. During a stall the integral advances NOMINAL_DT_S
-per poll only until the last frame is older than the HAL's STALE_S (0.2 s). After that the HAL
-raises HalFault, the bridge holds, and the wheel angle freezes until frames resume.
+Poll ticks: a source that yields None (serial stall) returns NOMINAL_DT_S without a new frame.
+The bridge paces non-frame ticks to NOMINAL_DT_S of wall time, and --port polls at that same
+cadence. The stall and hold contract is in README "Behaviour".
 
 Usage:
     mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --mock --duration 5
     mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --port /dev/ttyACM0 --core pid
     mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --replay raw.csv --record out.csv
 
-Exit codes: 0 ok / duration end while armed / Ctrl-C while armed; 2 usage error, source error,
+Exit codes: 0 for input end, duration end, or Ctrl-C while armed; 2 for usage error, source error,
 never armed, or Ctrl-C before armed.
 """
 
@@ -71,6 +69,7 @@ HOST = "127.0.0.1"
 DEFAULT_UDP_PORT = 5006
 DEFAULT_ALPHA = 0.98
 SEQ_MOD = 65536
+T_US_MOD = 2 ** 32
 CORES = ("lqr", "pid", "none")
 RECORD_COLUMNS = ("seq", "t_us", "roll", "pitch", "yaw", "wheel_angle", "cmd_rad_s")
 STATUS_PERIOD_S = 1.0
@@ -79,7 +78,7 @@ _END = "end"
 _ITEM = "item"
 _ERR = "error"
 
-BridgeResult = namedtuple("BridgeResult", "ticks published faults final_wheel_angle armed")
+BridgeResult = namedtuple("BridgeResult", "ticks published faults final_wheel_angle armed ended")
 
 
 # ----- gains and cores ------------------------------------------------------------------------
@@ -240,7 +239,7 @@ class PolledSource:
             for item in self._it:
                 if not self._put((_ITEM, item)):
                     return
-        except Exception as exc:  # re-raised on the consumer side
+        except BaseException as exc:  # relayed to the consumer, which re-raises it
             self._put((_ERR, exc))
         self._put((_END, None))
 
@@ -277,10 +276,9 @@ def still_then_mock_lines(still_frames: int = 75, rate_hz: float = 50.0, realtim
     """
     if isinstance(still_frames, bool) or not isinstance(still_frames, int) or still_frames < 1:
         raise ValueError(f"still_frames must be int >= 1, got {still_frames!r}")
-    if not (isinstance(rate_hz, (int, float)) and math.isfinite(rate_hz) and rate_hz > 0):
+    if not _finite_real(rate_hz) or rate_hz <= 0:
         raise ValueError(f"rate_hz must be finite > 0, got {rate_hz!r}")
-    if duration_s is not None and not (isinstance(duration_s, (int, float))
-                                       and math.isfinite(duration_s) and duration_s > 0):
+    if duration_s is not None and (not _finite_real(duration_s) or duration_s <= 0):
         raise ValueError(f"duration_s must be None or finite > 0, got {duration_s!r}")
     return _still_gen(still_frames, float(rate_hz), realtime, duration_s)
 
@@ -290,20 +288,17 @@ def _still_gen(still_frames, rate_hz, realtime, duration_s):
     start = time.monotonic()
     i = 0
     while n_total is None or i < n_total:
-        if i < still_frames:
-            frame = Frame(seq=i % 65536,
-                          t_us=round(i * 1_000_000 / rate_hz) % 2**32,
-                          accel=(0.0, 0.0, 1.0), gyro=(0.0, 0.0, 0.0))
-        else:
-            j = i - still_frames
-            m = mock_frame(j, rate_hz)
-            frame = Frame(seq=i % 65536,
-                          t_us=round(i * 1_000_000 / rate_hz) % 2**32,
-                          accel=m.accel, gyro=m.gyro)
         if realtime:
             delay = start + i / rate_hz - time.monotonic()
             if delay > 0:
                 time.sleep(delay)
+        if i < still_frames:
+            accel, gyro = (0.0, 0.0, 1.0), (0.0, 0.0, 0.0)
+        else:
+            m = mock_frame(i - still_frames, rate_hz)     # mock motion starts at j = 0 at the join
+            accel, gyro = m.accel, m.gyro
+        frame = Frame(seq=i % SEQ_MOD, t_us=round(i * 1_000_000 / rate_hz) % T_US_MOD,
+                      accel=accel, gyro=gyro)
         yield format_frame(frame).rstrip("\r\n")
         i += 1
 
@@ -332,6 +327,9 @@ def run_bridge(hal, core, pub, *, duration_s=None, record=None,
     last_tick = start
     last_status = None
     prev_seq = hal.last_seq
+    was_armed = False
+    last_rearm = None
+    ended = "input"
     try:
         while True:
             dt = hal.wait_next_tick()
@@ -339,6 +337,7 @@ def run_bridge(hal, core, pub, *, duration_s=None, record=None,
                 break
             now = clock()
             if duration_s is not None and now - start >= duration_s:
+                ended = "duration"
                 break
             ticks += 1
             new_frame = hal.last_seq != prev_seq
@@ -350,9 +349,17 @@ def run_bridge(hal, core, pub, *, duration_s=None, record=None,
             last_tick = clock()
 
             if not hal.armed:
+                was_armed = False
                 last_status = _status(out, clock(), last_status, hal, ticks, faults, 0.0,
                                       hal.wheel_angle_rad, "arming")
                 continue
+            # Fresh arm: the first arm, or a device reset re-arm. A re-arm can finish inside one
+            # wait_next_tick() call, so detect it from hal.rearm_count, not from armed going False.
+            if not was_armed or hal.rearm_count != last_rearm:
+                if core is not None:
+                    core.reset()        # clean core state (integrator, previous error)
+            was_armed = True
+            last_rearm = hal.rearm_count
 
             try:
                 imu = hal.read_imu()
@@ -396,7 +403,7 @@ def run_bridge(hal, core, pub, *, duration_s=None, record=None,
     finally:
         if record is not None:
             record.flush()
-    return BridgeResult(ticks, published, faults, final_wheel, hal.armed)
+    return BridgeResult(ticks, published, faults, final_wheel, hal.armed, ended)
 
 
 def _status(out, now, last, hal, ticks, faults, cmd, wheel, note):
@@ -475,14 +482,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _make_source(args):
     if args.mock:
-        return still_then_mock_lines(realtime=True, duration_s=args.duration)
+        return still_then_mock_lines(realtime=True)   # --duration is enforced by run_bridge
     if args.replay is not None:
         return csv_replay_lines(args.replay, realtime=True)
     try:
         from dof_serial import serial_lines  # lazy: pyserial only for --port
     except ImportError as exc:
         raise ImportError(f"--port needs pyserial in this environment: {exc}") from None
-    return PolledSource(serial_lines(args.port, args.baud))
+    return PolledSource(serial_lines(args.port, args.baud), poll_s=NOMINAL_DT_S)
 
 
 def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
@@ -511,9 +518,16 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
             print(f"dof_wheel_bridge: error: source failed: {hal.source_error}",
                   file=sys.stderr, flush=True)
             return 2
-        if not result.armed:
-            print(f"dof_wheel_bridge: error: never armed: {hal.arm_error or 'no arm error'}"
-                  f" (source_error={hal.source_error})", file=sys.stderr, flush=True)
+        if not result.armed or (result.ended == "duration" and result.published == 0):
+            if result.ended == "duration" and not result.armed:
+                why = (f"duration expired before the arm window filled "
+                       f"({hal.arm_error or 'no arm error yet'})")
+            elif result.ended == "duration":
+                why = "duration expired before the first armed tick (the arm window takes ~1 s)"
+            else:
+                why = f"never armed: {hal.arm_error or 'no arm error'}"
+            print(f"dof_wheel_bridge: error: {why} (source_error={hal.source_error})",
+                  file=sys.stderr, flush=True)
             return 2
         return 0
     except KeyboardInterrupt:

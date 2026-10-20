@@ -11,6 +11,7 @@ Usage:
 import ast
 import csv
 import importlib.util
+import inspect
 import io
 import itertools
 import json
@@ -146,11 +147,6 @@ def drain(sock):
         except socket.timeout:
             return out
         out.append(data)
-
-
-def arm_then(frames_after, still=50):
-    """still arm lines followed by the given lines."""
-    return still_lines(still) + list(frames_after)
 
 
 # ----- 1. gains -------------------------------------------------------------------------------
@@ -379,7 +375,7 @@ def test_hal_fault_holds_tilted_pose_wheel_and_zero_command():
     core = StubCore(0.5)
     res = b.run_bridge(hal, core, rec, sleep=lambda s: None)
     assert res.faults == 1
-    assert core.resets == 1
+    assert core.resets == 2                    # first arm + the hold on the fault tick
     assert len(rec.msgs) == 5
     prev, stale, nxt = rec.msgs[1], rec.msgs[2], rec.msgs[3]
     assert stale["roll"] == prev["roll"] and stale["pitch"] == prev["pitch"]   # held pose
@@ -655,6 +651,7 @@ def test_cli_rejects_no_source():
 def test_cli_defaults_and_port_range():
     args = b.build_parser().parse_args(["--mock"])
     assert args.core == "lqr"
+    assert args.baud == 115200
     assert args.alpha == 0.98
     assert args.udp_port == 5006
     assert b.build_parser().parse_args(["--mock", "--udp-port", "65535"]).udp_port == 65535
@@ -693,7 +690,7 @@ def test_alpha_and_clock_threaded_to_hal(monkeypatch, tmp_path):
 def test_duration_under_arm_window_exits_2(tmp_path, capsys):
     rc = b.main(["--mock", "--duration", "0.5", "--udp-port", str(free_udp_port())])
     assert rc == 2
-    assert "never armed" in capsys.readouterr().err
+    assert "duration expired" in capsys.readouterr().err
 
 
 # ----- g. pacing and duration with an injected clock -----------------------------------------
@@ -742,8 +739,9 @@ def test_seq_starts_at_zero_and_increments():
 
 
 def test_seq_wraps_at_seq_mod(monkeypatch):
+    lines = still_lines(56)                    # generate with the real modulus, then wrap the bridge
     monkeypatch.setattr(b, "SEQ_MOD", 4)
-    hal = SerialImuHal(still_lines(56), reference_pitch_rad=0.0)
+    hal = SerialImuHal(lines, reference_pitch_rad=0.0)
     rec = Rec(hal)
     b.run_bridge(hal, StubCore(0.0), rec, sleep=lambda s: None)
     assert [m["seq"] for m in rec.msgs] == [i % 4 for i in range(len(rec.msgs))]
@@ -799,13 +797,14 @@ def test_keyboard_interrupt_unarmed_returns_2(monkeypatch, capsys):
     assert "interrupted before armed" in capsys.readouterr().err
 
 
-def test_keyboard_interrupt_armed_returns_0(monkeypatch):
+def test_keyboard_interrupt_armed_returns_0(monkeypatch, capsys):
     def fake_run(hal, core, pub, **kw):
         hal.wait_next_tick()
         raise KeyboardInterrupt
     monkeypatch.setattr(b, "_make_source", lambda args, clock=None: still_lines(60))
     monkeypatch.setattr(b, "run_bridge", fake_run)
     assert b.main(["--mock", "--udp-port", str(free_udp_port())]) == 0
+    assert capsys.readouterr().err == ""
 
 
 def test_source_error_while_armed_returns_2(monkeypatch, capsys):
@@ -850,6 +849,7 @@ def test_port_branch_end_to_end(monkeypatch):
     assert rc == 0
     assert calls == {"port": "/dev/fake", "baud": 9600}
     assert len(made) == 1
+    assert made[0]._poll_s == b.NOMINAL_DT_S
 
 
 def test_port_branch_never_armed_returns_2(monkeypatch):
@@ -955,3 +955,258 @@ def test_polled_source_thread_is_daemon_and_stops_after_close():
 def test_polled_source_rejects_bad_poll_s(poll_s):
     with pytest.raises(ValueError, match="poll_s"):
         b.PolledSource([], poll_s=poll_s)
+
+
+# ----- round 2: still lead-in, pacing, boundaries, CLI, error paths, publisher ----------------
+
+@pytest.mark.parametrize("kw", [
+    {"still_frames": 0}, {"still_frames": True}, {"still_frames": 1.5}, {"still_frames": "x"},
+    {"rate_hz": 0}, {"rate_hz": -1}, {"rate_hz": float("nan")}, {"rate_hz": True},
+    {"duration_s": 0}, {"duration_s": -1}, {"duration_s": float("nan")}, {"duration_s": True},
+])
+def test_still_then_mock_validators_reject(kw):
+    with pytest.raises(ValueError):
+        b.still_then_mock_lines(**kw)
+
+
+def test_still_then_mock_length_and_default_still_frames():
+    assert len(list(b.still_then_mock_lines(duration_s=1.0, rate_hz=50.0, realtime=False))) == 50
+    assert inspect.signature(b.still_then_mock_lines).parameters["still_frames"].default == 75
+
+
+def test_still_join_continuity_and_mock_start_values():
+    lines = list(islice(b.still_then_mock_lines(realtime=False), 80))
+    a, c = parse_line(lines[74]), parse_line(lines[75])
+    assert c.seq == 75 and c.t_us == 1_500_000
+    assert c.t_us - a.t_us == DT_US and c.seq - a.seq == 1
+    assert c.accel == pytest.approx((0.0, 0.0, 1.0), abs=1e-6)     # mock j=0: level
+    assert c.gyro[0] == pytest.approx(math.degrees(0.5 * 2 * math.pi * 0.2), abs=1e-5)
+    assert c.gyro[1] == pytest.approx(math.degrees(0.3 * 2 * math.pi * 0.1), abs=1e-5)
+
+
+def test_still_seq_and_t_us_wrap():
+    rate = 1e6 / 2 ** 31                       # one frame = 2**31 us: t_us wraps at 2**32
+    lines = list(b.still_then_mock_lines(still_frames=1, rate_hz=rate, realtime=False,
+                                         duration_s=5 / rate))
+    assert len(lines) == 5
+    assert [parse_line(x).t_us for x in lines[:3]] == [0, 2 ** 31, 0]
+    lines = list(islice(b.still_then_mock_lines(realtime=False), 65538))
+    assert parse_line(lines[65535]).seq == 65535
+    assert parse_line(lines[65536]).seq == 0
+    assert parse_line(lines[65537]).seq == 1
+
+
+def test_pacing_sleep_is_nominal_minus_elapsed_and_never_negative():
+    fake = FakeClock()
+
+    def gen():
+        yield from still_lines(50)
+        while True:
+            fake.t += 0.005                    # 5 ms of wall time between polls
+            yield None
+
+    hal = SerialImuHal(itertools.islice(gen(), 56), reference_pitch_rad=0.0, clock=fake)
+    b.run_bridge(hal, StubCore(0.0), Rec(hal), clock=fake, sleep=fake.sleep)
+    assert len(fake.sleeps) == 6
+    assert all(s == pytest.approx(DT - 0.005, abs=1e-12) for s in fake.sleeps)
+    assert all(s >= 0 for s in fake.sleeps)
+
+
+def test_pacing_no_sleep_when_elapsed_reaches_nominal():
+    fake = FakeClock()
+
+    def gen():
+        yield from still_lines(50)
+        while True:
+            fake.t += 0.03                     # slower than NOMINAL_DT_S: no sleep at all
+            yield None
+
+    hal = SerialImuHal(itertools.islice(gen(), 53), reference_pitch_rad=0.0, clock=fake)
+    b.run_bridge(hal, StubCore(0.0), Rec(hal), clock=fake, sleep=fake.sleep)
+    assert fake.sleeps == []
+
+
+def test_duration_exact_boundary_stops_loop():
+    fake = FakeClock()
+
+    def gen():
+        yield from still_lines(50)
+        while True:
+            fake.t += 0.5                      # exact binary steps: the boundary is exact
+            yield None
+
+    hal = SerialImuHal(gen(), reference_pitch_rad=0.0, clock=fake)
+    res = b.run_bridge(hal, StubCore(0.0), Rec(hal), duration_s=1.0, clock=fake, sleep=fake.sleep)
+    assert res.ticks == 2                      # arm tick (t=0), poll at 0.5; the poll at 1.0 stops
+    assert res.ended == "duration"
+    assert fake.t == 1.0
+
+
+@pytest.mark.parametrize("val", ["0", "-1", "nan", "x"])
+def test_cli_rejects_bad_duration(val):
+    with pytest.raises(SystemExit) as e:
+        b.build_parser().parse_args(["--mock", f"--duration={val}"])
+    assert e.value.code == 2
+
+
+def test_cli_rejects_baud_zero_and_accepts_udp_port_one():
+    with pytest.raises(SystemExit) as e:
+        b.build_parser().parse_args(["--mock", "--baud", "0"])
+    assert e.value.code == 2
+    assert b.build_parser().parse_args(["--mock", "--udp-port", "1"]).udp_port == 1
+
+
+@pytest.mark.parametrize("alpha", ["0", "1"])
+def test_cli_accepts_alpha_bounds(alpha):
+    assert b.build_parser().parse_args(["--mock", "--alpha", alpha]).alpha == float(alpha)
+
+
+def test_main_unwritable_record_path_returns_2(tmp_path, capsys):
+    rc = b.main(["--mock", "--record", str(tmp_path / "no" / "such" / "x.csv"),
+                 "--udp-port", str(free_udp_port())])
+    assert rc == 2
+    assert "error" in capsys.readouterr().err
+
+
+def test_build_core_unknown_name_raises():
+    with pytest.raises(ValueError, match="core must be one of"):
+        b.build_core("bogus", None)
+
+
+def test_udp_error_summary_line_printed(monkeypatch, capsys):
+    port = free_udp_port()                     # before patching socket.socket
+
+    class FailSock:
+        def sendto(self, *a, **k):
+            raise OSError("refused")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(b, "_make_source", lambda args: still_lines(60))
+    monkeypatch.setattr(b.socket, "socket", lambda *a, **k: FailSock())
+    rc = b.main(["--mock", "--udp-port", str(port)])
+    assert rc == 0
+    assert "udp published=0 errors=11 skipped=0" in capsys.readouterr().err
+
+
+def test_real_publisher_loopback_counts_match():
+    listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    listener.bind(("127.0.0.1", 0))
+    pub = b.WheelPublisher(port=listener.getsockname()[1])
+    try:
+        hal = SerialImuHal(still_lines(60), reference_pitch_rad=0.0)
+        res = b.run_bridge(hal, StubCore(0.5), pub, sleep=lambda s: None)
+        datagrams = drain(listener)
+    finally:
+        pub.close()
+        listener.close()
+    assert res.published == pub.sent == len(datagrams) > 0
+
+
+def test_send_without_cmd_omits_field_and_close_closes_socket():
+    listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    listener.bind(("127.0.0.1", 0))
+    pub = b.WheelPublisher(port=listener.getsockname()[1])
+    try:
+        pub.send(7, 0.1, 0.2, 0.0, 0.3)
+        datagrams = drain(listener)
+    finally:
+        listener.close()
+    assert json.loads(datagrams[0]) == {"seq": 7, "roll": 0.1, "pitch": 0.2, "yaw": 0.0,
+                                        "wheel_angle": 0.3}
+    sock = pub._sock
+    pub.close()
+    assert sock.fileno() == -1
+    pub.close()
+    assert pub._sock is None
+
+
+def test_status_at_most_one_line_per_second():
+    fake = FakeClock()
+
+    def gen():
+        yield from still_lines(50)
+        while True:
+            fake.t += 0.1
+            yield None
+
+    hal = SerialImuHal(gen(), reference_pitch_rad=0.0, clock=fake)
+    out = io.StringIO()
+    b.run_bridge(hal, StubCore(0.5), Rec(hal), duration_s=3.05, clock=fake, sleep=fake.sleep, out=out)
+    lines = out.getvalue().splitlines()
+    assert 2 <= len(lines) <= 4                # ~3 s of run time: first line plus at most one per second
+
+
+def test_record_flush_cadence_every_50_rows():
+    hal = SerialImuHal(still_lines(160), reference_pitch_rad=0.0)
+    f = _TrackFile()
+    res = b.run_bridge(hal, StubCore(0.5), Rec(hal), record=f, sleep=lambda s: None)
+    rows = len(f.getvalue().splitlines()) - 1
+    assert rows == res.published == 111
+    assert f.flush_calls == rows // b.RECORD_FLUSH_EVERY + 1   # every 50 rows, plus the final flush
+
+
+class LogPid(PidBalance):
+    """PID that logs its steps and resets (for the re-arm test)."""
+
+    def __init__(self):
+        g = JSON_GAINS["pid"]
+        super().__init__(kp=g["kp"], ki=g["ki"], kd=g["kd"], out_limit=g["out_limit"])
+        self.log = []
+
+    def step(self, imu, dt):
+        out = super().step(imu, dt)
+        self.log.append(("step", imu, dt, out.cmd_rad_s))
+        return out
+
+    def reset(self):
+        self.log.append(("reset",))
+        super().reset()
+
+
+def test_rearm_after_device_reset_resets_pid_before_first_step():
+    lines = [line(i, i * DT_US, tilt(0.0), (0.0, 0.0, 0.0)) for i in range(50)]
+    lines += [line(50 + j, (50 + j) * DT_US, tilt(0.1), (0.0, 0.0, 0.0)) for j in range(11)]
+    t0 = 61 * DT_US
+    lines.append(line(0, t0, tilt(0.0), (0.0, 0.0, 0.0)))                      # seq back 61: device reset
+    lines += [line(1 + j, t0 + (j + 1) * DT_US, tilt(0.0), (0.0, 0.0, 0.0)) for j in range(60)]
+    hal = SerialImuHal(lines, reference_pitch_rad=0.0)
+    core = LogPid()
+    b.run_bridge(hal, core, Rec(hal), sleep=lambda s: None)
+    resets = [i for i, e in enumerate(core.log) if e[0] == "reset"]
+    assert len(resets) >= 2                    # first arm, then the re-arm after the device reset
+    rearm = resets[-1]
+    assert any(abs(e[3]) > 1e-6 for e in core.log[:rearm] if e[0] == "step")  # integrator was live
+    _, imu, dt, cmd = core.log[rearm + 1]
+    fresh, _ = b.build_core("pid", b.load_gains())
+    assert cmd == pytest.approx(fresh.step(imu, dt).cmd_rad_s, abs=1e-12)
+
+
+class _Halt(BaseException):
+    pass
+
+
+class _HaltIter:
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        raise _Halt("halt")
+
+
+def test_polled_source_relays_base_exception():
+    src = b.PolledSource(_HaltIter(), poll_s=0.05)
+    with pytest.raises(_Halt, match="halt"):
+        for _ in range(100):
+            next(src)
+
+
+def test_duration_expires_mid_window_on_stalled_source(monkeypatch, capsys):
+    fake = FakeClock()
+    monkeypatch.setattr(b, "_make_source", lambda args: itertools.chain(still_lines(20),
+                                                                         itertools.repeat(None)))
+    rc = b.main(["--mock", "--duration", "0.5", "--udp-port", str(free_udp_port())],
+                clock=fake, sleep=fake.sleep)
+    assert rc == 2
+    assert "duration expired before the arm window filled" in capsys.readouterr().err

@@ -349,8 +349,7 @@ Errors go to stderr; rows + summary to stdout. No Traceback on expected errors.
 **Frames -> SerialImuHal (#374) -> Stage F control core -> wheel command -> UDP JSON** for the
 servo-wheel-dof Webots display. It is a display only: the real board never feels the simulated
 wheel. Gains come from the committed `inverted-pendulum-project/07_Simulation/hal/parity_vectors.json`
-(read only, stdlib `json`, no numpy/scipy). LQR uses the reference pitch -0.1086 (JSON value
--0.10859999805688858) through the HAL; PID and `--core none` use 0.0.
+(read only, stdlib `json`, no numpy/scipy). LQR uses the reference pitch from that file through the HAL; PID and `--core none` use 0.0.
 
 **Usage** (`run` = executed for this change; `not run` = not executed here):
 
@@ -371,7 +370,7 @@ mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --replay raw.csv --re
 Exactly one of `--port`, `--mock`, `--replay` is required. Other options: `--core lqr|pid|none`
 (default `lqr`), `--udp-port` (default 5006), `--record CSV`, `--duration S`, `--baud` (115200),
 `--alpha` (0.98). `--duration` counts from start and includes the ~1 s arm window, so a value under
-about 1 s exits 2 `never armed`. Exit codes: 0 for duration end, input end, or Ctrl-C while armed;
+about 1 s exits 2 (`duration expired before the arm window filled`, or `before the first armed tick`). Exit codes: 0 for duration end, input end, or Ctrl-C while armed;
 2 for usage errors, a source error (for example a bad replay row after arming), never armed (for
 example a replay shorter than the 50-frame arm window, which prints `window incomplete`), or
 Ctrl-C before armed.
@@ -397,20 +396,22 @@ Ctrl-C before armed.
   PID. Roll is published UNTARED (the display ignores roll). `yaw` is always 0.
 - Ticks before the HAL is armed (the arm window, a failed "moving" attempt, a re-arm after a device
   reset) are not published, not recorded and not counted as faults.
+- A fresh arm (the first arm, or a re-arm after a device reset) resets the core, so the PID
+  integrator starts clean.
 - Once armed, a `HalFault` (a device frame gap over 0.2 s, or no accepted frame for 0.2 s) holds:
   the wheel is not advanced, the command is 0, the core is reset, and the last good roll and pitch
   are published.
-- Serial stalls arrive as poll ticks (`PolledSource`, 0.1 s). The bridge paces idle ticks to 0.02 s
-  of wall time so an idle source does not run the wheel integral faster than wall time. During a
+- Serial stalls arrive as poll ticks (`PolledSource`, polled every 0.02 s). The bridge paces idle
+  ticks to 0.02 s of wall time so an idle source does not run the wheel integral faster than wall time. During a
   stall the integral advances 0.02 s per poll until the last frame is 0.2 s old. After that the
   HAL raises `HalFault`, the bridge holds, and the wheel angle freezes until frames resume.
 - `wheel_angle` is the integral of the **commanded** wheel velocity, not a measurement. `cmd_rad_s`
   is the core's output before the HAL clamps the integral to +-1 rad/s.
 - `--core none`: the `wheel_angle` field carries the tared pitch (also in the record); the HAL
   integral is not used.
-- Run result (`run`, 2026-10-20, the mock command above): 101 datagrams in 3 s on the loopback
-  listener, `cmd=+1.0000` by t=1.02 s, so the displayed wheel saturates on the mock motion. That
-  is the gains on mock input, not a balance result.
+- Run result, historical, run 2026-10-20 (101 datagrams in 3 s, cmd=+1.0 by t=1.02 s, loopback
+  listener, mock command above). The displayed wheel saturates on the mock motion: that is the
+  gains on mock input, not a balance result.
 
 **Honesty:** mock-tested only (pytest, loopback UDP). No hardware run, and no claim that the
 controller balances. `PITCH_SIGN` and `WHEEL_DISPLAY_SIGN` (both in `dof_hal.py`) are UNVERIFIED,
