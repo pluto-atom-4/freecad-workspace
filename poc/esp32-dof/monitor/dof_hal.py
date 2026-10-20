@@ -2,35 +2,38 @@
 """SerialImuHal: Stage F Hal (inverted-pendulum-project/07_Simulation/hal/hal.py, contract v1)
 fed by ESP32 IMU frame lines (dof_frame.py format). Units are the HAL's: radians, rad/s, seconds.
 
-Input: an iterable of str lines; None is a poll tick (no line yet). Non-str items and lines not
-starting with "IMU," are skipped uncounted (junk-prefixed frames are ignored by design). An "IMU,"
-line failing dof_frame.parse_line increments bad_frames. Each parsed frame goes through StreamStats:
-duplicate and backward seq are skipped (no tick); a device reset (StreamStats.resets grows) restarts
-arming. rearm_count counts every device reset seen, including resets during the initial window.
+Input: an iterable of str lines (str and bytes themselves are rejected). None is a poll tick.
+Non-str items and lines not starting with "IMU," are skipped uncounted (junk-prefixed frames are
+ignored by design). An "IMU," line failing dof_frame.parse_line increments bad_frames. Every parsed
+frame goes through StreamStats: duplicate and backward seq are skipped (no tick); a device reset
+restarts arming. rearm_count counts every device reset seen, including resets during the initial
+window.
 
-Arming: one window of ARM_FRAMES accepted frames, collected inside wait_next_tick() or explicit arm().
-  - the arm gate checks gyro span only: any axis with max - min > arm_span_dps (strict) fails the
-    attempt ("moving");
-  arm gate checks gyro span only; linear acceleration is not checked (UNVERIFIED on hardware)
-  - a device gap > stale_s inside the window fails the attempt; the gap frame starts the next window;
-  - success: bias = mean gyro per axis; the window is replayed through ComplementaryFilter with
-    bias-corrected gyro; tare = mean fused pitch over the replay, so the pose you start in counts as
-    balanced (human decision). The arming tick returns NOMINAL_DT_S and its sample is the last window
-    frame at t_s = 0. After an explicit arm(), the next wait returns NOMINAL_DT_S without consuming;
-  - a failed attempt returns NOMINAL_DT_S and the next wait keeps collecting;
-  - source exhausted before the window is full: arm_error "window incomplete: n/N", wait returns -1.0;
-    a source exception ends the stream the same way and is kept in source_error.
-  - a reset re-arm: the reset frame starts a new window and the wait that sees it collects the whole
-    window before returning, so one wait_next_tick() can block for up to ARM_FRAMES frames (about 1 s
-    of device time) and returns NOMINAL_DT_S.
+Arming: one window of ARM_FRAMES accepted frames, collected inside wait_next_tick() or arm(). The
+arm gate checks gyro span only: any axis with max - min > arm_span_dps (strict) fails the attempt
+("moving"). Linear acceleration is not checked (UNVERIFIED on hardware). A device gap > stale_s
+inside the window fails the attempt; the gap frame starts the next window. On success: bias = mean
+gyro per axis; the window is replayed through ComplementaryFilter with bias-corrected gyro; tare =
+mean fused pitch over the replay, so the pose you start in counts as balanced (human decision).
+The arming tick returns NOMINAL_DT_S. On the first arm its sample is the last window frame at
+t_s = 0. On a re-arm after a device reset, t_s/now_s advance by ONE nominal step (0.02) from the
+previous sample, not by the ~1 s window, so they undercount the re-arm window (documented,
+accepted). After an explicit arm(), the next wait returns NOMINAL_DT_S without consuming a frame.
+A failed attempt returns NOMINAL_DT_S and the next wait keeps collecting. Source exhausted before
+the window is full: arm_error "window incomplete: n/N", wait returns -1.0. A source exception ends
+the stream the same way and is kept in source_error. A reset re-arm blocks inside one
+wait_next_tick() until the window fills (up to ARM_FRAMES frames, about 1 s of device time).
 
-Per accepted frame after arming: dt = StreamStats.last_dt_us (modular, handled by StreamStats).
-  - device gap dt > stale_s: the filter is re-initialised from that frame (no blending), bias and tare
-    are kept, stale_count += 1, read_imu raises HalFault for that tick, the tick returns NOMINAL_DT_S.
-    t_s and now_s() still advance by the real device gap. dt == stale_s is not stale.
-  - poll tick with clock() - last accepted frame wall time > stale_s: wall-stale flag (stale_count += 1
-    on entry), read_imu raises until the next accepted frame, the tick returns NOMINAL_DT_S. A plain
-    poll tick repeats the last sample.
+Per accepted frame after arming: dt = StreamStats.last_dt_us (modular). A device gap dt > stale_s
+(strict: equal is not stale) re-initialises the filter from that frame (no blending), keeps bias
+and tare, increments stale_count, makes read_imu raise HalFault for that tick, and returns
+NOMINAL_DT_S. t_s/now_s still advance by the real gap.
+
+Poll ticks: None returns NOMINAL_DT_S and does not advance t_s/now_s; a plain poll repeats the last
+sample. If clock() - last accepted frame wall time > stale_s, the wall-stale flag is set
+(stale_count += 1 on entry); read_imu raises until the next accepted frame. Poll and wall-stale
+ticks return nominal dt, NOT wall time, so an unpaced source that yields None immediately advances
+the wheel integral faster than wall time. The caller (bridge) must pace polls.
 
 read_imu(): roll_rad = fused roll (not tared, reference not added); pitch_rad = pitch_sign *
 (fused_pitch - tare) + reference_pitch_rad; yaw_rad = 0.0; gyro_rad_s = (rad(gx-bx),
@@ -38,18 +41,16 @@ pitch_sign*rad(gy-by), rad(gz-bz)). Raises HalFault when closed, unarmed (raises
 
 read_encoders(): always HalFault (no measurement; none is faked).
 
-write_wheel_velocity(left, right): inputs clamped to +-WHEEL_CMD_LIMIT_RAD_S; non-numeric or
-non-finite -> 0.0; never raises. wheel_angle_rad is the integral of the LEFT COMMANDED velocity, not a
-measurement: each write adds wheel_display_sign * clamped_left * last_returned_dt, regardless of armed
-or stale state. Call once per tick, after wait_next_tick(). The right command is ignored. After close()
-writes are no-ops and wait_next_tick() returns -1.0.
+write_wheel_velocity(left, right): inputs clamped to +-WHEEL_CMD_LIMIT_RAD_S; non-numeric (numeric
+strings included) or non-finite -> 0.0; never raises. wheel_angle_rad is the integral of the LEFT
+COMMANDED velocity, not a measurement: each write adds wheel_display_sign * clamped_left *
+last_returned_dt, regardless of armed or stale state. Call once per tick after wait_next_tick().
+The right command is ignored. After end-of-stream (-1.0) the last returned dt is 0, so writes add
+nothing; after close() writes are no-ops.
 
 LIMITS (mock-only, UNVERIFIED on hardware): PITCH_SIGN, WHEEL_DISPLAY_SIGN and the thresholds are
-not checked on hardware (human check #377). Slow tilt under 5 dps over the 1 s window can be absorbed
-into the bias and mis-tare by up to about 5 degrees.
-
-Imports: stdlib, hal.hal, dof_frame, dof_fusion, dof_stats only (no pyserial, numpy, scipy,
-controller, dof_serial, dof_monitor, dof_publisher).
+not checked on hardware (human check #377). Slow tilt under 5 dps over the 1 s window can be
+absorbed into the bias and mis-tare by up to about 5 degrees. The arm gate checks gyro span only.
 """
 
 import math
@@ -122,6 +123,8 @@ class SerialImuHal(Hal):
             raise ValueError(f"wheel_display_sign must be +1.0 or -1.0, got {wheel_display_sign!r}")
         if not callable(clock):
             raise ValueError("clock must be callable")
+        if isinstance(lines, (str, bytes)):
+            raise ValueError("lines must be an iterable of frame lines, not str/bytes")
         try:
             src = iter(lines)
         except TypeError as exc:
@@ -159,7 +162,6 @@ class SerialImuHal(Hal):
         self._t_dev = 0.0
         self._closed = False
         self._last_dt = 0.0
-        self._wheel_left = 0.0
         self._wheel_angle = 0.0
 
     # ----- read-only properties -------------------------------------------------------------
@@ -250,8 +252,8 @@ class SerialImuHal(Hal):
     def write_wheel_velocity(self, left_rad_s, right_rad_s):
         if self._closed:
             return
-        self._wheel_left = _clamp_cmd(left_rad_s)
-        self._wheel_angle += self._wheel_sign * self._wheel_left * self._last_dt
+        left = _clamp_cmd(left_rad_s)
+        self._wheel_angle += self._wheel_sign * left * self._last_dt
 
     def now_s(self):
         return self._t_dev
@@ -327,14 +329,12 @@ class SerialImuHal(Hal):
         return (gyro[0] - bx, gyro[1] - by, gyro[2] - bz)
 
     def _reset_state(self):
-        self._filter.reset()
+        # The filter and stale flags are reset in _finish_window, the only path back to armed.
         self._armed = False
         self._hold_first = False
         self._win = []
         self._cur = None
         self._fused = (0.0, 0.0)
-        self._dev_stale = False
-        self._wall_stale = False
         self._arm_error = None
         self._rearm_count += 1
 
@@ -391,7 +391,7 @@ class SerialImuHal(Hal):
         self._fused = (roll, pitch)
         self._cur = win[-1]
         if self._has_armed:
-            self._t_dev += NOMINAL_DT_S          # re-arm after reset keeps t_s monotonic
+            self._t_dev += NOMINAL_DT_S          # re-arm after reset: one nominal step, not the window
         self._has_armed = True
         self._armed = True
         self._arm_error = None

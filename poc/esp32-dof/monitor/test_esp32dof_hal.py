@@ -23,7 +23,7 @@ sys.path.insert(0, str(MONITOR))
 from dof_frame import Frame, format_frame, parse_line  # noqa: E402
 from dof_fusion import ComplementaryFilter  # noqa: E402
 from dof_sources import csv_replay_lines, mock_lines  # noqa: E402
-from dof_hal import SerialImuHal  # noqa: E402
+from dof_hal import STALE_S, SerialImuHal  # noqa: E402
 from hal.hal import HAL_CONTRACT_VERSION, Hal, HalFault  # noqa: E402
 
 ACC = (-math.sin(0.2), 0.0, math.cos(0.2))   # pitch 0.2 rad, roll 0
@@ -175,6 +175,61 @@ def test_explicit_arm_raises_on_poll_then_retry_arms():
     assert hal.armed
 
 
+def test_explicit_arm_then_wait_nominal_then_real_dt():
+    lines = still(50) + [mk(50, 49 * 20000 + 40000)]
+    hal = SerialImuHal(iter(lines))
+    hal.arm()
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # hold: no frame consumed
+    assert hal.last_seq == 49
+    assert hal.wait_next_tick() == pytest.approx(0.04)   # real dt of frame 50, not nominal
+    assert hal.last_seq == 50
+
+
+def test_arm_twice_does_not_consume_stream():
+    lines = still(51)
+    source = iter(lines)
+    hal = SerialImuHal(source)
+    hal.arm()
+    hal.arm()                                            # already armed: no-op
+    assert list(source) == lines[50:]
+
+
+def test_arm_window_gap_boundary_is_strict():
+    stale_us = round(STALE_S * 1e6)                      # 200000 us: gap == stale_s
+    lines = still(25) + [mk(25, 24 * 20000 + stale_us)]
+    lines += [mk(26 + j, 24 * 20000 + stale_us + (j + 1) * 20000) for j in range(24)]
+    hal = SerialImuHal(iter(lines))
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # accepted: 50-frame window in one call
+    assert hal.armed
+    over_us = round(1.05 * STALE_S * 1e6)                # 210000 us: 1.05 * stale_s
+    lines = still(25) + [mk(25, 24 * 20000 + over_us)]
+    lines += [mk(26 + j, 24 * 20000 + over_us + (j + 1) * 20000) for j in range(24)]
+    hal = SerialImuHal(iter(lines))
+    hal.wait_next_tick()
+    assert not hal.armed
+    assert "gap" in hal.arm_error
+
+
+def test_run_frame_gap_of_1_05_stale_s_is_stale():
+    over_us = round(1.05 * STALE_S * 1e6)
+    hal = SerialImuHal(iter(still(50) + [mk(50, 980000 + over_us)]))
+    hal.wait_next_tick()
+    assert hal.wait_next_tick() == pytest.approx(0.02)
+    with pytest.raises(HalFault, match="stale"):
+        hal.read_imu()
+    assert hal.stale_count == 1
+
+
+def test_tared_pitch_is_zero_after_reset_before_rearm():
+    # tare stays 0.2 from the old window; the unarmed property must still report 0.0
+    hal = SerialImuHal(iter(still(50, seq0=100) + [mk(0, 0)]))
+    hal.wait_next_tick()
+    assert hal.armed
+    assert hal.wait_next_tick() == -1.0                  # reset, window never refills
+    assert not hal.armed
+    assert hal.tared_pitch_rad == 0.0
+
+
 def test_poll_ticks_before_window_do_not_arm():
     hal = SerialImuHal(iter([None, None] + still(52)))
     for _ in range(2):
@@ -261,6 +316,25 @@ def test_replay_bias_and_tare_match_independent_computation():
     assert s.pitch_rad == pytest.approx(pitches[-1] - tare, abs=1e-9)
     assert s.gyro_rad_s == pytest.approx(
         tuple(math.radians(last.gyro[k] - bias[k]) for k in range(3)), abs=1e-9)
+
+
+def test_bias_is_mean_not_min_max_midpoint():
+    # skewed x gyro: mean 1.18, midpoint of min/max 2.5; span 3.0 is within the gate
+    gx = [4.0 if i < 3 else 1.0 for i in range(50)]
+    hal = SerialImuHal(iter(gyro_run([(g, -2.0, 0.5) for g in gx])))
+    hal.wait_next_tick()
+    s = hal.read_imu()
+    assert s.gyro_rad_s[0] == pytest.approx(math.radians(1.0 - 1.18))
+
+
+def test_roll_neither_signed_nor_tared_with_pitch_sign_and_tare():
+    r, p = 0.1, 0.2
+    accel = (-math.sin(p), math.sin(r) * math.cos(p), math.cos(r) * math.cos(p))
+    hal = SerialImuHal(iter(still(53, accel=accel)), pitch_sign=-1.0)
+    hal.wait_next_tick()
+    s = hal.read_imu()
+    assert hal.tared_pitch_rad == pytest.approx(0.0, abs=ABS)   # tare 0.2 == fused pitch
+    assert s.roll_rad == pytest.approx(r, abs=ABS)              # not negated, not tared
 
 
 # 5. dt semantics -----------------------------------------------------------------------------
@@ -359,11 +433,14 @@ def test_wall_clock_stale_on_poll_tick():
     hal = SerialImuHal(iter(still(50) + [None] + still(1, seq0=50, t0_us=50 * 20000)), clock=clock)
     hal.wait_next_tick()
     hal.read_imu()
+    now_before = hal.now_s()
     clock.now = 0.3
-    assert hal.wait_next_tick() == pytest.approx(0.02)   # poll tick: no frame
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # poll tick: nominal dt, not wall time
+    assert hal.now_s() == now_before                     # poll does not advance device time
     with pytest.raises(HalFault, match="stale"):
         hal.read_imu()
     assert hal.wait_next_tick() == pytest.approx(0.02)   # next accepted frame clears it
+    assert hal.now_s() == pytest.approx(now_before + 0.02)
     hal.read_imu()
     assert hal.stale_count == 1
 
@@ -385,6 +462,9 @@ def test_bad_arguments_raise_value_error():
             SerialImuHal(iter([]), **kw)
     with pytest.raises(ValueError):
         SerialImuHal(None)
+    for text_lines in ("IMU,0,0", b"IMU,0,0"):
+        with pytest.raises(ValueError, match="not str/bytes"):
+            SerialImuHal(text_lines)
 
 
 # 7. Reorder / duplicates ----------------------------------------------------------------------
@@ -417,7 +497,9 @@ def test_reset_rearms_at_new_tilt():
     s = hal.read_imu()
     assert s.pitch_rad == pytest.approx(0.0, abs=ABS)
     assert s.roll_rad == pytest.approx(0.1, abs=ABS)
-    assert s.t_s > 0.0
+    # re-arm adds ONE nominal step to the previous sample (t=0), not the ~1 s window (documented)
+    assert s.t_s == pytest.approx(0.02)
+    assert hal.now_s() == pytest.approx(0.02)
 
 
 def test_reset_during_moving_window_stays_unarmed():
@@ -455,9 +537,28 @@ def test_wheel_clamp_and_non_finite():
     hal.wait_next_tick()
     hal.write_wheel_velocity(5.0, 5.0)                   # clamped to 1.0, times dt 0.02
     assert hal.wheel_angle_rad == pytest.approx(0.02)
-    for bad in (float("nan"), float("inf"), None, "x", -float("inf")):
+    for bad in (float("nan"), float("inf"), None, "x", "0.5", -float("inf")):
         hal.write_wheel_velocity(bad, 0.0)               # becomes 0.0, never raises
     assert hal.wheel_angle_rad == pytest.approx(0.02)
+
+
+def test_wheel_write_after_end_of_stream_integrates_nothing():
+    hal = SerialImuHal(iter(still(51)))
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # arming tick
+    hal.write_wheel_velocity(0.5, 0.0)
+    assert hal.wheel_angle_rad == pytest.approx(0.01)
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # frame 50
+    assert hal.wait_next_tick() == -1.0                  # end of stream, no close()
+    hal.write_wheel_velocity(0.5, 0.0)
+    assert hal.wheel_angle_rad == pytest.approx(0.01)
+
+
+def test_wheel_zero_dt_frame_integrates_nothing():
+    hal = SerialImuHal(iter(still(50) + [mk(50, 49 * 20000)]))   # same t_us, next seq
+    hal.wait_next_tick()
+    assert hal.wait_next_tick() == 0.0
+    hal.write_wheel_velocity(0.5, 0.0)
+    assert hal.wheel_angle_rad == 0.0
 
 
 def test_wheel_integrates_left_command_over_ticks():
@@ -514,7 +615,7 @@ class _NoReadSpy:
         raise AssertionError("constructor must not read the source")
 
 
-def test_constructor_does_not_read_is_hal_and_no_encoders():
+def test_constructor_does_not_read_source_and_no_encoders():
     hal = SerialImuHal(_NoReadSpy())
     assert isinstance(hal, Hal)
     assert hal.now_s() == 0.0
@@ -523,7 +624,9 @@ def test_constructor_does_not_read_is_hal_and_no_encoders():
         hal.read_encoders()
 
 
-def test_contract_version_matches_hal_module():
+def test_contract_version_tripwire():
+    # Deliberate tripwire: a contract bump in hal.hal must be a conscious change here too.
+    assert HAL_CONTRACT_VERSION == 1
     assert SerialImuHal.CONTRACT_VERSION == HAL_CONTRACT_VERSION
 
 
