@@ -335,6 +335,7 @@ def test_roll_neither_signed_nor_tared_with_pitch_sign_and_tare():
     s = hal.read_imu()
     assert hal.tared_pitch_rad == pytest.approx(0.0, abs=ABS)   # tare 0.2 == fused pitch
     assert s.roll_rad == pytest.approx(r, abs=ABS)              # not negated, not tared
+    assert s.yaw_rad == 0.0
 
 
 # 5. dt semantics -----------------------------------------------------------------------------
@@ -637,6 +638,7 @@ def test_roll_is_not_tared_and_reference_not_added_to_roll():
     s = hal.read_imu()
     assert s.roll_rad == pytest.approx(0.1, abs=ABS)
     assert s.pitch_rad == pytest.approx(REF_LQR, abs=ABS)
+    assert s.yaw_rad == 0.0
 
 
 def test_read_imu_after_close_raises():
@@ -700,7 +702,7 @@ def test_module_ast_has_no_forbidden_imports():
 # 13. Line intake ---------------------------------------------------------------------------
 
 def test_junk_prefixed_frame_ignored_uncounted():
-    hal = SerialImuHal(iter(["[imu] x" + mk(0, 0)] + still(50)))
+    hal = SerialImuHal(iter(["[imu] x" + mk(0, 0), "IMUX,1,2"] + still(50)))
     hal.wait_next_tick()
     assert hal.bad_frames == 0
     assert hal.stats.received == 50
@@ -728,3 +730,204 @@ def test_csv_replay_of_still_rows(tmp_path):
     dts = [hal.wait_next_tick() for _ in range(3)]
     assert dts == [pytest.approx(0.02)] * 3
     assert hal.wait_next_tick() == -1.0
+
+
+class _SpySource:
+    def __init__(self, items=(), raise_on_close=False):
+        self._it = iter(items)
+        self.closes = 0
+        self._raise = raise_on_close
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._it)
+
+    def close(self):
+        self.closes += 1
+        if self._raise:
+            raise RuntimeError("close failed")
+
+
+def test_arm_after_end_of_stream_raises_with_window_reason():
+    hal = SerialImuHal(iter(still(10)))
+    assert hal.wait_next_tick() == -1.0
+    with pytest.raises(HalFault, match="10/50"):
+        hal.arm()
+    assert not hal.armed
+
+
+def test_arm_after_end_of_stream_when_armed_raises_source_exhausted():
+    hal = SerialImuHal(iter(still(50)))
+    assert hal.wait_next_tick() == pytest.approx(0.02)
+    assert hal.wait_next_tick() == -1.0
+    with pytest.raises(HalFault, match="source exhausted"):
+        hal.arm()
+
+
+def test_failed_moving_attempt_restarts_fresh_window():
+    lines = moving(50) + still(60, seq0=50, t0_us=50 * 20000)
+    hal = SerialImuHal(iter(lines))
+    assert hal.wait_next_tick() == pytest.approx(0.02)
+    assert not hal.armed
+    assert "moving" in hal.arm_error
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # fresh window from the next frame
+    assert hal.armed
+    assert hal.arm_error is None
+
+
+def test_wheel_negative_clamp_and_infinite_inputs_contribute_nothing():
+    hal = SerialImuHal(iter(still(53)))
+    hal.wait_next_tick()
+    hal.write_wheel_velocity(-5.0, 0.0)                  # clamped to -1.0, times 0.02
+    assert hal.wheel_angle_rad == pytest.approx(-0.02)
+    for bad in (float("inf"), float("-inf")):
+        h = SerialImuHal(iter(still(53)))
+        h.wait_next_tick()
+        h.write_wheel_velocity(bad, 0.0)
+        assert h.wheel_angle_rad == 0.0
+
+
+def test_close_forwards_once_and_is_idempotent():
+    src = _SpySource(still(1))
+    hal = SerialImuHal(src)
+    hal.close()
+    hal.close()
+    assert src.closes == 1
+
+
+def test_close_swallows_source_close_error():
+    src = _SpySource(raise_on_close=True)
+    hal = SerialImuHal(src)
+    hal.close()                                          # must not raise
+    assert src.closes == 1
+    assert hal.wait_next_tick() == -1.0
+
+
+def test_arm_after_close_raises_closed():
+    hal = SerialImuHal(iter(still(50)))
+    hal.close()
+    with pytest.raises(HalFault, match="closed"):
+        hal.arm()
+
+
+def test_custom_arm_frames_changes_window_length():
+    hal = SerialImuHal(iter(still(10)), arm_frames=10)
+    assert hal.wait_next_tick() == pytest.approx(0.02)
+    assert hal.armed
+    hal = SerialImuHal(iter(still(10)))                  # default 50 frames: incomplete
+    assert hal.wait_next_tick() == -1.0
+    assert "10/50" in hal.arm_error
+
+
+def test_custom_arm_span_changes_gate():
+    gyros = [(0.0 if i % 2 == 0 else 2.0, 0.0, 0.0) for i in range(50)]   # span 2.0
+    hal = SerialImuHal(iter(gyro_run(gyros)), arm_span_dps=1.0)
+    hal.wait_next_tick()
+    assert not hal.armed
+    assert "gyro x" in hal.arm_error
+    hal = SerialImuHal(iter(gyro_run(gyros)))            # default 5.0 accepts span 2.0
+    hal.wait_next_tick()
+    assert hal.armed
+
+
+def test_arm_span_zero_accepts_only_constant_gyro():
+    hal = SerialImuHal(iter(still(50)), arm_span_dps=0.0)
+    hal.wait_next_tick()
+    assert hal.armed
+    wobble = gyro_run([(0.0 if i % 2 == 0 else 0.001, 0.0, 0.0) for i in range(50)])
+    hal = SerialImuHal(iter(wobble), arm_span_dps=0.0)
+    hal.wait_next_tick()
+    assert not hal.armed
+
+
+def test_custom_stale_s_changes_stale_threshold():
+    lines = still(50) + [mk(50, 980000 + 100000)]        # 0.1 s device gap
+    hal = SerialImuHal(iter(lines), stale_s=0.05)
+    hal.wait_next_tick()
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # stale under 0.05
+    with pytest.raises(HalFault, match="stale"):
+        hal.read_imu()
+    hal = SerialImuHal(iter(lines))                      # default 0.2: not stale
+    hal.wait_next_tick()
+    assert hal.wait_next_tick() == pytest.approx(0.1)
+    hal.read_imu()
+
+
+def test_invalid_constructor_values_rejected():
+    for kw in (dict(stale_s=float("inf")), dict(arm_span_dps=float("inf")),
+               dict(pitch_sign=True)):
+        with pytest.raises(ValueError):
+            SerialImuHal(iter([]), **kw)
+
+
+def test_pitch_sign_minus_one_with_reference_tared_excludes_reference():
+    lines = still(50) + gyro_run([(10.0, 16.0, 0.5)], seq0=50, t0_us=50 * 20000)
+    ref = -0.1086
+    hal = SerialImuHal(iter(lines), reference_pitch_rad=ref, pitch_sign=-1.0)
+    hal.wait_next_tick()
+    hal.wait_next_tick()
+    s = hal.read_imu()
+    tared = -0.98 * 0.02 * math.radians(18)
+    assert hal.tared_pitch_rad == pytest.approx(tared, abs=ABS)     # no reference
+    assert s.pitch_rad == pytest.approx(tared + ref, abs=ABS)        # -(p - tare) + ref
+    assert s.yaw_rad == 0.0
+
+
+def test_reset_inside_initial_window_needs_full_window_after_reset():
+    # reset frame = window frame 1; 48 more give 49 (not armed); the 50th arms
+    lines = (still(30, seq0=100) + [mk(0, 0)] + still(48, seq0=1, t0_us=20000)
+             + [None] + still(1, seq0=49, t0_us=49 * 20000))
+    hal = SerialImuHal(iter(lines))
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # poll with 49 of 50 window frames
+    assert not hal.armed
+    assert hal.rearm_count == 1
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # 50th window frame arms
+    assert hal.armed
+
+
+def test_reset_then_failed_attempt_then_clean_window_arms_one_nominal_step():
+    lines = (still(50, seq0=100) + [mk(0, 0)] + moving(49, seq0=1, t0_us=20000)
+             + still(50, seq0=50, t0_us=1000000))
+    hal = SerialImuHal(iter(lines))
+    assert hal.wait_next_tick() == pytest.approx(0.02)
+    assert hal.read_imu().t_s == 0.0
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # reset + 49 moving frames: fails
+    assert not hal.armed
+    assert "moving" in hal.arm_error
+    with pytest.raises(HalFault):
+        hal.read_imu()
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # clean window arms
+    assert hal.armed
+    assert hal.arm_error is None
+    assert hal.read_imu().t_s == pytest.approx(0.02)     # one nominal step after re-arm
+    assert hal.rearm_count == 1
+
+
+def test_device_gap_stale_then_reset_while_armed():
+    lines = (still(50, seq0=100) + [mk(150, 980000 + 250000)] + [mk(0, 0)]
+             + still(49, seq0=1, t0_us=20000))
+    hal = SerialImuHal(iter(lines))
+    hal.wait_next_tick()
+    hal.read_imu()
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # device gap: stale tick
+    with pytest.raises(HalFault, match="stale"):
+        hal.read_imu()
+    assert hal.now_s() == pytest.approx(0.25)
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # reset re-arms from the reset frame
+    assert hal.armed
+    assert hal.rearm_count == 1
+    assert hal.stale_count == 1
+    assert hal.read_imu().t_s == pytest.approx(0.27)     # 0.25 real gap + one nominal step
+
+
+def test_reset_during_explicit_arm_completes_then_holds():
+    lines = still(30, seq0=100) + [mk(0, 0)] + still(49, seq0=1, t0_us=20000)
+    hal = SerialImuHal(iter(lines))
+    hal.arm()                                            # reset restarts the window inside arm()
+    assert hal.armed
+    assert hal.rearm_count == 1
+    assert hal.now_s() == 0.0                            # reset before first successful arm: no step
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # hold: no frame consumed
+    assert hal.read_imu().t_s == 0.0

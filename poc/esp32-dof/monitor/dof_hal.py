@@ -19,10 +19,14 @@ The arming tick returns NOMINAL_DT_S. On the first arm its sample is the last wi
 t_s = 0. On a re-arm after a device reset, t_s/now_s advance by ONE nominal step (0.02) from the
 previous sample, not by the ~1 s window, so they undercount the re-arm window (documented,
 accepted). After an explicit arm(), the next wait returns NOMINAL_DT_S without consuming a frame.
-A failed attempt returns NOMINAL_DT_S and the next wait keeps collecting. Source exhausted before
-the window is full: arm_error "window incomplete: n/N", wait returns -1.0. A source exception ends
-the stream the same way and is kept in source_error. A reset re-arm blocks inside one
-wait_next_tick() until the window fills (up to ARM_FRAMES frames, about 1 s of device time).
+A failed "moving" attempt discards its window and starts a fresh window from the next frame; a gap
+failure keeps the gap frame as the first frame of the next window. Either failure returns
+NOMINAL_DT_S. Source exhausted before the window is full: arm_error "window incomplete: n/N", wait
+returns -1.0; arm() then raises HalFault. A source exception ends the stream the same way and is kept
+in source_error. A reset re-arm spans wait_next_tick() calls when the source yields None mid-window
+(each such call returns NOMINAL_DT_S and collection resumes on the next call); otherwise it blocks
+until the window fills (up to ARM_FRAMES frames, about 1 s of device time). A reset before the first
+successful arm adds no t_s step.
 
 Per accepted frame after arming: dt = StreamStats.last_dt_us (modular). A device gap dt > stale_s
 (strict: equal is not stale) re-initialises the filter from that frame (no blending), keeps bias
@@ -214,6 +218,8 @@ class SerialImuHal(Hal):
         """Explicit arming attempt. Raises HalFault if the attempt fails or the source is exhausted."""
         if self._closed:
             raise HalFault("SerialImuHal is closed")
+        if self._finished:
+            raise HalFault(self._arm_error or "source exhausted")
         if self._armed:
             return
         status = self._arm_attempt()
@@ -292,8 +298,8 @@ class SerialImuHal(Hal):
             self._finished = True
             return -1.0
         if kind == "poll":
-            if (self._last_wall is not None
-                    and self._clock() - self._last_wall > self._stale_s):
+            # Armed implies at least one accepted frame, so _last_wall is set here.
+            if self._clock() - self._last_wall > self._stale_s:
                 if not self._wall_stale:
                     self._stale_count += 1
                 self._wall_stale = True
@@ -329,7 +335,7 @@ class SerialImuHal(Hal):
         return (gyro[0] - bx, gyro[1] - by, gyro[2] - bz)
 
     def _reset_state(self):
-        # The filter and stale flags are reset in _finish_window, the only path back to armed.
+        # The filter is reset in _finish_window (the only path back to armed), before the replay.
         self._armed = False
         self._hold_first = False
         self._win = []
@@ -395,8 +401,6 @@ class SerialImuHal(Hal):
         self._has_armed = True
         self._armed = True
         self._arm_error = None
-        self._dev_stale = False
-        self._wall_stale = False
         return "armed"
 
     def _pull(self):
