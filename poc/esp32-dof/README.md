@@ -334,7 +334,7 @@ Errors go to stderr; rows + summary to stdout. No Traceback on expected errors.
 | `dropped` | Gap in sequence number (modulo 65536 wraparound): counted as `(seq2-seq1) % 65536 - 1` for forward gaps |
 | `out_of_order` | Duplicates OR small backward jumps (seq decreases by ≤50); same stream continues (not a reset) |
 | `resets` | Large backward jump (seq decreases by >50) OR device time went backwards; stream re-baselined from this point (no drops charged retroactively) |
-| `bad_frames` | Lines that failed to parse (checksum error, malformed, etc.); ignored in rate/stats |
+| `bad_frames` | Lines starting `IMU,` that failed to parse (checksum error, malformed, etc.); ignored in rate/stats. Lines not starting `IMU,` (text such as `[imu] ...`) are skipped and not counted |
 | `rate (Hz)` | Instantaneous frame rate from last ≤50 accepted frames; based on device t_us deltas, not wall clock |
 | `avg rate (Hz)` | Average rate: `(accepted intervals) / (total device time)` since the last reset or start |
 
@@ -530,7 +530,7 @@ Tick a box only after doing it yourself. Nothing here was done by the automation
 - **`FATAL: $DISPLAY is not set`** (from `run_gui.sh` / `run_mock_demo.sh`): no X session. Export your display (`export DISPLAY=:1`) and re-run. There is no xvfb fallback for the GUI scripts. For a window-less smoke test use the headless command in "Reproducing end to end".
 - **`cannot open serial port ... Permission denied`, monitor exit code 2**: you are not in the `dialout` group (`groups`; `sudo usermod -aG dialout $USER`, then log out and back in). Or the port is missing (`--list-ports`) or held by another program.
 - **ModemManager grabs `/dev/ttyACM*`** (port opens then vanishes/garbles): stop it while testing (`sudo systemctl stop ModemManager`) or add a udev rule to ignore the board.
-- **Boot text / bad_frames right after opening the port**: opening the port toggles DTR/RTS and resets the ESP32, which prints ROM boot text. Those lines fail parsing and are counted in `bad_frames`; the first line after each (re)open is discarded by design. Harmless.
+- **Boot text / bad_frames right after opening the port**: opening the port toggles DTR/RTS and resets the ESP32, which prints ROM boot text. Those lines do not start with `IMU,`, so the monitor ignores them and they are not counted in `bad_frames`. Only corrupt `IMU,` lines are counted. The first line after each (re)open is discarded by design. Harmless.
 - **Webots does not react**: (1) the simulation must be RUNNING (press Play; `--mode=realtime` starts running); (2) check that UDP 5005 is bound: `ss -uln | grep 5005`; (3) the controller log must show `listening on 127.0.0.1:5005`; (4) sender and controller must agree on port (`--udp-port`, default 5005); (5) the monitor `published : N` count in the summary must be > 0; (6) run Webots with `DOF_FOLLOWER_DEBUG=1` to see applied rotations (must be in Webots' own environment, e.g. `DOF_FOLLOWER_DEBUG=1 ./webots/run_gui.sh`).
 - **Controller logs `cannot bind UDP 127.0.0.1:5005` and exits**: port already in use (a second Webots or another program). There is no SO_REUSEADDR by design. Close the other instance (`ss -uanp | grep :5005`).
 - **`run_mock_demo.sh` says it cannot find python for env 'esp32-dof'**: create the env (step 1) or set `DOF_PYTHON=/path/to/python`.

@@ -69,14 +69,14 @@ class TestRun:
         assert "--- summary ---" in text
         assert len(rows(text)) == 45
 
-    def test_run_garbage_line_counts_bad(self):
-        """Test: garbage lines are counted as bad."""
+    def test_run_garbage_line_ignored_corrupt_imu_counts_bad(self):
+        """Test: non-IMU text is ignored (not counted); corrupt IMU, line is counted bad."""
         lines = fast()
         lines.insert(10, "garbage")
         lines.insert(20, "IMU,1,2*ZZ")
         out = io.StringIO()
         stats = run(iter(lines), out=out)
-        assert stats.bad_frames == 2
+        assert stats.bad_frames == 1
         assert stats.received == 50
 
     def test_run_quiet_every(self):
