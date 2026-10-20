@@ -76,10 +76,9 @@ def _print_summary(stats: StreamStats, out, interrupted: bool, published=None) -
 
 def run(lines: Iterable[str], out=None, quiet_every: int = 5,
         fuser=None, publisher=None) -> StreamStats:
-    """... (keep existing docstring) plus:
-    Lines not starting with "IMU," (firmware boot/status text) are skipped silently and are NOT
-      counted anywhere. A line starting with "IMU," that fails parse_line() is counted in
-      stats.bad_frames.
+    """Consume frame lines, print rows and a summary, and return the StreamStats.
+
+    Lines not starting with "IMU," are skipped uncounted; corrupt "IMU," lines count in bad_frames.
     fuser: optional ComplementaryFilter -> adds roll/pitch/yaw (deg) columns. Fusion dt is the
       real t_us delta of the accepted interval (StreamStats.last_dt_us; 0.0 for the first frame
       or after a device reset; 40 ms across one dropped slot). On a device reset
