@@ -4,31 +4,43 @@
 Chain: ESP32 frame lines (serial, --port) or synthetic/CSV frames (--mock, --replay)
 -> dof_hal.SerialImuHal (arming, tare, complementary filter) -> hal.control_core
 LqrBalance / PidBalance (or none) -> wheel command -> HAL wheel_angle integral -> one UDP JSON
-datagram per tick to the servo-wheel-dof Webots display (127.0.0.1:5006 by default).
+datagram per armed tick to the servo-wheel-dof Webots display (127.0.0.1:5006 by default).
 
 Display only: the real board never feels the simulated wheel. Nothing here claims the board
 balances, and the wheel direction is unverified on hardware (human check #377).
 
-UDP datagram (one per tick, radians):
+UDP datagram (one per published tick, radians):
     {"seq": int, "roll": f, "pitch": f, "yaw": 0.0, "wheel_angle": f, "cmd_rad_s": f}
-servo-wheel-dof's parser ignores seq and extra keys (cmd_rad_s). Published pitch is the TARED
-pitch (HAL tared_pitch_rad, no LQR reference offset), so the start pose displays upright.
+servo-wheel-dof's parser ignores seq and extra keys (cmd_rad_s). Only PITCH is tared: published
+pitch is the HAL tared_pitch_rad (no LQR reference offset), so the start pose displays upright in
+pitch. Roll is published UNTARED (the display ignores roll). yaw is always 0.0.
+wheel_angle is the integral of the COMMANDED wheel velocity, not a measurement. cmd_rad_s is the
+core's output before the HAL clamps it to +-1 rad/s (the HAL clamps only the integral).
+--core none: the wheel_angle field and the record wheel_angle column carry the tared pitch, and
+the HAL integral is not used.
 
-Gains: inverted-pendulum-project/07_Simulation/hal/parity_vectors.json, read with stdlib json and
-passed explicitly to the cores (no numpy/scipy import). The file is never written.
+Arming: ticks before the HAL is armed (the arm window, failed "moving" attempts, and a re-arm
+after a device reset) are not published, not recorded and not counted as faults. --duration
+includes this arm window (about 1 s of device time), so a duration under about 1 s ends before
+arming and exits 2 "never armed".
+
+Faults: once armed, a HalFault (stale frame gap or wall-stale) holds: write 0, core.reset(), the
+last good roll/pitch are published with cmd 0 and the wheel angle unchanged.
 
 Poll ticks: a source that yields None (serial stall, see PolledSource) makes wait_next_tick()
 return NOMINAL_DT_S without a new frame. The HAL does not block on that, so the bridge paces
 non-frame ticks to NOMINAL_DT_S of wall time (injectable sleep) so an unpaced idle source cannot
-run the wheel integral faster than wall time. A stalled serial port with PolledSource's 0.1 s
-poll still integrates only NOMINAL_DT_S per poll (slower than wall time, not faster).
+run the wheel integral faster than wall time. During a stall the integral advances NOMINAL_DT_S
+per poll only until the last frame is older than the HAL's STALE_S (0.2 s). After that the HAL
+raises HalFault, the bridge holds, and the wheel angle freezes until frames resume.
 
 Usage:
     mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --mock --duration 5
     mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --port /dev/ttyACM0 --core pid
     mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --replay raw.csv --record out.csv
 
-Exit codes: 0 ok / Ctrl-C / duration end while armed; 2 usage error, source error or never armed.
+Exit codes: 0 ok / duration end while armed / Ctrl-C while armed; 2 usage error, source error,
+never armed, or Ctrl-C before armed.
 """
 
 import argparse
@@ -57,6 +69,8 @@ from dof_sources import csv_replay_lines, mock_frame  # noqa: E402
 GAINS_PATH = _SIM_DIR / "hal" / "parity_vectors.json"
 HOST = "127.0.0.1"
 DEFAULT_UDP_PORT = 5006
+DEFAULT_ALPHA = 0.98
+SEQ_MOD = 65536
 CORES = ("lqr", "pid", "none")
 RECORD_COLUMNS = ("seq", "t_us", "roll", "pitch", "yaw", "wheel_angle", "cmd_rad_s")
 STATUS_PERIOD_S = 1.0
@@ -70,40 +84,52 @@ BridgeResult = namedtuple("BridgeResult", "ticks published faults final_wheel_an
 
 # ----- gains and cores ------------------------------------------------------------------------
 
-def _need(d, *keys):
-    cur = d
+def _need(data, path, *keys):
+    cur = data
     for k in keys:
         if not isinstance(cur, dict) or k not in cur:
-            raise ValueError(f"{GAINS_PATH}: missing key {'.'.join(keys)}")
+            raise ValueError(f"{path}: missing key {'.'.join(keys)}")
         cur = cur[k]
     return cur
 
 
-def load_gains(path=GAINS_PATH) -> dict:
+def _num(value, where):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"{where} must be a finite number, got {value!r}")
+    return float(value)
+
+
+def load_gains(path=None) -> dict:
     """Read LQR and PID gains from parity_vectors.json (stdlib json only).
 
+    path defaults to the module-level GAINS_PATH, looked up at call time.
+
     Raises:
-        ValueError: missing key, or the file is not valid JSON (OSError propagates).
+        ValueError: invalid JSON, missing key, or a non-finite / non-numeric value.
+        OSError: the file cannot be read.
     """
+    path = GAINS_PATH if path is None else path
     with open(path, encoding="utf-8") as fh:
         try:
             data = json.load(fh)
         except json.JSONDecodeError as exc:
             raise ValueError(f"{path}: invalid JSON: {exc}") from None
-    k = _need(data, "lqr", "K")
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: top level must be a JSON object")
+    k = _need(data, path, "lqr", "K")
     if not isinstance(k, list) or len(k) != 2:
         raise ValueError(f"{path}: lqr.K must be a list of length 2")
     return {
         "lqr": {
-            "K": (float(k[0]), float(k[1])),
-            "theta_ref_rad": float(_need(data, "lqr", "theta_ref_rad")),
-            "out_limit": float(_need(data, "lqr", "out_limit")),
+            "K": (_num(k[0], "lqr.K[0]"), _num(k[1], "lqr.K[1]")),
+            "theta_ref_rad": _num(_need(data, path, "lqr", "theta_ref_rad"), "lqr.theta_ref_rad"),
+            "out_limit": _num(_need(data, path, "lqr", "out_limit"), "lqr.out_limit"),
         },
         "pid": {
-            "kp": float(_need(data, "pid", "kp")),
-            "ki": float(_need(data, "pid", "ki")),
-            "kd": float(_need(data, "pid", "kd")),
-            "out_limit": float(_need(data, "pid", "out_limit")),
+            "kp": _num(_need(data, path, "pid", "kp"), "pid.kp"),
+            "ki": _num(_need(data, path, "pid", "ki"), "pid.ki"),
+            "kd": _num(_need(data, path, "pid", "kd"), "pid.kd"),
+            "out_limit": _num(_need(data, path, "pid", "out_limit"), "pid.out_limit"),
         },
     }
 
@@ -130,7 +156,10 @@ def _finite_real(v) -> bool:
 
 
 class WheelPublisher:
-    """One UDP datagram per send(). Never raises on OSError (counted in errors)."""
+    """One UDP datagram per send(). Never raises on OSError (counted in errors).
+
+    Counters: sent (successful sendto only), errors (swallowed OSError), skipped (refused values).
+    """
 
     def __init__(self, host: str = HOST, port: int = DEFAULT_UDP_PORT):
         if not isinstance(host, str) or not host:
@@ -181,7 +210,8 @@ class PolledSource:
     """Read an iterator on a daemon thread; __next__ returns None after poll_s with no line.
 
     An exception raised by the iterator is re-raised from __next__. End of the iterator is
-    StopIteration (sticky). close() asks the reader thread to stop at its next put.
+    StopIteration (sticky). close() asks the reader thread to stop at its next put; the thread
+    is a daemon and exits without joining.
     """
 
     def __init__(self, iterable, poll_s: float = 0.1, maxsize: int = 1024):
@@ -280,20 +310,21 @@ def _still_gen(still_frames, rate_hz, realtime, duration_s):
 
 # ----- bridge loop ----------------------------------------------------------------------------
 
-def run_bridge(hal, core, ref_pitch, pub, *, duration_s=None, record=None,
+def run_bridge(hal, core, pub, *, duration_s=None, record=None,
                clock=time.monotonic, out=None, sleep=time.sleep) -> BridgeResult:
     """Run the tick loop until the HAL reports end of input (-1) or duration_s elapses.
 
-    core None (--core none): wheel_angle published = tared pitch (mirror), HAL command 0.
-    On HalFault: hold (write 0, core.reset(), last good roll/pitch, wheel unchanged), count a fault.
-    ref_pitch is informational here: the HAL already adds it to imu.pitch_rad for the core.
+    ticks counts every loop tick (armed or not). Unarmed ticks are not published, not recorded
+    and not faults. Armed HalFault ticks hold (see module docstring). published counts sends the
+    publisher actually accepted (pub.sent delta); record logs every armed tick, published or not.
+    core None (--core none): wheel_angle = tared pitch (mirror), HAL command 0.
     """
     out = sys.stderr if out is None else out
     writer = None
     if record is not None:
         writer = csv.writer(record)
         writer.writerow(RECORD_COLUMNS)
-    ticks = published = faults = 0
+    ticks = published = faults = rows = 0
     seq = 0
     last_roll = last_pitch = 0.0
     final_wheel = 0.0
@@ -318,23 +349,27 @@ def run_bridge(hal, core, ref_pitch, pub, *, duration_s=None, record=None,
                     sleep(idle)
             last_tick = clock()
 
+            if not hal.armed:
+                last_status = _status(out, clock(), last_status, hal, ticks, faults, 0.0,
+                                      hal.wheel_angle_rad, "arming")
+                continue
+
             try:
                 imu = hal.read_imu()
             except HalFault as exc:
                 faults += 1
                 hal.write_wheel_velocity(0.0, 0.0)
-                if core is not None and hasattr(core, "reset"):
+                if core is not None:
                     core.reset()
-                cmd = 0.0
                 roll, pitch = last_roll, last_pitch
+                cmd = 0.0
                 wheel = last_pitch if core is None else hal.wheel_angle_rad
                 last_status = _status(out, clock(), last_status, hal, ticks, faults, cmd,
                                       wheel, f"hold: {exc}")
             else:
                 last_roll = imu.roll_rad
-                pitch = hal.tared_pitch_rad
-                last_pitch = pitch
-                roll = last_roll
+                last_pitch = hal.tared_pitch_rad
+                roll, pitch = last_roll, last_pitch
                 if core is None:
                     cmd = 0.0
                     hal.write_wheel_velocity(0.0, 0.0)
@@ -347,15 +382,17 @@ def run_bridge(hal, core, ref_pitch, pub, *, duration_s=None, record=None,
                 last_status = _status(out, clock(), last_status, hal, ticks, faults, cmd,
                                       wheel, None)
 
+            sent_before = pub.sent
             pub.send(seq, roll, pitch, 0.0, wheel, cmd_rad_s=cmd)
-            published += 1
+            if pub.sent > sent_before:
+                published += 1
             if writer is not None:
                 writer.writerow([seq, int(hal.now_s() * 1e6), roll, pitch, 0.0, wheel, cmd])
-            seq = (seq + 1) % 65536
-            final_wheel = wheel
-            if writer is not None:
-                if ticks % RECORD_FLUSH_EVERY == 0:
+                rows += 1
+                if rows % RECORD_FLUSH_EVERY == 0:
                     record.flush()
+            seq = (seq + 1) % SEQ_MOD
+            final_wheel = wheel
     finally:
         if record is not None:
             record.flush()
@@ -418,19 +455,20 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="dof_wheel_bridge",
                                 description="IMU frames -> SerialImuHal -> LQR/PID -> UDP wheel display.")
     src = p.add_mutually_exclusive_group(required=True)
-    src.add_argument("--port", metavar="PATH", help="serial device, e.g. /dev/ttyACM0")
+    src.add_argument("--port", metavar="PATH", help="serial device, e.g. /dev/ttyACM0 (needs pyserial)")
     src.add_argument("--mock", action="store_true", help="synthetic 50 Hz frames with a still lead-in")
     src.add_argument("--replay", metavar="CSV", help="raw-frame CSV (seq,t_us,ax,ay,az,gx,gy,gz)")
     p.add_argument("--baud", type=_positive_int, default=115200, help="serial baud (default 115200)")
     p.add_argument("--core", default="lqr", choices=CORES,
-                   help="control core: lqr (default), pid, or none (display mirror of tilt)")
+                   help="control core: lqr (default), pid, or none (display mirror of pitch)")
     p.add_argument("--udp-port", type=_port, default=DEFAULT_UDP_PORT, metavar="PORT",
                    help="UDP port of the servo-wheel-dof display (default 5006)")
     p.add_argument("--record", metavar="CSV",
-                   help="write per-tick CSV seq,t_us,roll,pitch,yaw,wheel_angle,cmd_rad_s")
+                   help="write per-tick CSV seq,t_us,roll,pitch,yaw,wheel_angle,cmd_rad_s (armed ticks)")
     p.add_argument("--duration", type=_positive_float, default=None, metavar="SECONDS",
-                   help="stop after SECONDS (default: until Ctrl-C / end of input)")
-    p.add_argument("--alpha", type=_unit_float, default=0.98, metavar="A",
+                   help="stop after SECONDS, counted from start including the ~1 s arm window; "
+                        "under ~1 s exits 2 'never armed' (default: until Ctrl-C / end of input)")
+    p.add_argument("--alpha", type=_unit_float, default=DEFAULT_ALPHA, metavar="A",
                    help="complementary filter gyro weight 0..1 (default 0.98)")
     return p
 
@@ -440,7 +478,10 @@ def _make_source(args):
         return still_then_mock_lines(realtime=True, duration_s=args.duration)
     if args.replay is not None:
         return csv_replay_lines(args.replay, realtime=True)
-    from dof_serial import serial_lines  # lazy: pyserial only for --port
+    try:
+        from dof_serial import serial_lines  # lazy: pyserial only for --port
+    except ImportError as exc:
+        raise ImportError(f"--port needs pyserial in this environment: {exc}") from None
     return PolledSource(serial_lines(args.port, args.baud))
 
 
@@ -459,17 +500,28 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
         if args.record is not None:
             record_fh = open(args.record, "w", newline="", encoding="utf-8")
         pub = WheelPublisher(port=args.udp_port)
-        hal = SerialImuHal(_make_source(args), reference_pitch_rad=ref, alpha=args.alpha)
-        result = run_bridge(hal, core, ref, pub, duration_s=args.duration, record=record_fh,
+        hal = SerialImuHal(_make_source(args), reference_pitch_rad=ref, alpha=args.alpha,
+                           clock=clock)
+        result = run_bridge(hal, core, pub, duration_s=args.duration, record=record_fh,
                             clock=clock, sleep=sleep)
+        if pub.errors or pub.skipped:
+            print(f"dof_wheel_bridge: udp published={result.published} errors={pub.errors} "
+                  f"skipped={pub.skipped}", file=sys.stderr, flush=True)
+        if hal.source_error is not None:
+            print(f"dof_wheel_bridge: error: source failed: {hal.source_error}",
+                  file=sys.stderr, flush=True)
+            return 2
         if not result.armed:
             print(f"dof_wheel_bridge: error: never armed: {hal.arm_error or 'no arm error'}"
                   f" (source_error={hal.source_error})", file=sys.stderr, flush=True)
             return 2
         return 0
     except KeyboardInterrupt:
-        return 0
-    except (OSError, ValueError) as exc:
+        armed = hal is not None and hal.armed
+        if not armed:
+            print("dof_wheel_bridge: error: interrupted before armed", file=sys.stderr, flush=True)
+        return 0 if armed else 2
+    except (ImportError, OSError, ValueError) as exc:
         print(f"dof_wheel_bridge: error: {exc}", file=sys.stderr, flush=True)
         return 2
     finally:
