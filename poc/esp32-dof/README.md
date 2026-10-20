@@ -344,6 +344,73 @@ Errors go to stderr; rows + summary to stdout. No Traceback on expected errors.
 - `out_of_order` increments for small reversals (b ≤ 50), but the stream does **not** rebase — the next frame must be > the "high water mark" to resume. Frames between the reversal and the high water mark are counted as out_of_order, not reset.
 - Fusion dt uses the real t_us delta, so a dropped slot integrates over 40 ms; --publish sends only accepted (in-order/forward/reset) frames at the source rate (about 50 Hz); the Webots controller applies the latest per step.
 
+## Wheel bridge (dof_wheel_bridge, #375)
+
+**Frames -> SerialImuHal (#374) -> Stage F control core -> wheel command -> UDP JSON** for the
+servo-wheel-dof Webots display. It is a display only: the real board never feels the simulated
+wheel. Gains come from the committed `inverted-pendulum-project/07_Simulation/hal/parity_vectors.json`
+(read only, stdlib `json`, no numpy/scipy). LQR uses the reference pitch -0.1086 (JSON value
+-0.10859999805688858) through the HAL; PID and `--core none` use 0.0.
+
+**Usage** (`run` = executed for this change; `not run` = not executed here):
+
+```bash
+# run: mock 3 s, UDP to a loopback listener on 5101 (not the display port)
+mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --mock --duration 3 --udp-port 5101 --core lqr
+
+# not run: mock to the display port 5006, until Ctrl-C
+mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --mock
+
+# not run: real board (serial), PID core
+mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --port /dev/ttyACM0 --core pid
+
+# not run: replay a raw-frame CSV, write a per-tick record, mirror tilt (no controller)
+mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --replay raw.csv --record out.csv --core none
+```
+
+Exactly one of `--port`, `--mock`, `--replay` is required. Other options: `--core lqr|pid|none`
+(default `lqr`), `--udp-port` (default 5006), `--record CSV`, `--duration S`, `--baud` (115200),
+`--alpha` (0.98). Exit codes: 0 for Ctrl-C, duration end or input end while armed; 2 for usage
+errors, source errors, or never armed (for example a replay shorter than the 50-frame arm window,
+which prints `window incomplete`).
+
+**Two CSV formats (do not mix them):**
+
+- `--replay` input is a **raw-frame** CSV, the same as `dof_monitor.py --replay`: columns
+  `seq,t_us,ax,ay,az,gx,gy,gz` (accel in g, gyro in deg/s).
+- `--record` output is a **per-tick** CSV: columns `seq,t_us,roll,pitch,yaw,wheel_angle,cmd_rad_s`
+  (radians; `t_us` is HAL time, non-decreasing). It can be read by servo-wheel-dof's
+  `mock_publisher.py` replay reader (`roll,pitch,yaw,wheel_angle` required, `t_us` optional). It
+  is not a valid `--replay` input.
+
+**Only one publisher per UDP port 5006 at a time** (bridge / `poc/servo-wheel-dof/monitor/mock_publisher.py`
+/ `run_demo.sh --mock`). The Webots controller binds without `SO_REUSEADDR`.
+
+**Behaviour:**
+
+- The first 50 accepted frames arm the HAL (gyro-span gate); the pose you hold at arming is the
+  tared zero, so the start pose gives about zero command for both LQR and PID.
+- A `HalFault` (stale frame gap, wall-stale, not armed) holds: the wheel is not advanced, the
+  command is 0, the core is reset, and the last good roll and pitch are published.
+- Serial stalls arrive as poll ticks (`PolledSource`, 0.1 s). The bridge paces non-frame ticks to
+  0.02 s of wall time so an idle source does not run the wheel integral faster than wall time.
+  During a stall the integral still advances 0.02 s per poll, which is slower than wall time.
+- `wheel_angle` is the integral of the **commanded** wheel velocity, not a measurement. Published
+  `pitch` is the tared pitch (no LQR reference offset) and `yaw` is always 0.
+- In the mock run the LQR command reaches its +-1 rad/s limit within about a second, so the
+  displayed wheel saturates. That is what the gains do on the mock motion, not a balance result.
+
+**Honesty:** mock-tested only (pytest, loopback UDP). No hardware run, and no claim that the
+controller balances. `PITCH_SIGN` and `WHEEL_DISPLAY_SIGN` (both in `dof_hal.py`) are UNVERIFIED,
+so the direction of the displayed wheel is not established. Human check (GUI, real board) is #377.
+A hand-held board is not a balancing robot.
+
+**Tests** (`run`):
+
+```bash
+cd poc/esp32-dof && mamba run -n esp32-dof python3 -m pytest -q monitor webots/controllers/esp32_dof_follower
+```
+
 ## Webots IPC contract
 
 **Simulation integration**: Webots controller receives orientation updates from the host monitor over UDP.
