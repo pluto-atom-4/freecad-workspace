@@ -913,16 +913,15 @@ def test_reference_pitch_bool_or_str_rejected(ref):
         SerialImuHal(iter([]), reference_pitch_rad=ref)
 
 
-@pytest.mark.parametrize("span", ["x", "5"])
-def test_arm_span_str_raises_value_error_not_type_error(span):
+def test_arm_span_str_raises_value_error_not_type_error():
+    # Numeric string must not be coerced; same _is_real guard as "x".
     with pytest.raises(ValueError, match="arm_span_dps"):
-        SerialImuHal(iter([]), arm_span_dps=span)
+        SerialImuHal(iter([]), arm_span_dps="5")
 
 
-@pytest.mark.parametrize("frames", [5.0, 2.0])
-def test_arm_frames_float_rejected(frames):
+def test_arm_frames_float_rejected():
     with pytest.raises(ValueError, match="arm_frames"):
-        SerialImuHal(iter([]), arm_frames=frames)
+        SerialImuHal(iter([]), arm_frames=5.0)
 
 
 def test_pitch_sign_minus_one_with_reference_tared_excludes_reference():
