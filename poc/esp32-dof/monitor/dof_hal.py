@@ -215,7 +215,12 @@ class SerialImuHal(Hal):
     # ----- Hal interface --------------------------------------------------------------------
 
     def arm(self):
-        """Explicit arming attempt. Raises HalFault if the attempt fails or the source is exhausted."""
+        """Explicit arming attempt. Raises HalFault if the attempt fails or the source is exhausted.
+
+        Once the stream has ended, arm() raises HalFault("source exhausted") even if already armed;
+        if unarmed it raises the stored arm_error (e.g. "window incomplete: n/N"). A closed HAL
+        raises HalFault("SerialImuHal is closed").
+        """
         if self._closed:
             raise HalFault("SerialImuHal is closed")
         if self._finished:

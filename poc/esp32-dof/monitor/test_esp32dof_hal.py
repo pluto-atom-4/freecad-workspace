@@ -280,6 +280,16 @@ def test_pitch_sign_flips_pitch_and_gyro_y():
     assert hal.tared_pitch_rad == pytest.approx(-0.98 * 0.02 * math.radians(18), abs=ABS)
 
 
+def test_pitch_sign_leaves_gz_unchanged():
+    # gz is 2.5 dps against a 0.5 bias: corrected 2.0 dps (0.0 would hide a negated gz)
+    lines = still(50) + gyro_run([(10.0, 16.0, 2.5)], seq0=50, t0_us=50 * 20000)
+    hal = SerialImuHal(iter(lines), pitch_sign=-1.0)
+    hal.wait_next_tick()
+    hal.wait_next_tick()
+    s = hal.read_imu()
+    assert s.gyro_rad_s[2] == pytest.approx(math.radians(2.0))
+
+
 def test_filter_uses_real_dt_0_04_after_wide_frame():
     lines = still(50) + [mk(50, 49 * 20000 + 40000, gyro=(10.0, 16.0, 0.5))]
     hal = SerialImuHal(iter(lines))
@@ -515,6 +525,19 @@ def test_reset_during_moving_window_stays_unarmed():
     assert hal.rearm_count == 1
 
 
+def test_device_reset_clears_stale_moving_arm_error():
+    lines = moving(50, seq0=100) + [mk(0, 0)] + [None]
+    hal = SerialImuHal(iter(lines))
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # first window fails "board moving"
+    assert "moving" in hal.arm_error
+    assert hal.wait_next_tick() == pytest.approx(0.02)   # reset frame consumed, then poll tick
+    assert hal.arm_error is None
+    assert hal.rearm_count == 1
+    with pytest.raises(HalFault) as info:
+        hal.read_imu()
+    assert "moving" not in str(info.value)
+
+
 # 9. Wrap ------------------------------------------------------------------------------------
 
 def test_t_us_and_seq_wrap_keep_dt_and_monotonic_time():
@@ -541,6 +564,13 @@ def test_wheel_clamp_and_non_finite():
     for bad in (float("nan"), float("inf"), None, "x", "0.5", -float("inf")):
         hal.write_wheel_velocity(bad, 0.0)               # becomes 0.0, never raises
     assert hal.wheel_angle_rad == pytest.approx(0.02)
+
+
+def test_wheel_huge_int_overflow_contributes_zero_and_does_not_raise():
+    hal = SerialImuHal(iter(still(53)))
+    hal.wait_next_tick()
+    hal.write_wheel_velocity(10**400, 0)                 # float() OverflowError -> 0.0
+    assert hal.wheel_angle_rad == 0.0
 
 
 def test_wheel_write_after_end_of_stream_integrates_nothing():
@@ -715,6 +745,14 @@ def test_corrupt_imu_line_counts_bad():
     assert hal.armed
 
 
+def test_non_str_items_skipped_silently():
+    hal = SerialImuHal(iter([5, b"IMU,x", 3.5] + still(50)))
+    assert hal.wait_next_tick() == pytest.approx(0.02)
+    assert hal.armed
+    assert hal.bad_frames == 0
+    assert hal.stats.received == 50
+
+
 def test_csv_replay_of_still_rows(tmp_path):
     path = tmp_path / "still.csv"
     with open(path, "w", newline="", encoding="utf-8") as fh:
@@ -821,6 +859,13 @@ def test_custom_arm_frames_changes_window_length():
     assert "10/50" in hal.arm_error
 
 
+def test_arm_frames_two_is_accepted_and_arms():
+    hal = SerialImuHal(iter(still(2)), arm_frames=2)
+    assert hal.wait_next_tick() == pytest.approx(0.02)
+    assert hal.armed
+    hal.read_imu()
+
+
 def test_custom_arm_span_changes_gate():
     gyros = [(0.0 if i % 2 == 0 else 2.0, 0.0, 0.0) for i in range(50)]   # span 2.0
     hal = SerialImuHal(iter(gyro_run(gyros)), arm_span_dps=1.0)
@@ -860,6 +905,23 @@ def test_invalid_constructor_values_rejected():
                dict(pitch_sign=True)):
         with pytest.raises(ValueError):
             SerialImuHal(iter([]), **kw)
+
+
+@pytest.mark.parametrize("ref", [True, "x"])
+def test_reference_pitch_bool_or_str_rejected(ref):
+    with pytest.raises(ValueError, match="reference_pitch_rad"):
+        SerialImuHal(iter([]), reference_pitch_rad=ref)
+
+
+def test_arm_span_str_raises_value_error_not_type_error():
+    # Numeric string must not be coerced; same _is_real guard as "x".
+    with pytest.raises(ValueError, match="arm_span_dps"):
+        SerialImuHal(iter([]), arm_span_dps="5")
+
+
+def test_arm_frames_float_rejected():
+    with pytest.raises(ValueError, match="arm_frames"):
+        SerialImuHal(iter([]), arm_frames=5.0)
 
 
 def test_pitch_sign_minus_one_with_reference_tared_excludes_reference():
