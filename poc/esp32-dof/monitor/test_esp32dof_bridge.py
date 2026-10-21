@@ -1210,3 +1210,86 @@ def test_duration_expires_mid_window_on_stalled_source(monkeypatch, capsys):
                 clock=fake, sleep=fake.sleep)
     assert rc == 2
     assert "duration expired before the arm window filled" in capsys.readouterr().err
+
+
+# ----- 15. re-arm after an earlier arm (issue #388): exit 0 + note, never "never armed" --------
+
+def rearm_lines():
+    """50 armed frames, 11 more, a device reset (seq back to 0), then 10 frames: 11/50 re-armed."""
+    lines = [line(i, i * DT_US, tilt(0.0), (0.0, 0.0, 0.0)) for i in range(50)]
+    lines += [line(50 + j, (50 + j) * DT_US, tilt(0.0), (0.0, 0.0, 0.0)) for j in range(11)]
+    t0 = 61 * DT_US
+    lines.append(line(0, t0, tilt(0.0), (0.0, 0.0, 0.0)))                      # device reset
+    lines += [line(1 + j, t0 + (j + 1) * DT_US, tilt(0.0), (0.0, 0.0, 0.0)) for j in range(10)]
+    return lines
+
+
+def test_replay_input_ends_mid_rearm_exits_0_with_note(tmp_path, capsys):
+    src = tmp_path / "rearm.csv"
+    write_raw_csv(src, rearm_lines())
+    rc = b.main(["--replay", str(src), "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "never armed" not in err
+    assert "re-arm" in err and "window incomplete: 11/50" in err
+    assert "error:" not in err
+
+
+def test_run_bridge_reports_ever_armed_when_input_ends_mid_rearm():
+    hal = SerialImuHal(rearm_lines(), reference_pitch_rad=0.0)
+    res = b.run_bridge(hal, StubCore(0.0), Rec(hal), sleep=lambda s: None)
+    assert res.ever_armed is True
+    assert res.armed is False
+    assert res.ended == "input"
+    assert res.published > 0
+
+
+def test_run_bridge_never_armed_has_ever_armed_false():
+    hal = SerialImuHal(still_lines(30), reference_pitch_rad=0.0)
+    res = b.run_bridge(hal, StubCore(0.0), Rec(hal), sleep=lambda s: None)
+    assert res.ever_armed is False
+    assert res.armed is False
+
+
+def test_run_bridge_armed_has_ever_armed_true_and_normal_main_has_no_rearm_note(tmp_path, capsys):
+    hal = SerialImuHal(still_lines(60), reference_pitch_rad=0.0)
+    res = b.run_bridge(hal, StubCore(0.0), Rec(hal), sleep=lambda s: None)
+    assert res.ever_armed is True and res.armed is True
+    src = tmp_path / "still.csv"
+    write_raw_csv(src, still_lines(60))
+    rc = b.main(["--replay", str(src), "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    assert "re-arm" not in capsys.readouterr().err
+
+
+def test_bridge_result_ever_armed_is_last_field():
+    assert b.BridgeResult._fields[-1] == "ever_armed"
+    assert len(b.BridgeResult._fields) == 7
+    r = b.BridgeResult(10, 4, 0, 0.5, False, "input", True)     # 6 old-order values + ever_armed
+    assert r.ever_armed is True and r[-1] is True
+    assert r.armed is False and r.ended == "input"
+
+
+def test_keyboard_interrupt_mid_rearm_returns_0_with_note(monkeypatch, capsys):
+    def gen():
+        yield from rearm_lines()
+        raise KeyboardInterrupt
+    monkeypatch.setattr(b, "_make_source", lambda args, clock=None: gen())
+    rc = b.main(["--mock", "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "interrupted before armed" not in err
+    assert "interrupted during a re-arm" in err
+
+
+def test_duration_expires_mid_rearm_returns_0_with_note(monkeypatch, capsys):
+    fake = FakeClock()
+    lines = rearm_lines()
+    monkeypatch.setattr(b, "_make_source",
+                        lambda args: itertools.chain(lines, itertools.repeat(None)))
+    rc = b.main(["--mock", "--duration", "0.5", "--udp-port", str(free_udp_port())],
+                clock=fake, sleep=fake.sleep)
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "duration ended during a re-arm" in err
+    assert "never armed" not in err

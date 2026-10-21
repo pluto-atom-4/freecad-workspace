@@ -37,8 +37,10 @@ Usage:
     mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --port /dev/ttyACM0 --core pid
     mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --replay raw.csv --record out.csv
 
-Exit codes: 0 for input end, duration end, or Ctrl-C while armed; 2 for usage error, source error,
-never armed, or Ctrl-C before armed.
+Exit codes: 0 for input end, duration end, or Ctrl-C once the bridge has armed at least once
+(including one that ends mid re-arm after a device reset; that case prints a "note:" line on
+stderr); 2 for usage error, source error, never armed (not even once), or Ctrl-C before the
+first arm.
 """
 
 import argparse
@@ -78,7 +80,11 @@ _END = "end"
 _ITEM = "item"
 _ERR = "error"
 
-BridgeResult = namedtuple("BridgeResult", "ticks published faults final_wheel_angle armed ended")
+# armed: HAL armed when the loop stopped. ended: "input" or "duration". ever_armed: the HAL was
+# armed on at least one tick (never cleared, so a re-arm cut short by input or duration still
+# shows True). ever_armed is the last field so older 6-field positional construction still works.
+BridgeResult = namedtuple("BridgeResult",
+                          "ticks published faults final_wheel_angle armed ended ever_armed")
 
 
 # ----- gains and cores ------------------------------------------------------------------------
@@ -306,13 +312,16 @@ def _still_gen(still_frames, rate_hz, realtime, duration_s):
 # ----- bridge loop ----------------------------------------------------------------------------
 
 def run_bridge(hal, core, pub, *, duration_s=None, record=None,
-               clock=time.monotonic, out=None, sleep=time.sleep) -> BridgeResult:
+               clock=time.monotonic, out=None, sleep=time.sleep, progress=None) -> BridgeResult:
     """Run the tick loop until the HAL reports end of input (-1) or duration_s elapses.
 
     ticks counts every loop tick (armed or not). Unarmed ticks are not published, not recorded
     and not faults. Armed HalFault ticks hold (see module docstring). published counts sends the
     publisher actually accepted (pub.sent delta); record logs every armed tick, published or not.
     core None (--core none): wheel_angle = tared pitch (mirror), HAL command 0.
+    ever_armed becomes True on the first armed tick and is never cleared. progress, if given, is
+    a dict that gets progress["ever_armed"] = True at the same moment, so a caller can still read
+    it after KeyboardInterrupt (which skips the return value).
     """
     out = sys.stderr if out is None else out
     writer = None
@@ -328,6 +337,7 @@ def run_bridge(hal, core, pub, *, duration_s=None, record=None,
     last_status = None
     prev_seq = hal.last_seq
     was_armed = False
+    ever_armed = False
     last_rearm = None
     ended = "input"
     try:
@@ -359,6 +369,9 @@ def run_bridge(hal, core, pub, *, duration_s=None, record=None,
                 if core is not None:
                     core.reset()        # clean core state (integrator, previous error)
             was_armed = True
+            ever_armed = True
+            if progress is not None:
+                progress["ever_armed"] = True
             last_rearm = hal.rearm_count
 
             try:
@@ -403,7 +416,7 @@ def run_bridge(hal, core, pub, *, duration_s=None, record=None,
     finally:
         if record is not None:
             record.flush()
-    return BridgeResult(ticks, published, faults, final_wheel, hal.armed, ended)
+    return BridgeResult(ticks, published, faults, final_wheel, hal.armed, ended, ever_armed)
 
 
 def _status(out, now, last, hal, ticks, faults, cmd, wheel, note):
@@ -474,7 +487,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="write per-tick CSV seq,t_us,roll,pitch,yaw,wheel_angle,cmd_rad_s (armed ticks)")
     p.add_argument("--duration", type=_positive_float, default=None, metavar="SECONDS",
                    help="stop after SECONDS, counted from start including the ~1 s arm window; "
-                        "under ~1 s exits 2 'never armed' (default: until Ctrl-C / end of input)")
+                        "under ~1 s exits 2 (duration expired before the arm window filled) "
+                        "(default: until Ctrl-C / end of input)")
     p.add_argument("--alpha", type=_unit_float, default=DEFAULT_ALPHA, metavar="A",
                    help="complementary filter gyro weight 0..1 (default 0.98)")
     return p
@@ -503,6 +517,7 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
         return 2
 
     hal = pub = record_fh = None
+    progress = {"ever_armed": False}     # set by run_bridge; readable after KeyboardInterrupt
     try:
         if args.record is not None:
             record_fh = open(args.record, "w", newline="", encoding="utf-8")
@@ -510,7 +525,7 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
         hal = SerialImuHal(_make_source(args), reference_pitch_rad=ref, alpha=args.alpha,
                            clock=clock)
         result = run_bridge(hal, core, pub, duration_s=args.duration, record=record_fh,
-                            clock=clock, sleep=sleep)
+                            clock=clock, sleep=sleep, progress=progress)
         if pub.errors or pub.skipped:
             print(f"dof_wheel_bridge: udp published={result.published} errors={pub.errors} "
                   f"skipped={pub.skipped}", file=sys.stderr, flush=True)
@@ -518,8 +533,8 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
             print(f"dof_wheel_bridge: error: source failed: {hal.source_error}",
                   file=sys.stderr, flush=True)
             return 2
-        if not result.armed or (result.ended == "duration" and result.published == 0):
-            if result.ended == "duration" and not result.armed:
+        if not result.ever_armed or (result.ended == "duration" and result.published == 0):
+            if result.ended == "duration" and not result.ever_armed:
                 why = (f"duration expired before the arm window filled "
                        f"({hal.arm_error or 'no arm error yet'})")
             elif result.ended == "duration":
@@ -529,12 +544,22 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
             print(f"dof_wheel_bridge: error: {why} (source_error={hal.source_error})",
                   file=sys.stderr, flush=True)
             return 2
+        if not result.armed:
+            # Armed earlier, then a device reset started a re-arm that input or duration ended.
+            print(f"dof_wheel_bridge: note: {result.ended} ended during a re-arm "
+                  f"({hal.arm_error or 'no arm error'}); the bridge had armed earlier and "
+                  f"published {result.published} ticks", file=sys.stderr, flush=True)
         return 0
     except KeyboardInterrupt:
         armed = hal is not None and hal.armed
-        if not armed:
-            print("dof_wheel_bridge: error: interrupted before armed", file=sys.stderr, flush=True)
-        return 0 if armed else 2
+        if armed:
+            return 0
+        if progress["ever_armed"]:
+            print("dof_wheel_bridge: note: interrupted during a re-arm; the bridge had armed "
+                  "earlier", file=sys.stderr, flush=True)
+            return 0
+        print("dof_wheel_bridge: error: interrupted before armed", file=sys.stderr, flush=True)
+        return 2
     except (ImportError, OSError, ValueError) as exc:
         print(f"dof_wheel_bridge: error: {exc}", file=sys.stderr, flush=True)
         return 2
