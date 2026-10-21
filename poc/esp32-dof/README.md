@@ -352,13 +352,13 @@ Errors go to stderr; rows + summary to stdout. No Traceback on expected errors.
 ## Wheel bridge (dof_wheel_bridge, #375)
 
 **Frames -> SerialImuHal (#374) -> Stage F control core -> wheel command -> UDP JSON** for the
-servo-wheel-dof Webots display (display only; see "What the wheel does" below).
+servo-wheel-dof Webots display.
 
 **Chain and ownership:**
 
 | Stage | Where | Owns / does |
 |-------|-------|-------------|
-| Board firmware | `firmware/esp32_dof/esp32_dof.ino` (POC sketch) | Streams `IMU,` frames at 50 Hz. Subtracts its own boot-time gyro bias (`imuRead`) before framing. No filter, no tare. |
+| Board firmware | `firmware/esp32_dof/esp32_dof.ino` (POC sketch) | Streams `IMU,` frames at 50 Hz. Bias removal: see Frame facts. No filter, no tare. |
 | Frame parser | `monitor/dof_frame.py` | Checksum and field parse. |
 | Host HAL | `monitor/dof_hal.py`, `SerialImuHal` | Arming (`ARM_FRAMES` window, `ARM_SPAN_DPS` gyro gate), bias = mean gyro of that window, complementary filter, pitch tare, stale and re-arm logic. |
 | Control core | `inverted-pendulum-project/07_Simulation/hal/control_core.py`: `LqrBalance` / `PidBalance` | Stage F core, run on the HOST inside `dof_wheel_bridge.py`. |
@@ -474,8 +474,7 @@ cd poc/esp32-dof && mamba run -n esp32-dof python3 -m pytest -q monitor webots/c
 | `lqr.theta_ref_rad` | `parity_vectors.json`, read by `load_gains` | value in `parity_vectors.json` | Reference pitch for LQR, passed to the HAL as `reference_pitch_rad`. | Regenerate with `hal/gen_parity_vectors.py`. Never hand-edit the JSON. |
 
 Note: the sign constants have no CLI flag. Edit the constant and its test. The bridge does not pass
-`pitch_sign`, so the constant is what runs. PID error sign is an open question (#359), not analysed
-here and not changed in #377; file a follow-up.
+`pitch_sign`, so the constant is what runs. PID error sign is an open question (#359); see the sign rule under "Human check (#377)".
 
 **Limits (constants in `dof_hal.py`):**
 
@@ -487,8 +486,6 @@ here and not changed in #377; file a follow-up.
 | `STALE_S` | 0.2 | Raises `HalFault` (bridge holds); see Behaviour. |
 | `WHEEL_CMD_LIMIT_RAD_S` | 1.0 | HAL clamp on the commanded velocity before the integral; see Behaviour. The core has its own `out_limit` (see `parity_vectors.json`). |
 
-`--duration` includes the ~1 s arm window (see Usage).
-
 **Cores and environment:**
 
 - `--core lqr` (default): `LqrBalance` with gains and reference from `parity_vectors.json`. `--core pid`:
@@ -498,14 +495,12 @@ here and not changed in #377; file a follow-up.
   no serial. Serial reading happens on the host only (this bridge or `dof_monitor.py`).
 
 **Honesty:** mock-tested only (pytest, loopback UDP). No hardware run, and no claim that the
-controller balances. `PITCH_SIGN` and `WHEEL_DISPLAY_SIGN` (both in `dof_hal.py`) are UNVERIFIED,
-so the direction of the displayed wheel is not established. Human check (GUI, real board) is #377.
-The displayed `wheel_angle` is the integral of the COMMANDED wheel velocity, not a measured wheel:
-nothing reads a wheel encoder (`read_encoders` always raises `HalFault`). The command comes from a
-control core with simulation-plant gains, so a moving display wheel shows that the software produced a
-command. It does NOT show that the physical board balances or that the displayed direction matches
-the physical one. The real board never feels the simulated wheel. A hand-held board is not a balancing
-robot.
+controller balances. Human check (GUI, real board) is #377.
+The displayed `wheel_angle` is not a measured wheel (see Behaviour): nothing reads a wheel encoder
+(`read_encoders` always raises `HalFault`). The command comes from a control core with
+simulation-plant gains, so a moving display wheel shows that the software produced a command. It does
+NOT show that the physical board balances or that the displayed direction matches the physical one.
+A hand-held board is not a balancing robot.
 
 **Human check (#377)** (GUI and real-board check; nothing here is ticked, and the commands in steps 1
 to 3 are not run):
@@ -737,7 +732,7 @@ Tick a box only after doing it yourself. Nothing here was done by the automation
   Pass: an `armed` line within about 1 s of a still start; `arm_error=board moving` on a move during arming; no traceback.
 - [ ] **7. Display direction recorded (#377)** (needs board and display)
   Do: steps 2 and 3 of "Human check (#377)", tilting forward and back.
-  Pass: the observed direction per tilt is in the results comment. A mismatch is a follow-up, not a sign change.
+  Pass: the observed direction per tilt is in the results comment. Sign rule: see "Human check (#377)" above.
 - [ ] **8. Stall hold seen on the display (#377)** (needs board and display)
   Do: during a step 3 run, unplug USB for a few seconds.
   Pass: `note=hold:` appears and `wheel` stops changing until frames resume.
