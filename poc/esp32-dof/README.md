@@ -385,10 +385,12 @@ mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --replay raw.csv --re
 Exactly one of `--port`, `--mock`, `--replay` is required. Other options: `--core lqr|pid|none`
 (default `lqr`), `--udp-port` (default 5006), `--record CSV`, `--duration S`, `--baud` (115200),
 `--alpha` (0.98). `--duration` counts from start and includes the ~1 s arm window, so a value under
-about 1 s exits 2 (`duration expired before the arm window filled`, or `before the first armed tick`). Exit codes: 0 for duration end, input end, or Ctrl-C while armed;
-2 for usage errors, a source error (for example a bad replay row after arming), never armed (for
-example a replay shorter than the 50-frame arm window, which prints `window incomplete`), or
-Ctrl-C before armed.
+about 1 s exits 2 (`duration expired before the arm window filled`, or `before the first armed tick`).
+Exit codes: 0 for duration end, input end, or Ctrl-C once the bridge has armed at least once (a run
+that ends mid re-arm after a device reset also exits 0; see the stderr note below); 2 for usage
+errors, a source error (for example a bad replay row after arming), never armed (not even once; for
+example a replay shorter than the 50-frame arm window, which prints `window incomplete`), or Ctrl-C
+before the first arm.
 
 **Two CSV formats (do not mix them):**
 
@@ -540,6 +542,13 @@ Expected stderr (lines `dof_wheel_bridge.py` prints, read from the code; none se
 - Armed, about once per second: `dof_wheel_bridge: t=<s>s armed ticks=<n> faults=<n> cmd=<+x.xxxx> wheel=<+x.xxxx>`.
   A hold appends ` note=hold: ...`.
 - At exit, `dof_wheel_bridge: udp published=<n> errors=<n> skipped=<n>`, only when errors or skipped is non-zero.
+- Exit after an earlier arm, with the device reset mid re-arm (exit 0):
+  `dof_wheel_bridge: note: <input|duration> ended during a re-arm (<arm_error>); the bridge had armed earlier and published <n> ticks`,
+  or `dof_wheel_bridge: note: interrupted during a re-arm; the bridge had armed earlier` for Ctrl-C.
+  The parenthetical is the HAL's `arm_error` text at exit (or `no arm error` if no attempt has failed
+  yet): `window incomplete: <n>/50` when input ran out mid window, or `board moving: ...` / `window gap: ...`
+  when a re-arm attempt failed. Ticks published counts the armed ticks before the reset.
+  This is not a never-armed failure.
 
 Expected behaviour (design expectations, NOT observed on the board): saturation on the board, if it
 appears, is a finding to record, not a reason to change gains in #377.
