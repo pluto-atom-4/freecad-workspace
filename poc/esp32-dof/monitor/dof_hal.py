@@ -219,7 +219,7 @@ class SerialImuHal(Hal):
 
         Once the stream has ended, arm() raises HalFault("source exhausted") even if already armed;
         if unarmed it raises the stored arm_error (e.g. "window incomplete: n/N"). A closed HAL
-        raises HalFault("closed").
+        raises HalFault("SerialImuHal is closed").
         """
         if self._closed:
             raise HalFault("SerialImuHal is closed")
