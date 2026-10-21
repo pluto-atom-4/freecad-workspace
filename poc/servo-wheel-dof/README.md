@@ -9,9 +9,10 @@ floor, and a supervisor controller follows UDP IMU + wheel-angle datagrams
 - **Upright follower mode**: the controller sets the Robot pose from IMU pitch and
   yaw and drives the wheel hinge to the received `wheel_angle`.
 - **Hardware-free**: `monitor/mock_publisher.py` supplies synthetic or replayed data.
-- **Long-term goal**: data from an XIAO ESP32-C3 + MPU6050. The MPU6050 is 6-DOF
-  (accel + gyro), with no magnetometer. Today ONLY mock/replay data is supported;
-  nothing in this POC reads serial.
+- **Long-term goal**: data from an XIAO ESP32-C3 + MPU6050, reaching this display through
+  the bridge `poc/esp32-dof/monitor/dof_wheel_bridge.py` (serial -> host HAL -> UDP to this
+  port). The MPU6050 is 6-DOF (accel + gyro), with no magnetometer. The bridge path is
+  mock-tested only; nothing in this POC reads serial.
 
 Status: #258 is the umbrella issue. The human GUI checklist is tracked in #289.
 
@@ -353,7 +354,9 @@ text-level guard on the `.wbt`; set env `SWD_WORLD_PATH` to test a modified copy
   imported, from `poc/esp32-dof`. Fixes must be mirrored by hand (each file header
   names its source).
 - The simulation must be running (not paused) for the controller to step.
-- Only mock/replay data is supported; serial/hardware input is not implemented.
+- Hardware data reaches this display only through the bridge
+  `poc/esp32-dof/monitor/dof_wheel_bridge.py` (serial -> host HAL -> UDP to this port). That
+  path is mock-tested only. This POC itself reads no serial.
 
 ## Human verification
 
@@ -364,6 +367,10 @@ result log live in issue #289. Only a human ticks those boxes; nothing here is
 ticked.
 
 Odometry: not yet verified by a human; see the GUI sub-issue (#328). Nothing ticked.
+
+Hardware path (board -> bridge -> this display): direction and level behaviour are not
+verified. The human check is #377; see "Human check (#377)" in `poc/esp32-dof/README.md`.
+Nothing ticked here.
 
 ## Superseded: velocity-demo checklist
 
