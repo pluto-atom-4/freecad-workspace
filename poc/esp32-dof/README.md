@@ -500,6 +500,7 @@ The displayed `wheel_angle` is not a measured wheel (see Behaviour): nothing rea
 (`read_encoders` always raises `HalFault`). The command comes from a control core with
 simulation-plant gains, so a moving display wheel shows that the software produced a command. It does
 NOT show that the physical board balances or that the displayed direction matches the physical one.
+The real board never feels the simulated wheel.
 A hand-held board is not a balancing robot.
 
 **Human check (#377)** (GUI and real-board check; nothing here is ticked, and the commands in steps 1
