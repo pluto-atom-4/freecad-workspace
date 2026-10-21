@@ -354,9 +354,7 @@ text-level guard on the `.wbt`; set env `SWD_WORLD_PATH` to test a modified copy
   imported, from `poc/esp32-dof`. Fixes must be mirrored by hand (each file header
   names its source).
 - The simulation must be running (not paused) for the controller to step.
-- Hardware data reaches this display only through the bridge
-  `poc/esp32-dof/monitor/dof_wheel_bridge.py` (serial -> host HAL -> UDP to this port). That
-  path is mock-tested only. This POC itself reads no serial.
+- Hardware path and its limits: see the Long-term goal bullet under Purpose.
 
 ## Human verification
 
@@ -368,9 +366,8 @@ ticked.
 
 Odometry: not yet verified by a human; see the GUI sub-issue (#328). Nothing ticked.
 
-Hardware path (board -> bridge -> this display): direction and level behaviour are not
-verified. The human check is #377; see "Human check (#377)" in `poc/esp32-dof/README.md`.
-Nothing ticked here.
+Hardware path (board -> bridge -> this display): not verified. See "Human check (#377)" in
+`poc/esp32-dof/README.md`.
 
 ## Superseded: velocity-demo checklist
 
