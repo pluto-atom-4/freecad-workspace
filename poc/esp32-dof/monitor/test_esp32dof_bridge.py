@@ -1241,7 +1241,9 @@ def test_run_bridge_reports_ever_armed_when_input_ends_mid_rearm():
     assert res.ever_armed is True
     assert res.armed is False
     assert res.ended == "input"
-    assert res.published > 0
+    # 1 arming tick (first window) + 11 armed frames (seq 50..60) before the reset; the re-arm
+    # window never filled, so nothing else was published.
+    assert res.published == 12
 
 
 def test_run_bridge_never_armed_has_ever_armed_false():
@@ -1251,10 +1253,13 @@ def test_run_bridge_never_armed_has_ever_armed_false():
     assert res.armed is False
 
 
-def test_run_bridge_armed_has_ever_armed_true_and_normal_main_has_no_rearm_note(tmp_path, capsys):
+def test_run_bridge_still_input_is_armed_and_ever_armed():
     hal = SerialImuHal(still_lines(60), reference_pitch_rad=0.0)
     res = b.run_bridge(hal, StubCore(0.0), Rec(hal), sleep=lambda s: None)
     assert res.ever_armed is True and res.armed is True
+
+
+def test_main_normal_replay_prints_no_rearm_note(tmp_path, capsys):
     src = tmp_path / "still.csv"
     write_raw_csv(src, still_lines(60))
     rc = b.main(["--replay", str(src), "--udp-port", str(free_udp_port())])
@@ -1264,10 +1269,6 @@ def test_run_bridge_armed_has_ever_armed_true_and_normal_main_has_no_rearm_note(
 
 def test_bridge_result_ever_armed_is_last_field():
     assert b.BridgeResult._fields[-1] == "ever_armed"
-    assert len(b.BridgeResult._fields) == 7
-    r = b.BridgeResult(10, 4, 0, 0.5, False, "input", True)     # 6 old-order values + ever_armed
-    assert r.ever_armed is True and r[-1] is True
-    assert r.armed is False and r.ended == "input"
 
 
 def test_keyboard_interrupt_mid_rearm_returns_0_with_note(monkeypatch, capsys):

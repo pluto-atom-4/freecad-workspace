@@ -80,9 +80,8 @@ _END = "end"
 _ITEM = "item"
 _ERR = "error"
 
-# armed: HAL armed when the loop stopped. ended: "input" or "duration". ever_armed: the HAL was
-# armed on at least one tick (never cleared, so a re-arm cut short by input or duration still
-# shows True). ever_armed is the last field so older 6-field positional construction still works.
+# armed: HAL armed when the loop stopped. ended: "input" or "duration". ever_armed: armed at least
+# once, never cleared (so a re-arm cut short by input or duration still shows True).
 BridgeResult = namedtuple("BridgeResult",
                           "ticks published faults final_wheel_angle armed ended ever_armed")
 
@@ -517,7 +516,7 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
         return 2
 
     hal = pub = record_fh = None
-    progress = {"ever_armed": False}     # set by run_bridge; readable after KeyboardInterrupt
+    progress = {"ever_armed": False}
     try:
         if args.record is not None:
             record_fh = open(args.record, "w", newline="", encoding="utf-8")
