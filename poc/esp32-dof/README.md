@@ -358,7 +358,7 @@ servo-wheel-dof Webots display.
 
 | Stage | Where | Owns / does |
 |-------|-------|-------------|
-| Board firmware | `firmware/esp32_dof/esp32_dof.ino` (POC sketch) | Streams `IMU,` frames at 50 Hz. Bias removal: see Frame facts. No filter, no tare. |
+| Board firmware | `firmware/esp32_dof/esp32_dof.ino` (POC sketch; the #377 run uses the BRC `tilt_servo` frames build, see Setup) | Streams `IMU,` frames at 50 Hz. Bias removal: see Frame facts. No filter, no tare (POC sketch only). |
 | Frame parser | `monitor/dof_frame.py` | Checksum and field parse. |
 | Host HAL | `monitor/dof_hal.py`, `SerialImuHal` | Arming (`ARM_FRAMES` window, `ARM_SPAN_DPS` gyro gate), bias = mean gyro of that window, complementary filter, pitch tare, stale and re-arm logic. |
 | Control core | `inverted-pendulum-project/07_Simulation/hal/control_core.py`: `LqrBalance` / `PidBalance` | Stage F core, run on the HOST inside `dof_wheel_bridge.py`. |
@@ -451,9 +451,8 @@ cd poc/esp32-dof && mamba run -n esp32-dof python3 -m pytest -q monitor webots/c
 - BRC `programs/tilt_servo/main.cpp` (BRC repo, `pluto-atom-4/balancing-robot-controller`), opt-in
   `TILT_SERVO_IMU_FRAMES` build: per its source comment, the frames are RAW (no boot-time bias removal,
   no filter), unlike the POC's biased frames, and its DLPF is 21 Hz where the POC uses 44 Hz.
-  - Matches `dof_frame.py` by source comparison: `IMU` prefix, field order (seq, t_us, ax..gz), g and deg/s units, `%.6f` text, uppercase `*HH` XOR checksum over `IMU` up to `*`, `\n` terminator.
-  - One difference: the C++ formatter writes 0 for NaN/inf (`dof_frame.py` raises), and NaN/inf in gyro x or z is not caught before formatting (the non-finite check covers accel and gyro y only).
-  - Source comparison only: frames not run through `dof_frame.py`, no board run.
+  - Matches `dof_frame.py` per source comparison (frames not run through `dof_frame.py`, no board run): `IMU` prefix, field order (seq, t_us, ax..gz), g and deg/s units, `%.6f` text, uppercase `*HH` XOR checksum over `IMU` up to `*`, `\n` terminator.
+  - One difference, per source reading: the C++ formatter (`lib/imu_frame/imu_frame.h`, `isfinite` check at line 59) writes 0 for NaN/inf, where `dof_frame.py` raises. In `programs/tilt_servo/main.cpp` the non-finite check (lines 240-241) covers accel and gyro y only, so NaN/inf in gyro x or z is not caught before formatting.
 - On a raw stream the HAL's window-mean subtraction is the only bias removal; on the POC stream it
   removes the residual after the firmware bias.
 
@@ -509,7 +508,8 @@ A hand-held board is not a balancing robot.
 **Human check (#377)** (GUI and real-board check; nothing here is ticked, and no command below has been run):
 
 **Setup:** start the display on the same port the bridge will publish to (no `--mock`, so only Webots
-starts; press Play if it starts paused). Either start order works.
+starts; press Play if it starts paused). Board firmware for this #377 run: BRC `programs/tilt_servo`
+built with `PLATFORMIO_BUILD_FLAGS="-D TILT_SERVO_IMU_FRAMES"`, not the POC sketch.
 
 ```bash
 cd poc/servo-wheel-dof
@@ -534,21 +534,20 @@ expect `arm_error=board moving` and no `armed` line, then hold still and wait fo
 mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --port /dev/ttyACM0 --core lqr --udp-port 5006 --record run_lqr.csv
 ```
 
-Start pose (in this run, before tilting): note cmd and wheel. Expected about zero, because the pose
-held while arming is the zero (README Behaviour: the start pose gives about zero command for both LQR
-and PID). Not observed.
+Start pose (in this run, before tilting): note cmd and wheel; expect about zero cmd (see Behaviour, Arming).
 
 **Step C (PID):** same as Step B with `--core pid --record run_pid.csv`.
 
 **Step D (jitter and lag, qualitative only):** the bridge is the sole reader of `/dev/ttyACM0` while it
-runs, and `--record` keeps no raw serial lines, so a second monitor cannot open the port during a bridge
-run. Stop the bridge first. Then make a separate run with the same kind of motion and watch the output:
-a serial monitor shows the raw `IMU,` frames (the firmware prints no fused angle), and
-`dof_monitor.py --port /dev/ttyACM0 --fuse` shows host-fused `pitch(deg)` with a `drops` column. That
-monitor pitch is absolute (no tare). The bridge's `pitch` column is tared: bridge pitch = `PITCH_SIGN` x
-(fused pitch - tare), where the tare is the mean fused pitch over the arm window. The HAL also feeds
-bias-corrected gyro, so the two are not expected to match numerically. Compare the shape by eye only:
-there is no pass criterion. Note the lag, stair-stepping and dropped frames seen.
+runs, and `--record` keeps no raw serial lines. Stop the bridge first. Then make a separate run with the
+same kind of motion and capture the port with a serial monitor. The BRC `tilt_servo` frames build also
+prints `[imu] accel=... fused=... goal=... torque=...` every 100 ms (10 Hz) on the same port, interleaved
+with the `IMU,` frames; the bridge ignores those lines. The `fused=` value is degrees from BRC's own
+filter on the board: absolute, not host-fused, not tared. The bridge's `pitch` is tared and
+sign-adjusted (see Behaviour and Arming), so only the shape of the two can be compared. No numeric
+agreement is claimed and there is no pass criterion. Record by eye: lag (board motion to display);
+stair-stepping (the same value repeated between updates, then a jump); dropped frames (the
+`[frames] ... dropped=` counter and gaps in the `IMU` seq).
 
 Do NOT change a sign during #377. If the display direction looks wrong, record it and file a follow-up
 (the sign constants are in the table above).
