@@ -358,7 +358,7 @@ servo-wheel-dof Webots display.
 
 | Stage | Where | Owns / does |
 |-------|-------|-------------|
-| Board firmware | `firmware/esp32_dof/esp32_dof.ino` (POC sketch; the #377 run uses the BRC `tilt_servo` frames build, see Setup) | Streams `IMU,` frames at 50 Hz. Bias removal: see Frame facts. No filter, no tare (POC sketch only). |
+| Board firmware | `firmware/esp32_dof/esp32_dof.ino` (POC sketch; the #377 run uses the BRC `tilt_servo` frames build, see Setup) | Streams `IMU,` frames at 50 Hz. Bias removal: see Frame facts. No filter, no tare. |
 | Frame parser | `monitor/dof_frame.py` | Checksum and field parse. |
 | Host HAL | `monitor/dof_hal.py`, `SerialImuHal` | Arming (`ARM_FRAMES` window, `ARM_SPAN_DPS` gyro gate), bias = mean gyro of that window, complementary filter, pitch tare, stale and re-arm logic. |
 | Control core | `inverted-pendulum-project/07_Simulation/hal/control_core.py`: `LqrBalance` / `PidBalance` | Stage F core, run on the HOST inside `dof_wheel_bridge.py`. |
@@ -534,14 +534,15 @@ expect `arm_error=board moving` and no `armed` line, then hold still and wait fo
 mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --port /dev/ttyACM0 --core lqr --udp-port 5006 --record run_lqr.csv
 ```
 
-Start pose (in this run, before tilting): note cmd and wheel; expect about zero cmd (see Behaviour, Arming).
+Before tilting, note cmd and wheel at the start pose (expect about zero cmd; see Behaviour, Arming).
 
 **Step C (PID):** same as Step B with `--core pid --record run_pid.csv`.
 
-**Step D (jitter and lag, qualitative only):** the bridge is the sole reader of `/dev/ttyACM0` while it
-runs, and `--record` keeps no raw serial lines. Stop the bridge first. Then make a separate run with the
-same kind of motion and capture the port with a serial monitor. The BRC `tilt_servo` frames build also
-prints `[imu] accel=... fused=... goal=... torque=...` every 100 ms (10 Hz) on the same port, interleaved
+**Step D (jitter and lag, qualitative only):** nothing locks `/dev/ttyACM0` (pyserial is opened without
+`exclusive=True`), so a second reader (e.g. a serial monitor) opened while the bridge runs can silently
+take part of the IMU byte stream. `--record` keeps no raw serial lines. Stop the bridge first, then make a
+separate run with the same kind of motion and capture the board's `[imu] ... fused=` lines with a serial
+monitor. The BRC `tilt_servo` frames build also prints `[imu] accel=... fused=... goal=... torque=...` every 100 ms (10 Hz) on the same port, interleaved
 with the `IMU,` frames; the bridge ignores those lines. The `fused=` value is degrees from BRC's own
 filter on the board: absolute, not host-fused, not tared. The bridge's `pitch` is tared and
 sign-adjusted (see Behaviour and Arming), so only the shape of the two can be compared. No numeric
