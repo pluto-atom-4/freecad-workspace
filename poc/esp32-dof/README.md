@@ -358,7 +358,7 @@ servo-wheel-dof Webots display.
 
 | Stage | Where | Owns / does |
 |-------|-------|-------------|
-| Board firmware | `firmware/esp32_dof/esp32_dof.ino` (POC sketch) | Streams `IMU,` frames at 50 Hz. Bias removal: see Frame facts. No filter, no tare. |
+| Board firmware | `firmware/esp32_dof/esp32_dof.ino` (POC sketch; the #377 run uses the BRC `tilt_servo` frames build, see Setup) | Streams `IMU,` frames at 50 Hz. Bias removal: see Frame facts. No filter, no tare. |
 | Frame parser | `monitor/dof_frame.py` | Checksum and field parse. |
 | Host HAL | `monitor/dof_hal.py`, `SerialImuHal` | Arming (`ARM_FRAMES` window, `ARM_SPAN_DPS` gyro gate), bias = mean gyro of that window, complementary filter, pitch tare, stale and re-arm logic. |
 | Control core | `inverted-pendulum-project/07_Simulation/hal/control_core.py`: `LqrBalance` / `PidBalance` | Stage F core, run on the HOST inside `dof_wheel_bridge.py`. |
@@ -450,9 +450,9 @@ cd poc/esp32-dof && mamba run -n esp32-dof python3 -m pytest -q monitor webots/c
   `imuRead` before framing. The calibration is skipped if the board moves (`INFO,gyro_cal_skipped`).
 - BRC `programs/tilt_servo/main.cpp` (BRC repo, `pluto-atom-4/balancing-robot-controller`), opt-in
   `TILT_SERVO_IMU_FRAMES` build: per its source comment, the frames are RAW (no boot-time bias removal,
-  no filter), unlike the POC's biased frames, and its DLPF is 21 Hz where the POC uses 44 Hz. Its
-  formatter maps NaN/inf to 0 where `dof_frame.py` raises. Whether BRC frames parse with
-  `dof_frame.py` is not checked here.
+  no filter), unlike the POC's biased frames, and its DLPF is 21 Hz where the POC uses 44 Hz.
+  - Matches `dof_frame.py` per source comparison (frames not run through `dof_frame.py`, no board run): `IMU` prefix, field order (seq, t_us, ax..gz), g and deg/s units, `%.6f` text, uppercase `*HH` XOR checksum over `IMU` up to `*`, `\n` terminator.
+  - One difference, per source reading: the C++ formatter (`lib/imu_frame/imu_frame.h`, `isfinite` check at line 59) writes 0 for NaN/inf, where `dof_frame.py` raises. In `programs/tilt_servo/main.cpp` the non-finite check (lines 240-241) covers accel and gyro y only, so NaN/inf in gyro x or z is not caught before formatting.
 - On a raw stream the HAL's window-mean subtraction is the only bias removal; on the POC stream it
   removes the residual after the firmware bias.
 
@@ -505,31 +505,50 @@ NOT show that the physical board balances or that the displayed direction matche
 The real board never feels the simulated wheel.
 A hand-held board is not a balancing robot.
 
-**Human check (#377)** (GUI and real-board check; nothing here is ticked, and the commands in steps 1
-to 3 are not run):
+**Human check (#377)** (GUI and real-board check; nothing here is ticked, and no command below has been run):
 
-1. Start the display on the same port the bridge will publish to (no `--mock`, so only Webots starts;
-   press Play if it starts paused):
+**Setup:** start the display on the same port the bridge will publish to (no `--mock`, so only Webots
+starts; press Play if it starts paused). Board firmware for this #377 run: BRC `programs/tilt_servo`
+built with `PLATFORMIO_BUILD_FLAGS="-D TILT_SERVO_IMU_FRAMES"`, not the POC sketch.
 
-   ```bash
-   cd poc/servo-wheel-dof
-   SWD_UDP_PORT=5006 ./run_demo.sh --gui
-   ```
+```bash
+cd poc/servo-wheel-dof
+SWD_UDP_PORT=5006 ./run_demo.sh --gui
+```
 
-2. Step A, mirror with no gains. Hold the board FLAT and STILL in the pose you want as zero, then start
-   the bridge. Keep it still through the ~1 s (50-frame) arm window; the pose held then is the pitch
-   zero (tare). Do not touch it while arming. Stop with Ctrl-C after about 30 s:
+**Step A (mirror, no gains):** hold the board FLAT and STILL in the pose you want as zero, then start
+the bridge. Keep it still through the ~1 s (50-frame) arm window; the pose held then is the pitch
+zero (tare). Do not touch it while arming. Stop with Ctrl-C after about 30 s:
 
-   ```bash
-   cd poc/esp32-dof
-   mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --port /dev/ttyACM0 --core none --udp-port 5006 --record run_none.csv
-   ```
+```bash
+cd poc/esp32-dof
+mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --port /dev/ttyACM0 --core none --udp-port 5006 --record run_none.csv
+```
 
-3. Step B, LQR (the default core), a separate run with the same arm procedure:
+**Step A2 (arm rejection):** during a second arming window (same command as Step A), move the board;
+expect `arm_error=board moving` and no `armed` line, then hold still and wait for `armed`.
 
-   ```bash
-   mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --port /dev/ttyACM0 --core lqr --udp-port 5006 --record run_lqr.csv
-   ```
+**Step B (LQR, the default core):** a separate run with the same arm procedure:
+
+```bash
+mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --port /dev/ttyACM0 --core lqr --udp-port 5006 --record run_lqr.csv
+```
+
+Before tilting, note cmd and wheel at the start pose (expect about zero cmd; see Behaviour, Arming).
+
+**Step C (PID):** same as Step B with `--core pid --record run_pid.csv`.
+
+**Step D (jitter and lag, qualitative only):** nothing locks `/dev/ttyACM0` (pyserial is opened without
+`exclusive=True`), so a second reader (e.g. a serial monitor) opened while the bridge runs can silently
+take part of the IMU byte stream. `--record` keeps no raw serial lines. Stop the bridge first, then make a
+separate run with the same kind of motion and capture the board's `[imu] ... fused=` lines with a serial
+monitor. The BRC `tilt_servo` frames build also prints `[imu] accel=... fused=... goal=... torque=...` every 100 ms (10 Hz) on the same port, interleaved
+with the `IMU,` frames; the bridge ignores those lines. The `fused=` value is degrees from BRC's own
+filter on the board: absolute, not host-fused, not tared. The bridge's `pitch` is tared and
+sign-adjusted (see Behaviour and Arming), so only the shape of the two can be compared. No numeric
+agreement is claimed and there is no pass criterion. Record by eye: lag (board motion to display);
+stair-stepping (the same value repeated between updates, then a jump); dropped frames (the
+`[frames] ... dropped=` counter and gaps in the `IMU` seq).
 
 Do NOT change a sign during #377. If the display direction looks wrong, record it and file a follow-up
 (the sign constants are in the table above).
@@ -561,8 +580,11 @@ Board and firmware (sketch or PlatformIO env, build flags):
 Display: servo-wheel-dof, SWD_UDP_PORT=, Webots version:
 Commands run (exact, with --core and --record):
 Arm: held still? arm_error lines seen (quote them):
+Arm rejection seen (Step A2):
 Step A (--core none), one line per observation: tilt direction -> display response:
-Step B (--core lqr), one line per observation: tilt direction -> display response; cmd range; saturation yes/no:
+Step B (--core lqr), one line per observation: tilt direction -> display response; cmd range; saturation yes/no; start pose cmd and wheel:
+Step C (--core pid), one line per observation: tilt direction -> display response; cmd range; saturation yes/no:
+Step D (jitter and lag, separate run), one line per observation: lag, stair-stepping, dropped frames:
 Stall test (if run): note=hold seen? wheel frozen?
 Record CSVs (names, row counts):
 NOT checked:
@@ -738,13 +760,13 @@ Tick a box only after doing it yourself. Nothing here was done by the automation
   Pass: first line is exactly `IMU,12345,1234567890,0.500000,-9.806650,1.250000,10.500000,-5.500000,0.000000*52`, matching the parser/checksum parity claim above byte-for-byte.
   If it fails: checksum mismatch or garbled line -> firmware/README.md parity snippet and `buildFrame`/checksum code disagree; open an issue, do not hand-patch the checksum.
 - [ ] **6. Wheel bridge arms on the real board** (#377; no display needed)
-  Do: step 2 of "Human check (#377)" in the Wheel bridge section.
+  Do: Step A of "Human check (#377)" in the Wheel bridge section.
   Pass: an `armed` line within about 1 s of a still start; `arm_error=board moving` on a move during arming; no traceback.
 - [ ] **7. Display direction recorded (#377)** (needs board and display)
-  Do: steps 2 and 3 of "Human check (#377)", tilting forward and back.
+  Do: Steps A and B of "Human check (#377)", tilting forward and back.
   Pass: the observed direction per tilt is in the results comment. Sign rule: see "Human check (#377)" above.
 - [ ] **8. Stall hold seen on the display (#377)** (needs board and display)
-  Do: during a step 3 run, unplug USB for a few seconds.
+  Do: during a Step B run, unplug USB for a few seconds.
   Pass: `note=hold:` appears and `wheel` stops changing until frames resume.
 
 ### Verification log (fill in by hand)
