@@ -451,8 +451,7 @@ cd poc/esp32-dof && mamba run -n esp32-dof python3 -m pytest -q monitor webots/c
 - BRC `programs/tilt_servo/main.cpp` (BRC repo, `pluto-atom-4/balancing-robot-controller`), opt-in
   `TILT_SERVO_IMU_FRAMES` build: per its source comment, the frames are RAW (no boot-time bias removal,
   no filter), unlike the POC's biased frames, and its DLPF is 21 Hz where the POC uses 44 Hz. Its
-  formatter maps NaN/inf to 0 where `dof_frame.py` raises. Whether BRC frames parse with
-  `dof_frame.py` is not checked here.
+  formatter maps NaN/inf to 0 where `dof_frame.py` raises. By source comparison only (BRC checkout read 2026-10-22, opt-in `TILT_SERVO_IMU_FRAMES` build, frames not run through `dof_frame.py`, no board run): the `IMU` prefix, field order (seq, t_us, ax..gz), g and deg/s units, `%.6f` text, `*HH` uppercase XOR checksum over `IMU` up to `*`, and `\n` terminator match `dof_frame.py`; the known difference is non-finite handling (C++ writes 0, Python raises), and NaN/inf in gyro x or z is not caught before formatting.
 - On a raw stream the HAL's window-mean subtraction is the only bias removal; on the POC stream it
   removes the residual after the firmware bias.
 
@@ -506,7 +505,7 @@ The real board never feels the simulated wheel.
 A hand-held board is not a balancing robot.
 
 **Human check (#377)** (GUI and real-board check; nothing here is ticked, and the commands in steps 1
-to 3 are not run):
+to 3 and Steps A2 to D are not run):
 
 1. Start the display on the same port the bridge will publish to (no `--mock`, so only Webots starts;
    press Play if it starts paused):
@@ -530,6 +529,18 @@ to 3 are not run):
    ```bash
    mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --port /dev/ttyACM0 --core lqr --udp-port 5006 --record run_lqr.csv
    ```
+
+Start order: the display first, then the bridge (either order works).
+
+Step A2 (arm rejection): during a second arming window (same command as Step A), move the board;
+expect `arm_error=board moving` and no `armed` line, then hold still and wait for `armed`. Ctrl-C after that.
+
+Step C: same as Step B with `--core pid --record run_pid.csv`.
+
+Level observation: at the start pose, note cmd and wheel (expected about 0 by design; not observed).
+
+Step D (jitter): compare the bridge pitch with the firmware `fused=` line on the same motion; note lag,
+stair-stepping and dropped frames.
 
 Do NOT change a sign during #377. If the display direction looks wrong, record it and file a follow-up
 (the sign constants are in the table above).
@@ -561,8 +572,14 @@ Board and firmware (sketch or PlatformIO env, build flags):
 Display: servo-wheel-dof, SWD_UDP_PORT=, Webots version:
 Commands run (exact, with --core and --record):
 Arm: held still? arm_error lines seen (quote them):
+Arm rejection seen:
+
 Step A (--core none), one line per observation: tilt direction -> display response:
 Step B (--core lqr), one line per observation: tilt direction -> display response; cmd range; saturation yes/no:
+Step C (--core pid):
+
+Level/start pose (cmd, wheel at rest?):
+Jitter/lag vs fused= line:
 Stall test (if run): note=hold seen? wheel frozen?
 Record CSVs (names, row counts):
 NOT checked:
@@ -741,7 +758,7 @@ Tick a box only after doing it yourself. Nothing here was done by the automation
   Do: step 2 of "Human check (#377)" in the Wheel bridge section.
   Pass: an `armed` line within about 1 s of a still start; `arm_error=board moving` on a move during arming; no traceback.
 - [ ] **7. Display direction recorded (#377)** (needs board and display)
-  Do: steps 2 and 3 of "Human check (#377)", tilting forward and back.
+  Do: steps 2 and 3 of "Human check (#377)", tilting forward and back (also Steps A2 to D in that block).
   Pass: the observed direction per tilt is in the results comment. Sign rule: see "Human check (#377)" above.
 - [ ] **8. Stall hold seen on the display (#377)** (needs board and display)
   Do: during a step 3 run, unplug USB for a few seconds.
