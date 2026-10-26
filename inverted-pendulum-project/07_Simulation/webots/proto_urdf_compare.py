@@ -5,16 +5,24 @@ Pure-stdlib reader and comparison for a Webots PROTO (VRML text) vs the URDF.
 - parse_proto(text) -> ProtoRobot: root physics and one ProtoJoint per HingeJoint
   (keyed by RotationalMotor name), from the Robot node.
 - urdf_joints(path) -> dict: per-joint parent/child/xyz/rpy/axis from the URDF.
+- compare_joints(proto, urdf, tol) -> list[str]: joint error strings, empty when they match.
+- urdf_links(path) -> dict: per-link mass/com/rpy/inertia from <inertial>.
+- proto_links(proto) -> dict: Base_Link (root physics) plus each joint's endPoint Solid.
+- compare_links(proto, urdf_links, tol, inertia_tol) -> list[str]: per-link mass, CoM and
+  inertia errors, empty when they match. LINK_TOL (1e-6), INERTIA_TOL (1e-9).
 - rpy_to_matrix, axis_angle_to_matrix, mat_vec, max_abs_diff, normalize: 3x3 helpers.
-- compare_joints(proto, urdf, tol) -> list[str]: error strings, empty when they match.
-  Never asserts.
 
+Malformed PROTO or URDF values come back as error strings from compare_*. Bad tolerances
+raise ValueError, and urdf_links() raises ValueError on a malformed URDF file.
 No Webots, no third-party deps. Brace matching is delegated to
 vrml_lexer.find_matching_brace.
 
-Usage:
+Usage (joints):
     from proto_urdf_compare import PROTO_PATH, URDF_PATH, compare_joints, parse_proto, urdf_joints
     errors = compare_joints(parse_proto(PROTO_PATH.read_text()), urdf_joints(URDF_PATH))
+Usage (links):
+    from proto_urdf_compare import PROTO_PATH, URDF_PATH, compare_links, parse_proto, urdf_links
+    errors = compare_links(parse_proto(PROTO_PATH.read_text()), urdf_links(URDF_PATH))
 """
 
 import math
@@ -504,6 +512,12 @@ def _urdf_checked(entry: dict, key: str, n: int, name: str, errors: list[str]):
     return _checked_vec(entry[key], n, f"urdf {key}", name, errors)
 
 
+def _check_tol(label: str, value) -> None:
+    """Tolerances are caller arguments: a bool, non-number, NaN, inf or negative one raises ValueError."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not (0 <= value < math.inf):
+        raise ValueError(f"{label} must be a finite number >= 0, got {value!r}")
+
+
 def compare_joints(proto: ProtoRobot, urdf: dict, tol: float = 1e-6) -> list[str]:
     """
     Compare PROTO joints against URDF joints. Returns error strings; empty means match.
@@ -517,15 +531,16 @@ def compare_joints(proto: ProtoRobot, urdf: dict, tol: float = 1e-6) -> list[str
     axis is in the joint frame after rpy (PR #157 re-expresses the same physical
     axis), so it is mapped into the parent frame as R(rpy) @ urdf_axis first.
     """
+    _check_tol("tol", tol)
     errors: list[str] = []
     proto_names = set(proto.joints)
     urdf_names = set(urdf)
-    for name in sorted(proto_names - urdf_names):
+    for name in sorted(proto_names - urdf_names, key=str):
         errors.append(f"{name}: joint key only in PROTO, missing from urdf")
-    for name in sorted(urdf_names - proto_names):
+    for name in sorted(urdf_names - proto_names, key=str):
         errors.append(f"{name}: joint key only in urdf, missing from PROTO")
 
-    for name in sorted(proto_names & urdf_names):
+    for name in sorted(proto_names & urdf_names, key=str):
         pj = proto.joints[name]
         uj = urdf[name]
         if not isinstance(uj, dict):
@@ -593,7 +608,8 @@ def compare_joints(proto: ProtoRobot, urdf: dict, tol: float = 1e-6) -> list[str
 # ---------------------------------------------------------------------------
 
 LINK_TOL = 1e-6
-# 1e-9: the wheel ixx/iyy gap is 1e-6 to within float rounding (1.0000000000000002e-06), so a 1e-6 tolerance would catch the swap only by rounding; 1e-9 keeps a real margin
+# 1e-9: the wheel ixx/iyy gap is 1e-6 to within float rounding (1.0000000000000002e-06),
+# so a 1e-6 tolerance would catch the swap only by rounding; 1e-9 keeps a real margin.
 INERTIA_TOL = 1e-9
 INERTIA_KEYS = ("ixx", "iyy", "izz", "ixy", "ixz", "iyz")
 
@@ -607,7 +623,7 @@ def _urdf_required(elem, attr: str, where: str) -> str:
 def urdf_links(path: Path) -> dict[str, dict]:
     """
     Map link name to {mass, com, rpy, inertia} for each URDF link with an <inertial>.
-    com is the inertial <origin xyz>, rpy its <origin rpy> (default zeros),
+    mass is a 1-tuple, like the other fields. com is the inertial <origin xyz>, rpy its <origin rpy> (default zeros),
     inertia (ixx, iyy, izz, ixy, ixz, iyz) from the <inertia> attributes.
     Links without <inertial> are omitted.
     """
@@ -626,7 +642,7 @@ def urdf_links(path: Path) -> dict[str, dict]:
         inertia_el = inertial.find("inertia")
         origin = inertial.find("origin")
         links[name] = {
-            "mass": float(_urdf_required(mass_el, "value", name)),
+            "mass": (float(_urdf_required(mass_el, "value", name)),),
             "com": _urdf_vec(origin, "xyz", (0.0, 0.0, 0.0), name),
             "rpy": _urdf_vec(origin, "rpy", (0.0, 0.0, 0.0), name),
             "inertia": tuple(float(_urdf_required(inertia_el, k, name)) for k in INERTIA_KEYS),
@@ -657,9 +673,8 @@ def compare_links(
     containers) is returned as error strings, not raised. Bad tol/inertia_tol raise
     ValueError (caller error). urdf_links() raises ValueError on a malformed URDF file.
     """
-    for label, value in (("tol", tol), ("inertia_tol", inertia_tol)):
-        if not (isinstance(value, (int, float)) and 0 <= value < math.inf):
-            raise ValueError(f"{label} must be a finite number >= 0, got {value!r}")
+    _check_tol("tol", tol)
+    _check_tol("inertia_tol", inertia_tol)
     if not isinstance(urdf_links_, dict):
         return [f"urdf links: expected a mapping, got {type(urdf_links_).__name__}"]
     if not (isinstance(proto, ProtoRobot) and isinstance(proto.root, Physics)
@@ -673,21 +688,19 @@ def compare_links(
         return [f"PROTO: {exc}"]
     proto_names = set(plinks)
     urdf_names = set(urdf_links_)
-    for name in sorted(proto_names - urdf_names):
+    for name in sorted(proto_names - urdf_names, key=str):
         errors.append(f"{name}: link key only in PROTO, missing from urdf")
-    for name in sorted(urdf_names - proto_names):
+    for name in sorted(urdf_names - proto_names, key=str):
         errors.append(f"{name}: link key only in urdf, missing from PROTO")
 
-    for name in sorted(proto_names & urdf_names):
+    for name in sorted(proto_names & urdf_names, key=str):
         pl = plinks[name]
         ul = urdf_links_[name]
         if not isinstance(ul, dict):
             errors.append(f"{name}: urdf entry is not a mapping")
             continue
         pm = _checked_vec((pl.mass,), 1, "PROTO mass", name, errors)
-        um = _checked_vec((ul["mass"],), 1, "urdf mass", name, errors) if "mass" in ul else None
-        if "mass" not in ul:
-            errors.append(f"{name}: urdf entry missing key 'mass'")
+        um = _urdf_checked(ul, "mass", 1, name, errors)
         pc = _checked_vec(pl.com, 3, "PROTO com", name, errors)
         uc = _urdf_checked(ul, "com", 3, name, errors)
         pi = _checked_vec(pl.inertia, 6, "PROTO inertia", name, errors)

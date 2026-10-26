@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PROTO vs URDF joint consistency (#392, Part of #103 S2).
+PROTO vs URDF consistency: joints (#392, Part of #103 S2) and links (#393, S3).
 
 Compares the real protos/InvertedPendulumRobot.proto against
 06_Exports/urdf/robot.urdf (source of truth). Data and unit tests only:
@@ -485,8 +485,8 @@ def _link_pair():
         joints={wheel.name: wheel},
     )
     urdf = {
-        "Base_Link": {"mass": 0.25, "com": (0.0, 0.0, 0.0), "rpy": (0.0, 0.0, 0.0), "inertia": ZERO_INERTIA},
-        "Wheel_Left": {"mass": 0.03, "com": (0.0, 0.0, 0.0), "rpy": (0.0, 0.0, 0.0), "inertia": WHEEL_INERTIA},
+        "Base_Link": {"mass": (0.25,), "com": (0.0, 0.0, 0.0), "rpy": (0.0, 0.0, 0.0), "inertia": ZERO_INERTIA},
+        "Wheel_Left": {"mass": (0.03,), "com": (0.0, 0.0, 0.0), "rpy": (0.0, 0.0, 0.0), "inertia": WHEEL_INERTIA},
     }
     return robot, urdf
 
@@ -514,6 +514,13 @@ def test_com_perturbation_reported(proto, urdf_link_data):
     bad = _with_link_field(proto, "Pendulum_Link", com=(com[0], com[1] + 1e-3, com[2]))
     errors = compare_links(bad, urdf_link_data)
     assert any(e.startswith("Pendulum_Link: ") and "com" in e for e in errors), errors
+
+
+def test_pendulum_inertia_product_sign_flip_reported(proto, urdf_link_data):
+    inertia = proto_links(proto)["Pendulum_Link"].inertia
+    flipped = (*inertia[:3], -inertia[3], *inertia[4:])
+    errors = compare_links(_with_link_field(proto, "Pendulum_Link", inertia=flipped), urdf_link_data)
+    assert any(e.startswith("Pendulum_Link: inertia") for e in errors), errors
 
 
 def test_inertia_perturbation_reported(proto, urdf_link_data):
@@ -563,11 +570,12 @@ def test_wheel_ixx_iyy_swap_caught_by_inertia_tol():
 @pytest.mark.parametrize(
     "target,name,key,value,word",
     [
-        ("urdf", "Wheel_Left", "mass", math.nan, "non-finite"),
+        ("urdf", "Wheel_Left", "mass", (math.nan,), "non-finite"),
         ("proto", "Wheel_Left", "com", (math.inf, 0.0, 0.0), "non-finite"),
         ("urdf", "Base_Link", "inertia", (0.0,) * 5, "malformed"),
+        ("urdf", "Wheel_Left", "com", None, "malformed"),
     ],
-    ids=["nan-mass", "inf-com", "5-inertia"],
+    ids=["nan-mass", "inf-com", "5-inertia", "none-com"],
 )
 def test_malformed_link_value_reported_not_raised(target, name, key, value, word):
     robot, urdf = _link_pair()
@@ -610,3 +618,24 @@ def test_wrong_type_containers_reported_not_raised(proto, urdf_link_data, case):
 def test_invalid_tolerance_raises(proto, urdf_link_data, kwargs):
     with pytest.raises(ValueError):
         compare_links(proto, urdf_link_data, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "tol", [math.nan, -1, None, "1e-6", math.inf, True],
+    ids=["nan", "negative", "none", "str", "inf", "bool"],
+)
+def test_compare_joints_invalid_tol_raises(proto, urdf, tol):
+    with pytest.raises(ValueError):
+        compare_joints(proto, urdf, tol=tol)
+
+
+def test_mixed_key_types_reported_not_raised(proto, urdf_link_data):
+    # Non-str keys on both sides: PROTO end_name 5 and URDF key 5 match (compared, so mismatched),
+    # None and "Q" are URDF-only, and the renamed Pendulum_Link is URDF-only.
+    robot = _with_link_field(proto, "Pendulum_Link", end_name=5)
+    urdf = {**urdf_link_data, 5: dict(urdf_link_data["Wheel_Left"]), None: {}, "Q": {}}
+    errors = compare_links(robot, urdf)  # must not raise
+    assert any(e.startswith("5: ") for e in errors), errors
+    assert "Pendulum_Link: link key only in urdf, missing from PROTO" in errors, errors
+    assert "None: link key only in urdf, missing from PROTO" in errors, errors
+    assert "Q: link key only in urdf, missing from PROTO" in errors, errors
