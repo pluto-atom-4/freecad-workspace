@@ -33,8 +33,9 @@ _COMMENT_RE = re.compile(r"#[^\n]*")
 _NUMBER_RE = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
 _IDENT_RE = re.compile(r"[A-Za-z_]\w*")
 _NODE_OPEN_RE = re.compile(r"([A-Z]\w*)\s*\{")
-_DEF_PREFIX_RE = re.compile(r"(?:DEF[ \t]+[A-Za-z_]\w*[ \t]+)?")
+_DEF_PREFIX_RE = re.compile(r"(?:DEF[ \t]+[^\s{}\[\]\"#]+[ \t]+)?")
 _VALUE_NODE_RE = re.compile(r"[A-Za-z_]\w*[ \t]*\{")
+_HINGE_RE = re.compile(r"\bHingeJoint\s*\{")
 _PROTO_RE = re.compile(r"\bPROTO\s+\w+\s*\[")
 _ROBOT_RE = re.compile(r"\bRobot\s*\{")
 _CLOSE_FOR = {"{": "}", "[": "]"}
@@ -267,6 +268,13 @@ def parse_proto(text: str) -> ProtoRobot:
     joints: dict[str, ProtoJoint] = {}
     for node_type, node_body in iter_nodes(children):
         if node_type != "HingeJoint":
+            # Only depth-0 children are read. A joint wrapped in another node
+            # would be skipped silently, so refuse it instead.
+            if _HINGE_RE.search(node_body):
+                raise ValueError(
+                    f"HingeJoint nested inside a {node_type} node is not supported; "
+                    "joints must be direct children of Robot.children"
+                )
             continue
         hf = top_level_fields(node_body)
 
