@@ -19,6 +19,7 @@ Usage:
 import math
 import re
 import sys
+import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -338,3 +339,167 @@ def parse_proto(text: str) -> ProtoRobot:
         )
 
     return ProtoRobot(root=root, joints=joints)
+
+
+# ---------------------------------------------------------------------------
+# URDF reader and PROTO-vs-URDF joint comparison (pure stdlib, no numpy).
+# ---------------------------------------------------------------------------
+
+URDF_PATH = Path(__file__).resolve().parents[2] / "06_Exports" / "urdf" / "robot.urdf"
+PROTO_PATH = Path(__file__).resolve().parent / "protos" / "InvertedPendulumRobot.proto"
+
+Matrix3 = tuple[tuple[float, float, float], ...]
+
+
+def _matmul(a: Matrix3, b: Matrix3) -> Matrix3:
+    return tuple(
+        tuple(sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3))
+        for i in range(3)
+    )
+
+
+def _rot_x(t: float) -> Matrix3:
+    c, s = math.cos(t), math.sin(t)
+    return ((1.0, 0.0, 0.0), (0.0, c, -s), (0.0, s, c))
+
+
+def _rot_y(t: float) -> Matrix3:
+    c, s = math.cos(t), math.sin(t)
+    return ((c, 0.0, s), (0.0, 1.0, 0.0), (-s, 0.0, c))
+
+
+def _rot_z(t: float) -> Matrix3:
+    c, s = math.cos(t), math.sin(t)
+    return ((c, -s, 0.0), (s, c, 0.0), (0.0, 0.0, 1.0))
+
+
+def rpy_to_matrix(rpy: tuple[float, ...]) -> Matrix3:
+    """URDF fixed-axis rpy: R = Rz(yaw) @ Ry(pitch) @ Rx(roll)."""
+    roll, pitch, yaw = rpy
+    return _matmul(_rot_z(yaw), _matmul(_rot_y(pitch), _rot_x(roll)))
+
+
+def normalize(v: tuple[float, ...]) -> tuple[float, ...]:
+    norm = math.sqrt(sum(x * x for x in v))
+    if norm == 0.0:
+        raise ValueError(f"cannot normalize zero-length vector {v!r}")
+    return tuple(x / norm for x in v)
+
+
+def axis_angle_to_matrix(aa: tuple[float, ...]) -> Matrix3:
+    """Rodrigues rotation from (x, y, z, angle). Angle 0 gives identity."""
+    angle = aa[3]
+    if angle == 0.0:
+        return ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    x, y, z = normalize(aa[:3])
+    c, s = math.cos(angle), math.sin(angle)
+    k = 1.0 - c
+    return (
+        (c + x * x * k, x * y * k - z * s, x * z * k + y * s),
+        (y * x * k + z * s, c + y * y * k, y * z * k - x * s),
+        (z * x * k - y * s, z * y * k + x * s, c + z * z * k),
+    )
+
+
+def mat_vec(r: Matrix3, v: tuple[float, ...]) -> tuple[float, ...]:
+    return tuple(sum(r[i][j] * v[j] for j in range(3)) for i in range(3))
+
+
+def _flatten(x) -> list[float]:
+    out: list[float] = []
+    for item in x:
+        if isinstance(item, (tuple, list)):
+            out.extend(_flatten(item))
+        else:
+            out.append(float(item))
+    return out
+
+
+def max_abs_diff(a, b) -> float:
+    """Largest element-wise |a - b| for vectors or matrices of equal shape."""
+    fa, fb = _flatten(a), _flatten(b)
+    if len(fa) != len(fb):
+        raise ValueError(f"shape mismatch: {len(fa)} vs {len(fb)} elements")
+    return max(abs(p - q) for p, q in zip(fa, fb))
+
+
+def _urdf_vec(elem, attr: str, default: tuple[float, ...], where: str) -> tuple[float, ...]:
+    if elem is None or attr not in elem.attrib:
+        return default
+    vals = tuple(float(tok) for tok in elem.attrib[attr].split())
+    if len(vals) != len(default):
+        raise ValueError(f"{where}: expected {len(default)} numbers in {attr!r}, got {elem.attrib[attr]!r}")
+    return vals
+
+
+def urdf_joints(path: Path) -> dict[str, dict]:
+    """Map joint name to {parent, child, xyz, rpy, axis} from a URDF file."""
+    root = ET.parse(path).getroot()
+    joints: dict[str, dict] = {}
+    for j in root.findall("joint"):
+        name = j.get("name")
+        if not name:
+            raise ValueError(f"{path}: <joint> without a name")
+        if name in joints:
+            raise ValueError(f"{path}: duplicate joint name {name!r}")
+        parent = j.find("parent")
+        child = j.find("child")
+        if parent is None or child is None:
+            raise ValueError(f"{path}: joint {name!r} lacks <parent> or <child>")
+        origin = j.find("origin")
+        axis = j.find("axis")
+        joints[name] = {
+            "parent": parent.get("link"),
+            "child": child.get("link"),
+            "xyz": _urdf_vec(origin, "xyz", (0.0, 0.0, 0.0), name),
+            "rpy": _urdf_vec(origin, "rpy", (0.0, 0.0, 0.0), name),
+            "axis": _urdf_vec(axis, "xyz", (1.0, 0.0, 0.0), name),
+        }
+    return joints
+
+
+def compare_joints(proto: ProtoRobot, urdf: dict, tol: float = 1e-6) -> list[str]:
+    """
+    Compare PROTO joints against URDF joints. Returns error strings; empty means match.
+
+    The PROTO HingeJointParameters axis is in the parent (Base) frame, since the
+    Robot sits at identity. The URDF axis is in the joint frame after rpy (PR #157
+    re-expresses the same physical axis), so the world axis is R(rpy) @ urdf_axis.
+    """
+    errors: list[str] = []
+    proto_names = set(proto.joints)
+    urdf_names = set(urdf)
+    for name in sorted(proto_names - urdf_names):
+        errors.append(f"{name}: joint key only in PROTO, missing from urdf")
+    for name in sorted(urdf_names - proto_names):
+        errors.append(f"{name}: joint key only in urdf, missing from PROTO")
+
+    for name in sorted(proto_names & urdf_names):
+        pj = proto.joints[name]
+        uj = urdf[name]
+        d = max_abs_diff(pj.anchor, uj["xyz"])
+        if d > tol:
+            errors.append(f"{name}: anchor {pj.anchor} != urdf xyz {uj['xyz']} (max diff {d:.3g})")
+        d = max_abs_diff(pj.end_translation, uj["xyz"])
+        if d > tol:
+            errors.append(
+                f"{name}: end_translation {pj.end_translation} != urdf xyz {uj['xyz']} (max diff {d:.3g})"
+            )
+        try:
+            d = max_abs_diff(axis_angle_to_matrix(pj.end_rotation), rpy_to_matrix(uj["rpy"]))
+            if d > tol:
+                errors.append(f"{name}: rotation matrix from end_rotation differs from urdf rpy {uj['rpy']} (max diff {d:.3g})")
+        except ValueError as exc:
+            errors.append(f"{name}: rotation invalid: {exc}")
+        try:
+            r_urdf = rpy_to_matrix(uj["rpy"])
+            proto_axis = normalize(pj.axis)
+            world_axis = normalize(mat_vec(r_urdf, uj["axis"]))
+            d = max_abs_diff(proto_axis, world_axis)
+            if d > tol:
+                errors.append(f"{name}: axis {proto_axis} != urdf world axis {world_axis} (max diff {d:.3g})")
+        except ValueError as exc:
+            errors.append(f"{name}: axis invalid: {exc}")
+        if pj.end_name != uj["child"]:
+            errors.append(f"{name}: child {pj.end_name!r} != urdf child {uj['child']!r}")
+    return errors
