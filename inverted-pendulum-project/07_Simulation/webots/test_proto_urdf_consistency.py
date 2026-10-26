@@ -723,3 +723,61 @@ def test_urdf_links_minimal_valid_file(tmp_path):
 def test_malformed_urdf_inertial_raises(tmp_path, inertial):
     with pytest.raises(ValueError):
         urdf_links(_urdf_file(tmp_path, inertial))
+
+
+def _inertial_robot(mass='<mass value="1"/>', origin='<origin xyz="0 0 0"/>', inertia=INERTIA_XML):
+    return f'<robot name="r"><link name="L"><inertial>{mass}{origin}{inertia}</inertial></link></robot>'
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",  # empty file
+        '<robot name="r"><link name="L">',  # malformed XML (unclosed tags)
+        _inertial_robot().replace("<robot ", "<foo ").replace("</robot>", "</foo>"),  # valid body, wrong root
+        _inertial_robot(mass='<mass value="nan"/>'),
+        _inertial_robot(mass='<mass value="inf"/>'),
+        _inertial_robot(mass='<mass value="1e400"/>'),  # float("1e400") is inf
+        _inertial_robot(mass='<mass value="-0.25"/>'),
+        _inertial_robot(origin='<origin xyz="nan 0 0"/>'),
+        _inertial_robot(origin='<origin xyz="0 inf 0"/>'),
+        _inertial_robot(inertia=INERTIA_XML.replace('ixx="1"', 'ixx="nan"')),
+    ],
+    ids=["empty", "malformed-xml", "wrong-root", "mass-nan", "mass-inf", "mass-1e400",
+         "mass-negative", "com-nan", "com-inf", "inertia-nan"],
+)
+def test_bad_urdf_file_raises_value_error(tmp_path, text):
+    path = tmp_path / "bad.urdf"  # a temp file: the real URDF is never touched
+    path.write_text(text)
+    with pytest.raises(ValueError):
+        urdf_links(path)
+
+
+@pytest.mark.parametrize("value", ["0", "-0.0"])
+def test_zero_mass_accepted_and_normalised(tmp_path, value):
+    path = tmp_path / "zero.urdf"
+    path.write_text(_inertial_robot(mass=f'<mass value="{value}"/>'))
+    mass = urdf_links(path)["L"]["mass"]
+    assert mass == 0.0 and math.copysign(1.0, mass) == 1.0, mass
+
+
+def test_robot_without_links_is_empty(tmp_path):
+    path = tmp_path / "empty_robot.urdf"
+    path.write_text('<robot name="r"/>')
+    assert urdf_links(path) == {}  # legal; compare_links then reports the missing links
+
+
+def test_urdf_joints_bad_root_and_empty_file_raise(tmp_path):
+    wrong = tmp_path / "wrong.urdf"
+    wrong.write_text('<foo><joint name="j" type="fixed"><parent link="a"/><child link="b"/></joint></foo>')
+    empty = tmp_path / "empty.urdf"
+    empty.write_text("")
+    with pytest.raises(ValueError):
+        urdf_joints(wrong)
+    with pytest.raises(ValueError):
+        urdf_joints(empty)
+
+
+def test_missing_urdf_file_raises_oserror(tmp_path):
+    with pytest.raises(OSError):
+        urdf_links(tmp_path / "does_not_exist.urdf")

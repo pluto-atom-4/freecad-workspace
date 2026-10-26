@@ -459,9 +459,23 @@ def _urdf_vec(elem, attr: str, default: tuple[float, ...], where: str) -> tuple[
     return vals
 
 
+def _parse_urdf_root(path: Path) -> ET.Element:
+    """
+    Root <robot> element of a URDF file. Malformed or empty XML and a non-<robot> root
+    raise ValueError (never ParseError, a SyntaxError). An unreadable path raises OSError.
+    """
+    try:
+        root = ET.parse(path).getroot()
+    except ET.ParseError as exc:
+        raise ValueError(f"{path}: malformed URDF XML: {exc}") from exc
+    if root.tag != "robot":
+        raise ValueError(f"{path}: root element is <{root.tag}>, expected <robot>")
+    return root
+
+
 def urdf_joints(path: Path) -> dict[str, dict]:
-    """Map joint name to {parent, child, xyz, rpy, axis} from a URDF file."""
-    root = ET.parse(path).getroot()
+    """Map joint name to {parent, child, xyz, rpy, axis} from a URDF file (see _parse_urdf_root)."""
+    root = _parse_urdf_root(path)
     joints: dict[str, dict] = {}
     for j in root.findall("joint"):
         name = j.get("name")
@@ -626,14 +640,25 @@ def _urdf_required(elem, attr: str, where: str) -> str:
     return elem.attrib[attr]
 
 
+def _check_urdf_link(path: Path, name: str, mass: float, com: tuple, inertia: tuple) -> None:
+    """Mass must be finite and >= 0 (0 is a legal massless link); CoM and inertia must be finite."""
+    if not math.isfinite(mass) or mass < 0:
+        raise ValueError(f"{path}: link {name!r} mass must be finite and >= 0, got {mass!r}")
+    if not all(math.isfinite(v) for v in com + inertia):
+        raise ValueError(f"{path}: link {name!r} com {com} / inertia {inertia} must be finite")
+
+
 def urdf_links(path: Path) -> dict[str, dict]:
     """
     Map link name to {mass, com, rpy, inertia} for each URDF link with an <inertial>.
-    mass is a float. com is the inertial <origin xyz>, rpy its <origin rpy> (default zeros),
-    inertia (ixx, iyy, izz, ixy, ixz, iyz) from the <inertia> attributes.
-    Links without <inertial> are omitted.
+    mass is a float (-0.0 becomes 0.0). com is the inertial <origin xyz>, rpy its <origin rpy>
+    (default zeros), inertia (ixx, iyy, izz, ixy, ixz, iyz) from the <inertia> attributes.
+    Links without <inertial> are omitted; a <robot> with no links returns {}.
+    Raises ValueError for malformed or empty XML, a non-<robot> root, a missing or
+    non-numeric value, a negative or non-finite mass, or a non-finite CoM or inertia.
+    An unreadable path raises OSError.
     """
-    root = ET.parse(path).getroot()
+    root = _parse_urdf_root(path)
     links: dict[str, dict] = {}
     for link in root.findall("link"):
         name = link.get("name")
@@ -647,11 +672,15 @@ def urdf_links(path: Path) -> dict[str, dict]:
         mass_el = inertial.find("mass")
         inertia_el = inertial.find("inertia")
         origin = inertial.find("origin")
+        mass = float(_urdf_required(mass_el, "value", name)) + 0.0  # + 0.0 turns -0.0 into 0.0
+        com = _urdf_vec(origin, "xyz", (0.0, 0.0, 0.0), name)
+        inertia = tuple(float(_urdf_required(inertia_el, k, name)) for k in INERTIA_KEYS)
+        _check_urdf_link(path, name, mass, com, inertia)
         links[name] = {
-            "mass": float(_urdf_required(mass_el, "value", name)),
-            "com": _urdf_vec(origin, "xyz", (0.0, 0.0, 0.0), name),
+            "mass": mass,
+            "com": com,
             "rpy": _urdf_vec(origin, "rpy", (0.0, 0.0, 0.0), name),
-            "inertia": tuple(float(_urdf_required(inertia_el, k, name)) for k in INERTIA_KEYS),
+            "inertia": inertia,
         }
     return links
 
