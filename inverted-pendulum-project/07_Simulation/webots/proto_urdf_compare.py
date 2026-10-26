@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """
-Pure-stdlib reader for a Webots PROTO (VRML text).
+Pure-stdlib reader and comparison for a Webots PROTO (VRML text) vs the URDF.
 
-Extracts what a PROTO-vs-URDF comparison needs:
-- root physics (mass, centerOfMass, inertiaMatrix) from the Robot node;
-- one ProtoJoint per HingeJoint, keyed by the RotationalMotor name, with
-  axis / anchor from HingeJointParameters and the endPoint Solid's name,
-  pose (translation, rotation) and own physics.
+- parse_proto(text) -> ProtoRobot: root physics and one ProtoJoint per HingeJoint
+  (keyed by RotationalMotor name), from the Robot node.
+- urdf_joints(path) -> dict: per-joint parent/child/xyz/rpy/axis from the URDF.
+- rpy_to_matrix, axis_angle_to_matrix, mat_vec, max_abs_diff, normalize: 3x3 helpers.
+- compare_joints(proto, urdf, tol) -> list[str]: error strings, empty when they match.
+  Never asserts.
 
 No Webots, no third-party deps. Brace matching is delegated to
 vrml_lexer.find_matching_brace.
 
 Usage:
-    from proto_urdf_compare import parse_proto
-    robot = parse_proto(Path("InvertedPendulumRobot.proto").read_text())
+    from proto_urdf_compare import PROTO_PATH, URDF_PATH, compare_joints, parse_proto, urdf_joints
+    errors = compare_joints(parse_proto(PROTO_PATH.read_text()), urdf_joints(URDF_PATH))
 """
 
 import math
@@ -462,9 +463,10 @@ def compare_joints(proto: ProtoRobot, urdf: dict, tol: float = 1e-6) -> list[str
     """
     Compare PROTO joints against URDF joints. Returns error strings; empty means match.
 
-    The PROTO HingeJointParameters axis is in the parent (Base) frame, since the
-    Robot sits at identity. The URDF axis is in the joint frame after rpy (PR #157
-    re-expresses the same physical axis), so the world axis is R(rpy) @ urdf_axis.
+    The PROTO HingeJointParameters axis is in the parent (Base_Link) frame, not the
+    world frame; this holds for the Robot at its default pose (identity). The URDF
+    axis is in the joint frame after rpy (PR #157 re-expresses the same physical
+    axis), so it is mapped into the parent frame as R(rpy) @ urdf_axis first.
     """
     errors: list[str] = []
     proto_names = set(proto.joints)
@@ -485,14 +487,20 @@ def compare_joints(proto: ProtoRobot, urdf: dict, tol: float = 1e-6) -> list[str
             errors.append(
                 f"{name}: end_translation {pj.end_translation} != urdf xyz {uj['xyz']} (max diff {d:.3g})"
             )
+        r_urdf = rpy_to_matrix(uj["rpy"])
+        # Tolerance margin (tol = 1e-6 is accepted, do not loosen silently): the real
+        # pendulum axis residual is 3.27e-7, about 3x under tol. It comes from pi/2
+        # written as 1.570796 (true pi/2 minus that is 3.7e-7) on the URDF side. The
+        # rotation residual is exactly 0 because both sides use the same truncated
+        # angle. A regeneration with coarser rounding could push the axis residual
+        # past tol and flip the result; if so, loosen tol deliberately, not silently.
         try:
-            d = max_abs_diff(axis_angle_to_matrix(pj.end_rotation), rpy_to_matrix(uj["rpy"]))
+            d = max_abs_diff(axis_angle_to_matrix(pj.end_rotation), r_urdf)
             if d > tol:
                 errors.append(f"{name}: rotation matrix from end_rotation differs from urdf rpy {uj['rpy']} (max diff {d:.3g})")
         except ValueError as exc:
             errors.append(f"{name}: rotation invalid: {exc}")
         try:
-            r_urdf = rpy_to_matrix(uj["rpy"])
             proto_axis = normalize(pj.axis)
             world_axis = normalize(mat_vec(r_urdf, uj["axis"]))
             d = max_abs_diff(proto_axis, world_axis)
