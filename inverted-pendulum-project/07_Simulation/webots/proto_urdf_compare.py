@@ -421,7 +421,11 @@ def max_abs_diff(a, b) -> float:
     fa, fb = _flatten(a), _flatten(b)
     if len(fa) != len(fb):
         raise ValueError(f"shape mismatch: {len(fa)} vs {len(fb)} elements")
-    return max(abs(p - q) for p, q in zip(fa, fb))
+    diffs = [abs(p - q) for p, q in zip(fa, fb)]
+    # max() silently skips NaN depending on position, so propagate it explicitly.
+    if any(math.isnan(x) for x in diffs):
+        return math.nan
+    return max(diffs)
 
 
 def _urdf_vec(elem, attr: str, default: tuple[float, ...], where: str) -> tuple[float, ...]:
@@ -459,9 +463,41 @@ def urdf_joints(path: Path) -> dict[str, dict]:
     return joints
 
 
+def _checked_vec(value, n: int, field: str, name: str, errors: list[str]):
+    """Value as a tuple of n finite numbers, or None after appending an error to errors."""
+    if (
+        not isinstance(value, (tuple, list))
+        or len(value) != n
+        or not all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in value)
+    ):
+        errors.append(f"{name}: {field} malformed: expected {n} numbers, got {value!r}")
+        return None
+    try:
+        vals = tuple(float(x) for x in value)
+    except OverflowError:  # a huge int has no float value
+        errors.append(f"{name}: {field} malformed: value too large for a float, got {value!r}")
+        return None
+    if not all(math.isfinite(x) for x in vals):
+        errors.append(f"{name}: {field} non-finite {value!r}")
+        return None
+    return vals
+
+
+def _urdf_checked(entry: dict, key: str, n: int, name: str, errors: list[str]):
+    """Checked vector from a URDF entry; a missing key is an error string, not KeyError."""
+    if key not in entry:
+        errors.append(f"{name}: urdf entry missing key {key!r}")
+        return None
+    return _checked_vec(entry[key], n, f"urdf {key}", name, errors)
+
+
 def compare_joints(proto: ProtoRobot, urdf: dict, tol: float = 1e-6) -> list[str]:
     """
     Compare PROTO joints against URDF joints. Returns error strings; empty means match.
+
+    Malformed per-joint data (wrong shape, non-numeric or non-finite values, missing
+    URDF keys, non-mapping URDF entries) is reported as error strings, not raised.
+    The `urdf` argument itself is assumed to be a dict.
 
     The PROTO HingeJointParameters axis is in the parent (Base_Link) frame, not the
     world frame; this holds for the Robot at its default pose (identity). The URDF
@@ -479,42 +515,59 @@ def compare_joints(proto: ProtoRobot, urdf: dict, tol: float = 1e-6) -> list[str
     for name in sorted(proto_names & urdf_names):
         pj = proto.joints[name]
         uj = urdf[name]
-        d = max_abs_diff(pj.anchor, uj["xyz"])
-        if d > tol:
-            errors.append(f"{name}: anchor {pj.anchor} != urdf xyz {uj['xyz']} (max diff {d:.3g})")
-        d = max_abs_diff(pj.end_translation, uj["xyz"])
-        if d > tol:
-            errors.append(
-                f"{name}: end_translation {pj.end_translation} != urdf xyz {uj['xyz']} (max diff {d:.3g})"
-            )
+        if not isinstance(uj, dict):
+            errors.append(f"{name}: urdf entry is not a mapping")
+            continue
+        # Parent is not compared: the PROTO has no parent name. Every URDF joint
+        # uses Base_Link (asserted in test_proto_urdf_consistency.py).
+        anchor = _checked_vec(pj.anchor, 3, "anchor", name, errors)
+        end_t = _checked_vec(pj.end_translation, 3, "end_translation", name, errors)
+        end_rot = _checked_vec(pj.end_rotation, 4, "end_rotation", name, errors)
+        proto_axis = _checked_vec(pj.axis, 3, "axis", name, errors)
+        xyz = _urdf_checked(uj, "xyz", 3, name, errors)
+        rpy = _urdf_checked(uj, "rpy", 3, name, errors)
+        uaxis = _urdf_checked(uj, "axis", 3, name, errors)
+        if "child" not in uj:
+            errors.append(f"{name}: urdf entry missing key 'child'")
+
+        if anchor is not None and xyz is not None:
+            d = max_abs_diff(anchor, xyz)
+            if not (d <= tol):
+                errors.append(f"{name}: anchor {anchor} != urdf xyz {xyz} (max diff {d:.3g})")
+        if end_t is not None and xyz is not None:
+            d = max_abs_diff(end_t, xyz)
+            if not (d <= tol):
+                errors.append(f"{name}: end_translation {end_t} != urdf xyz {xyz} (max diff {d:.3g})")
+
+        # Each conversion reports its own failure; only the comparisons need both.
         # Tolerance margin (tol = 1e-6 is accepted): the real pendulum axis residual
         # is 3.27e-7, about 3x under tol. It comes from pi/2 written as 1.570796
         # (true pi/2 minus that is 3.7e-7) on the URDF side. The rotation residual is
         # exactly 0 because both sides use the same truncated angle. A regeneration
         # with coarser rounding could push the axis residual past tol and flip the
         # result; then loosen tol deliberately.
-        try:
-            r_urdf = rpy_to_matrix(uj["rpy"])
-        except ValueError as exc:
-            # Malformed rpy: report both checks as invalid, never raise.
-            errors.append(f"{name}: rotation invalid: {exc}")
-            errors.append(f"{name}: axis invalid: {exc}")
-            r_urdf = None
-        if r_urdf is not None:
+        r_proto = None
+        if end_rot is not None:
             try:
-                d = max_abs_diff(axis_angle_to_matrix(pj.end_rotation), r_urdf)
-                if d > tol:
-                    errors.append(f"{name}: rotation matrix from end_rotation differs from urdf rpy {uj['rpy']} (max diff {d:.3g})")
+                r_proto = axis_angle_to_matrix(end_rot)
             except ValueError as exc:
                 errors.append(f"{name}: rotation invalid: {exc}")
+        r_urdf = rpy_to_matrix(rpy) if rpy is not None else None
+        # NaN-safe comparisons: `not (d <= tol)` also catches a NaN difference.
+        if r_proto is not None and r_urdf is not None:
+            d = max_abs_diff(r_proto, r_urdf)
+            if not (d <= tol):
+                errors.append(f"{name}: rotation matrix from end_rotation differs from urdf rpy {rpy} (max diff {d:.3g})")
+        if r_urdf is not None and uaxis is not None and proto_axis is not None:
             try:
-                proto_axis = normalize(pj.axis)
-                parent_axis = normalize(mat_vec(r_urdf, uj["axis"]))
-                d = max_abs_diff(proto_axis, parent_axis)
-                if d > tol:
-                    errors.append(f"{name}: axis {proto_axis} != urdf parent-frame axis {parent_axis} (max diff {d:.3g})")
+                proto_axis_unit = normalize(proto_axis)
+                parent_axis = normalize(mat_vec(r_urdf, uaxis))
             except ValueError as exc:
                 errors.append(f"{name}: axis invalid: {exc}")
-        if pj.end_name != uj["child"]:
+            else:
+                d = max_abs_diff(proto_axis_unit, parent_axis)
+                if not (d <= tol):
+                    errors.append(f"{name}: axis {proto_axis_unit} != urdf parent-frame axis {parent_axis} (max diff {d:.3g})")
+        if "child" in uj and pj.end_name != uj["child"]:
             errors.append(f"{name}: child {pj.end_name!r} != urdf child {uj['child']!r}")
     return errors

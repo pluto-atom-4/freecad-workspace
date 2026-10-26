@@ -14,6 +14,7 @@ Usage:
     mamba run -n pendulum-tools python3 -m pytest 07_Simulation/webots/test_proto_urdf_consistency.py -q
 """
 
+import math
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -94,6 +95,16 @@ def _synthetic():
     return robot, urdf
 
 
+def _with_proto_field(robot, name, field, value):
+    """Copy of robot with one field of one joint replaced (frozen dataclasses)."""
+    moved = replace(robot.joints[name], **{field: value})
+    return ProtoRobot(root=robot.root, joints={**robot.joints, name: moved})
+
+
+def _with_urdf_field(urdf, name, field, value):
+    return {**urdf, name: {**urdf[name], field: value}}
+
+
 # --- real data ---------------------------------------------------------------
 
 
@@ -127,6 +138,13 @@ def test_joint_sets_non_vacuous(proto, urdf):
     assert set(proto.joints) == set(urdf) == EXPECTED_JOINTS
 
 
+def test_all_urdf_parents_are_base_link(urdf):
+    # compare_joints does not compare the parent: the PROTO has no parent name.
+    # This test documents the assumption that every joint hangs off Base_Link.
+    parents = {name: entry["parent"] for name, entry in urdf.items()}
+    assert all(p == "Base_Link" for p in parents.values()), parents
+
+
 def test_pendulum_parent_frame_axes_are_plus_y(proto, urdf):
     """
     Pendulum axes are +Y in the parent (Base_Link) frame. The check assumes the
@@ -141,6 +159,17 @@ def test_pendulum_parent_frame_axes_are_plus_y(proto, urdf):
 
 def test_compare_joints_matches(proto, urdf):
     assert compare_joints(proto, urdf) == []
+
+
+@pytest.mark.parametrize("joint", sorted(EXPECTED_JOINTS))
+def test_anchor_perturbation_reported_for_every_joint(proto, urdf, joint):
+    # Perturb the parsed real PROTO in memory (frozen dataclasses, no file write).
+    # Covers each joint, so suppressing errors for any one of them fails here.
+    pj = proto.joints[joint]
+    moved = replace(pj, anchor=(pj.anchor[0] + 1e-3, pj.anchor[1], pj.anchor[2]))
+    bad = ProtoRobot(root=proto.root, joints={**proto.joints, joint: moved})
+    errors = compare_joints(bad, urdf)
+    assert any(e.startswith(f"{joint}: ") and "anchor" in e for e in errors), errors
 
 
 # --- helpers (no real files) -------------------------------------------------
@@ -171,6 +200,13 @@ def test_axis_angle_identity_and_errors():
         axis_angle_to_matrix((0.0, 0.0, 0.0, 1.0))
     with pytest.raises(ValueError):
         normalize((0.0, 0.0, 0.0))
+
+
+def test_max_abs_diff_propagates_nan_wherever_it_sits():
+    # max() alone would return 0.0 here, hiding the NaN in the second slot.
+    assert math.isnan(max_abs_diff((0.0, math.nan), (0.0, 0.0)))
+    assert math.isnan(max_abs_diff((math.nan, 0.0), (0.0, 0.0)))
+    assert max_abs_diff((0.0, 2.0), (0.0, 0.5)) == 1.5
 
 
 def test_compare_joints_multi_axis_rpy_clean():
@@ -209,28 +245,23 @@ def test_urdf_joints_defaults(tmp_path):
 
 def test_compare_joints_detects_axis_sign_flip():
     robot, urdf = _synthetic()
-    pend = robot.joints["pendulum_pivot_joint"]
-    flipped = replace(pend, axis=(0.0, -1.0, 0.0))
-    bad = ProtoRobot(root=robot.root, joints={**robot.joints, pend.name: flipped})
+    bad = _with_proto_field(robot, "pendulum_pivot_joint", "axis", (0.0, -1.0, 0.0))
     errors = compare_joints(bad, urdf)
     assert len(errors) == 1  # exactly one error, so the rest of the synthetic baseline is clean
     assert errors[0].startswith("pendulum_pivot_joint: axis ")
 
 
 def test_compare_joints_detects_wrong_anchor():
+    # Synthetic (no real file). Kept because it is the only synthetic anchor test.
     robot, urdf = _synthetic()
-    wheel = robot.joints["wheel_left_joint"]
-    moved = replace(wheel, anchor=(0.02, -0.028526, 0.054010))
-    bad = ProtoRobot(root=robot.root, joints={**robot.joints, wheel.name: moved})
+    bad = _with_proto_field(robot, "wheel_left_joint", "anchor", (0.02, -0.028526, 0.054010))
     errors = compare_joints(bad, urdf)
     assert any(e.startswith("wheel_left_joint: anchor ") for e in errors)
 
 
 def test_compare_joints_detects_wrong_child_name():
     robot, urdf = _synthetic()
-    pend = robot.joints["pendulum_pivot_joint"]
-    renamed = replace(pend, end_name="Pendulum_Link_Right")
-    bad = ProtoRobot(root=robot.root, joints={**robot.joints, pend.name: renamed})
+    bad = _with_proto_field(robot, "pendulum_pivot_joint", "end_name", "Pendulum_Link_Right")
     errors = compare_joints(bad, urdf)
     assert any(e.startswith("pendulum_pivot_joint: child ") for e in errors)
 
@@ -246,33 +277,109 @@ def test_compare_joints_reports_extra_and_missing_keys():
     assert any(e.startswith("wheel_left_joint: ") and "PROTO" in e for e in errors)
 
 
-@pytest.mark.parametrize("joint", sorted(EXPECTED_JOINTS))
-def test_anchor_perturbation_reported_for_every_joint(proto, urdf, joint):
-    # Perturb the parsed real PROTO in memory (frozen dataclasses, no file write).
-    # Covers each joint, so suppressing errors for any one of them fails here.
-    pj = proto.joints[joint]
-    moved = replace(pj, anchor=(pj.anchor[0] + 1e-3, pj.anchor[1], pj.anchor[2]))
-    bad = ProtoRobot(root=proto.root, joints={**proto.joints, joint: moved})
-    errors = compare_joints(bad, urdf)
-    assert any(e.startswith(f"{joint}: ") and "anchor" in e for e in errors), errors
-
-
-def test_compare_joints_malformed_rpy_reports_not_raises():
-    # A 2-element rpy must come back as error strings, never an exception.
-    robot, urdf = _synthetic()
-    entry = {**urdf["wheel_left_joint"], "rpy": (0.0, 0.0)}
-    bad_urdf = {**urdf, "wheel_left_joint": entry}
-    errors = compare_joints(robot, bad_urdf)
-    mine = [e for e in errors if e.startswith("wheel_left_joint: ")]
-    assert any("rotation" in e and "invalid" in e for e in mine), errors
-    assert any("axis" in e and "invalid" in e for e in mine), errors
-
-
 def test_compare_joints_reports_rotation_mismatch():
     robot, urdf = _synthetic()
-    pend = robot.joints["pendulum_pivot_joint"]
     # Rotation about X by -90 deg instead of +90 deg: matrix differs.
-    turned = replace(pend, end_rotation=(1.0, 0.0, 0.0, -1.570796))
-    bad = ProtoRobot(root=robot.root, joints={**robot.joints, pend.name: turned})
+    bad = _with_proto_field(robot, "pendulum_pivot_joint", "end_rotation", (1.0, 0.0, 0.0, -1.570796))
     errors = compare_joints(bad, urdf)
     assert any(e.startswith("pendulum_pivot_joint: ") and "rotation" in e for e in errors)
+
+
+def test_finite_inputs_with_overflowing_comparison_are_still_reported():
+    # Finite inputs whose rotated axis overflows to inf, so the normalised axis
+    # is NaN. A `d > tol` comparison would silently pass this.
+    robot, urdf = _synthetic()
+    bad_urdf = _with_urdf_field(urdf, "wheel_left_joint", "rpy", (0.0, 0.0, math.pi / 4))
+    bad_urdf = _with_urdf_field(bad_urdf, "wheel_left_joint", "axis", (1.5e308, -1.5e308, 0.0))
+    errors = compare_joints(robot, bad_urdf)
+    assert any(e.startswith("wheel_left_joint: axis ") for e in errors), errors
+
+
+# --- non-finite values: one case per field x {nan, inf} ----------------------
+
+# (target, field, error word): target "proto" changes the PROTO joint, "urdf" the entry.
+NONFINITE_FIELDS = [
+    ("proto", "anchor", "anchor"),
+    ("proto", "end_translation", "end_translation"),
+    ("proto", "end_rotation", "end_rotation"),
+    ("proto", "axis", "axis"),
+    ("urdf", "xyz", "urdf xyz"),
+    ("urdf", "rpy", "urdf rpy"),
+    ("urdf", "axis", "urdf axis"),
+]
+
+
+def _poke_first(vec, bad):
+    values = list(vec)
+    values[0] = bad
+    return tuple(values)
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf], ids=["nan", "inf"])
+@pytest.mark.parametrize("target,field,word", NONFINITE_FIELDS, ids=[f[2] for f in NONFINITE_FIELDS])
+def test_non_finite_value_reported(target, field, word, bad):
+    name = "wheel_left_joint"
+    robot, urdf = _synthetic()
+    if target == "proto":
+        robot = _with_proto_field(robot, name, field, _poke_first(getattr(robot.joints[name], field), bad))
+    else:
+        urdf = _with_urdf_field(urdf, name, field, _poke_first(urdf[name][field], bad))
+    errors = compare_joints(robot, urdf)
+    assert any(e.startswith(f"{name}: ") and word in e and "non-finite" in e for e in errors), errors
+
+
+# --- malformed per-joint shapes and types: error strings, never raises ------
+
+MALFORMED_CASES = [
+    ("urdf", "rpy", (0.0, 0.0), "urdf rpy"),
+    ("urdf", "rpy", (0.0, 0.0, 0.0, 0.0), "urdf rpy"),
+    ("urdf", "rpy", (), "urdf rpy"),
+    ("urdf", "rpy", (0.0, "a", 0.0), "urdf rpy"),
+    ("urdf", "xyz", (0.0, 0.0), "urdf xyz"),
+    ("urdf", "axis", (0.0, 1.0), "urdf axis"),
+    ("proto", "anchor", (0.0, 0.0), "anchor"),
+    ("proto", "end_translation", (0.0, 0.0), "end_translation"),
+    ("proto", "end_rotation", (1.0, 0.0, 0.0), "end_rotation"),
+    ("proto", "end_rotation", (1.0, 0.0, 0.0, "x"), "end_rotation"),
+    ("proto", "axis", (0.0, 1.0), "axis"),
+    ("urdf", "xyz", (10**400, 0.0, 0.0), "urdf xyz"),
+]
+
+
+@pytest.mark.parametrize("target,field,value,word", MALFORMED_CASES, ids=[f"{c[0]}-{c[1]}-{len(c[2])}" for c in MALFORMED_CASES])
+def test_malformed_shape_reported_not_raised(target, field, value, word):
+    name = "wheel_left_joint"
+    robot, urdf = _synthetic()
+    if target == "proto":
+        robot = _with_proto_field(robot, name, field, value)
+    else:
+        urdf = _with_urdf_field(urdf, name, field, value)
+    errors = compare_joints(robot, urdf)  # must not raise
+    assert any(e.startswith(f"{name}: ") and word in e and "malformed" in e for e in errors), errors
+
+
+@pytest.mark.parametrize("key", ["xyz", "rpy", "axis", "child"])
+def test_missing_urdf_key_reported_not_raised(key):
+    name = "wheel_left_joint"
+    robot, urdf = _synthetic()
+    entry = {k: v for k, v in urdf[name].items() if k != key}
+    errors = compare_joints(robot, {**urdf, name: entry})  # must not raise
+    assert f"{name}: urdf entry missing key {key!r}" in errors, errors
+
+
+def test_non_mapping_urdf_entry_reported_not_raised():
+    name = "wheel_left_joint"
+    robot, urdf = _synthetic()
+    errors = compare_joints(robot, {**urdf, name: "not a dict"})  # must not raise
+    assert f"{name}: urdf entry is not a mapping" in errors, errors
+
+
+def test_malformed_rpy_and_malformed_end_rotation_both_reported():
+    # Each conversion reports its own failure; a bad rpy must not hide a bad end_rotation.
+    name = "wheel_left_joint"
+    robot, urdf = _synthetic()
+    robot = _with_proto_field(robot, name, "end_rotation", (0.0, 0.0, 0.0, 0.5))
+    urdf = _with_urdf_field(urdf, name, "rpy", (0.0, 0.0))
+    errors = compare_joints(robot, urdf)
+    assert any(e.startswith(f"{name}: rotation invalid") for e in errors), errors
+    assert any(e.startswith(f"{name}: urdf rpy malformed") for e in errors), errors
