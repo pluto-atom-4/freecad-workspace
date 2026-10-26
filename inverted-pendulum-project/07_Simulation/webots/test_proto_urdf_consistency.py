@@ -127,7 +127,7 @@ def test_joint_sets_non_vacuous(proto, urdf):
     assert set(proto.joints) == set(urdf) == EXPECTED_JOINTS
 
 
-def test_pendulum_world_axes_are_plus_y(proto, urdf):
+def test_pendulum_parent_frame_axes_are_plus_y(proto, urdf):
     """
     Pendulum axes are +Y in the parent (Base_Link) frame. The check assumes the
     default Robot pose (identity), which is what makes parent frame equal world.
@@ -244,6 +244,28 @@ def test_compare_joints_reports_extra_and_missing_keys():
     missing_urdf = {k: v for k, v in urdf.items() if k != "wheel_left_joint"}
     errors = compare_joints(robot, missing_urdf)
     assert any(e.startswith("wheel_left_joint: ") and "PROTO" in e for e in errors)
+
+
+@pytest.mark.parametrize("joint", sorted(EXPECTED_JOINTS))
+def test_anchor_perturbation_reported_for_every_joint(proto, urdf, joint):
+    # Perturb the parsed real PROTO in memory (frozen dataclasses, no file write).
+    # Covers each joint, so suppressing errors for any one of them fails here.
+    pj = proto.joints[joint]
+    moved = replace(pj, anchor=(pj.anchor[0] + 1e-3, pj.anchor[1], pj.anchor[2]))
+    bad = ProtoRobot(root=proto.root, joints={**proto.joints, joint: moved})
+    errors = compare_joints(bad, urdf)
+    assert any(e.startswith(f"{joint}: ") and "anchor" in e for e in errors), errors
+
+
+def test_compare_joints_malformed_rpy_reports_not_raises():
+    # A 2-element rpy must come back as error strings, never an exception.
+    robot, urdf = _synthetic()
+    entry = {**urdf["wheel_left_joint"], "rpy": (0.0, 0.0)}
+    bad_urdf = {**urdf, "wheel_left_joint": entry}
+    errors = compare_joints(robot, bad_urdf)
+    mine = [e for e in errors if e.startswith("wheel_left_joint: ")]
+    assert any("rotation" in e and "invalid" in e for e in mine), errors
+    assert any("axis" in e and "invalid" in e for e in mine), errors
 
 
 def test_compare_joints_reports_rotation_mismatch():

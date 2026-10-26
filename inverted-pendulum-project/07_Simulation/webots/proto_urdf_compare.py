@@ -487,27 +487,34 @@ def compare_joints(proto: ProtoRobot, urdf: dict, tol: float = 1e-6) -> list[str
             errors.append(
                 f"{name}: end_translation {pj.end_translation} != urdf xyz {uj['xyz']} (max diff {d:.3g})"
             )
-        r_urdf = rpy_to_matrix(uj["rpy"])
-        # Tolerance margin (tol = 1e-6 is accepted, do not loosen silently): the real
-        # pendulum axis residual is 3.27e-7, about 3x under tol. It comes from pi/2
-        # written as 1.570796 (true pi/2 minus that is 3.7e-7) on the URDF side. The
-        # rotation residual is exactly 0 because both sides use the same truncated
-        # angle. A regeneration with coarser rounding could push the axis residual
-        # past tol and flip the result; if so, loosen tol deliberately, not silently.
+        # Tolerance margin (tol = 1e-6 is accepted): the real pendulum axis residual
+        # is 3.27e-7, about 3x under tol. It comes from pi/2 written as 1.570796
+        # (true pi/2 minus that is 3.7e-7) on the URDF side. The rotation residual is
+        # exactly 0 because both sides use the same truncated angle. A regeneration
+        # with coarser rounding could push the axis residual past tol and flip the
+        # result; then loosen tol deliberately.
         try:
-            d = max_abs_diff(axis_angle_to_matrix(pj.end_rotation), r_urdf)
-            if d > tol:
-                errors.append(f"{name}: rotation matrix from end_rotation differs from urdf rpy {uj['rpy']} (max diff {d:.3g})")
+            r_urdf = rpy_to_matrix(uj["rpy"])
         except ValueError as exc:
+            # Malformed rpy: report both checks as invalid, never raise.
             errors.append(f"{name}: rotation invalid: {exc}")
-        try:
-            proto_axis = normalize(pj.axis)
-            world_axis = normalize(mat_vec(r_urdf, uj["axis"]))
-            d = max_abs_diff(proto_axis, world_axis)
-            if d > tol:
-                errors.append(f"{name}: axis {proto_axis} != urdf world axis {world_axis} (max diff {d:.3g})")
-        except ValueError as exc:
             errors.append(f"{name}: axis invalid: {exc}")
+            r_urdf = None
+        if r_urdf is not None:
+            try:
+                d = max_abs_diff(axis_angle_to_matrix(pj.end_rotation), r_urdf)
+                if d > tol:
+                    errors.append(f"{name}: rotation matrix from end_rotation differs from urdf rpy {uj['rpy']} (max diff {d:.3g})")
+            except ValueError as exc:
+                errors.append(f"{name}: rotation invalid: {exc}")
+            try:
+                proto_axis = normalize(pj.axis)
+                parent_axis = normalize(mat_vec(r_urdf, uj["axis"]))
+                d = max_abs_diff(proto_axis, parent_axis)
+                if d > tol:
+                    errors.append(f"{name}: axis {proto_axis} != urdf parent-frame axis {parent_axis} (max diff {d:.3g})")
+            except ValueError as exc:
+                errors.append(f"{name}: axis invalid: {exc}")
         if pj.end_name != uj["child"]:
             errors.append(f"{name}: child {pj.end_name!r} != urdf child {uj['child']!r}")
     return errors
