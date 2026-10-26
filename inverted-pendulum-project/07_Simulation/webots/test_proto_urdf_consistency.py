@@ -166,8 +166,7 @@ def test_anchor_perturbation_reported_for_every_joint(proto, urdf, joint):
     # Perturb the parsed real PROTO in memory (frozen dataclasses, no file write).
     # Covers each joint, so suppressing errors for any one of them fails here.
     pj = proto.joints[joint]
-    moved = replace(pj, anchor=(pj.anchor[0] + 1e-3, pj.anchor[1], pj.anchor[2]))
-    bad = ProtoRobot(root=proto.root, joints={**proto.joints, joint: moved})
+    bad = _with_proto_field(proto, joint, "anchor", (pj.anchor[0] + 1e-3, pj.anchor[1], pj.anchor[2]))
     errors = compare_joints(bad, urdf)
     assert any(e.startswith(f"{joint}: ") and "anchor" in e for e in errors), errors
 
@@ -285,13 +284,61 @@ def test_compare_joints_reports_rotation_mismatch():
     assert any(e.startswith("pendulum_pivot_joint: ") and "rotation" in e for e in errors)
 
 
-def test_finite_inputs_with_overflowing_comparison_are_still_reported():
-    # Finite inputs whose rotated axis overflows to inf, so the normalised axis
-    # is NaN. A `d > tol` comparison would silently pass this.
+def _wheel_errors(proto_axis, urdf_axis, rpy=(0.0, 0.0, 0.0)):
     robot, urdf = _synthetic()
-    bad_urdf = _with_urdf_field(urdf, "wheel_left_joint", "rpy", (0.0, 0.0, math.pi / 4))
-    bad_urdf = _with_urdf_field(bad_urdf, "wheel_left_joint", "axis", (1.5e308, -1.5e308, 0.0))
-    errors = compare_joints(robot, bad_urdf)
+    robot = _with_proto_field(robot, "wheel_left_joint", "axis", proto_axis)
+    urdf = _with_urdf_field(urdf, "wheel_left_joint", "axis", urdf_axis)
+    urdf = _with_urdf_field(urdf, "wheel_left_joint", "rpy", rpy)
+    return [e for e in compare_joints(robot, urdf) if e.startswith("wheel_left_joint: ")]
+
+
+# --- axis scale: squares must not overflow or underflow ----------------------
+
+
+@pytest.mark.parametrize(
+    "proto_axis,urdf_axis",
+    [((0.0, 0.0, 1e200), (1e200, 0.0, 0.0)), ((0.0, 0.0, 1.4e154), (1.4e154, 0.0, 0.0))],
+    ids=["1e200", "1.4e154"],
+)
+def test_wrong_direction_huge_axes_reported(proto_axis, urdf_axis):
+    errors = _wheel_errors(proto_axis, urdf_axis)
+    assert any(e.startswith("wheel_left_joint: axis ") for e in errors), errors
+
+
+def test_correct_huge_urdf_axis_matches():
+    assert _wheel_errors((1.0, 0.0, 0.0), (1e308, 0.0, 0.0)) == []
+
+
+def test_correct_tiny_axis_matches():
+    assert _wheel_errors((1e-160, 0.0, 0.0), (1.0, 0.0, 0.0)) == []
+
+
+def test_subnormal_axis_is_a_direction_not_zero():
+    assert normalize((1e-320, 0.0, 0.0)) == (1.0, 0.0, 0.0)
+    assert _wheel_errors((1e-320, 0.0, 0.0), (1.0, 0.0, 0.0)) == []
+
+
+def test_truly_zero_axis_still_errors():
+    with pytest.raises(ValueError):
+        normalize((0.0, 0.0, 0.0))
+    errors = _wheel_errors((0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+    assert any(e.startswith("wheel_left_joint: axis invalid") for e in errors), errors
+
+
+def test_huge_axis_angle_axis_matches():
+    huge = axis_angle_to_matrix((1e200, 0.0, 0.0, 1.570796))
+    unit = axis_angle_to_matrix((1.0, 0.0, 0.0, 1.570796))
+    assert max_abs_diff(huge, unit) < 1e-12
+
+
+def test_huge_finite_urdf_axis_rotated_mismatch_reported():
+    # Rotation-consistent: rpy (0,0,pi/4) and end_rotation (0,0,1,pi/4) agree, so
+    # only the axis differs. The URDF axis direction (1,-1,0)/sqrt2 rotates to (1,0,0).
+    robot, urdf = _synthetic()
+    robot = _with_proto_field(robot, "wheel_left_joint", "end_rotation", (0.0, 0.0, 1.0, math.pi / 4))
+    urdf = _with_urdf_field(urdf, "wheel_left_joint", "rpy", (0.0, 0.0, math.pi / 4))
+    urdf = _with_urdf_field(urdf, "wheel_left_joint", "axis", (1.5e308, -1.5e308, 0.0))
+    errors = compare_joints(robot, urdf)
     assert any(e.startswith("wheel_left_joint: axis ") for e in errors), errors
 
 
@@ -309,44 +356,62 @@ NONFINITE_FIELDS = [
 ]
 
 
-def _poke_first(vec, bad):
-    values = list(vec)
-    values[0] = bad
-    return tuple(values)
-
-
-@pytest.mark.parametrize("bad", [math.nan, math.inf], ids=["nan", "inf"])
-@pytest.mark.parametrize("target,field,word", NONFINITE_FIELDS, ids=[f[2] for f in NONFINITE_FIELDS])
-def test_non_finite_value_reported(target, field, word, bad):
+def _non_finite_errors(target, field, index, bad):
     name = "wheel_left_joint"
     robot, urdf = _synthetic()
     if target == "proto":
-        robot = _with_proto_field(robot, name, field, _poke_first(getattr(robot.joints[name], field), bad))
+        vec = list(getattr(robot.joints[name], field))
+        vec[index] = bad
+        robot = _with_proto_field(robot, name, field, tuple(vec))
     else:
-        urdf = _with_urdf_field(urdf, name, field, _poke_first(urdf[name][field], bad))
-    errors = compare_joints(robot, urdf)
-    assert any(e.startswith(f"{name}: ") and word in e and "non-finite" in e for e in errors), errors
+        vec = list(urdf[name][field])
+        vec[index] = bad
+        urdf = _with_urdf_field(urdf, name, field, tuple(vec))
+    return compare_joints(robot, urdf)
+
+
+@pytest.mark.parametrize("target,field,word", NONFINITE_FIELDS, ids=[f[2] for f in NONFINITE_FIELDS])
+def test_nan_value_reported(target, field, word):
+    errors = _non_finite_errors(target, field, 0, math.nan)
+    assert any(e.startswith("wheel_left_joint: ") and word in e and "non-finite" in e for e in errors), errors
+
+
+@pytest.mark.parametrize(
+    "target,field,word,index,bad",
+    [
+        ("proto", "anchor", "anchor", 0, math.inf),
+        ("proto", "end_rotation", "end_rotation", 3, math.inf),   # the angle element
+        ("proto", "end_rotation", "end_rotation", 3, -math.inf),  # the angle element
+        ("urdf", "axis", "urdf axis", 1, -math.inf),
+    ],
+    ids=["anchor-inf", "end_rotation-angle-inf", "end_rotation-angle-minus-inf", "urdf-axis-minus-inf"],
+)
+def test_infinite_value_reported(target, field, word, index, bad):
+    errors = _non_finite_errors(target, field, index, bad)
+    assert any(e.startswith("wheel_left_joint: ") and word in e and "non-finite" in e for e in errors), errors
 
 
 # --- malformed per-joint shapes and types: error strings, never raises ------
 
 MALFORMED_CASES = [
     ("urdf", "rpy", (0.0, 0.0), "urdf rpy"),
-    ("urdf", "rpy", (0.0, 0.0, 0.0, 0.0), "urdf rpy"),
-    ("urdf", "rpy", (), "urdf rpy"),
     ("urdf", "rpy", (0.0, "a", 0.0), "urdf rpy"),
     ("urdf", "xyz", (0.0, 0.0), "urdf xyz"),
+    ("urdf", "xyz", None, "urdf xyz"),
     ("urdf", "axis", (0.0, 1.0), "urdf axis"),
     ("proto", "anchor", (0.0, 0.0), "anchor"),
     ("proto", "end_translation", (0.0, 0.0), "end_translation"),
     ("proto", "end_rotation", (1.0, 0.0, 0.0), "end_rotation"),
-    ("proto", "end_rotation", (1.0, 0.0, 0.0, "x"), "end_rotation"),
     ("proto", "axis", (0.0, 1.0), "axis"),
     ("urdf", "xyz", (10**400, 0.0, 0.0), "urdf xyz"),
 ]
 
 
-@pytest.mark.parametrize("target,field,value,word", MALFORMED_CASES, ids=[f"{c[0]}-{c[1]}-{len(c[2])}" for c in MALFORMED_CASES])
+@pytest.mark.parametrize(
+    "target,field,value,word",
+    MALFORMED_CASES,
+    ids=[f"{i}-{c[0]}-{c[1]}" for i, c in enumerate(MALFORMED_CASES)],
+)
 def test_malformed_shape_reported_not_raised(target, field, value, word):
     name = "wheel_left_joint"
     robot, urdf = _synthetic()

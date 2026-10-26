@@ -381,10 +381,23 @@ def rpy_to_matrix(rpy: tuple[float, ...]) -> Matrix3:
 
 
 def normalize(v: tuple[float, ...]) -> tuple[float, ...]:
-    norm = math.sqrt(sum(x * x for x in v))
-    if norm == 0.0:
+    """
+    Unit vector with the direction of v. Scales by the largest component before
+    squaring, so squares neither overflow (|x| > ~1e154) nor underflow (|x| < ~1e-154).
+    Raises ValueError for zero or non-finite input, and never returns a non-unit result.
+    """
+    vals = tuple(float(x) for x in v)
+    if not all(math.isfinite(x) for x in vals):
+        raise ValueError(f"cannot normalize non-finite vector {v!r}")
+    m = max(abs(x) for x in vals)
+    if m == 0.0:
         raise ValueError(f"cannot normalize zero-length vector {v!r}")
-    return tuple(x / norm for x in v)
+    scaled = [x / m for x in vals]
+    norm = math.sqrt(sum(x * x for x in scaled))
+    unit = tuple(x / norm for x in scaled)
+    if abs(math.sqrt(sum(x * x for x in unit)) - 1.0) > 1e-9:  # defensive, should not trigger
+        raise ValueError(f"normalize produced a non-unit vector {unit!r}")
+    return unit
 
 
 def axis_angle_to_matrix(aa: tuple[float, ...]) -> Matrix3:
@@ -561,7 +574,9 @@ def compare_joints(proto: ProtoRobot, urdf: dict, tol: float = 1e-6) -> list[str
         if r_urdf is not None and uaxis is not None and proto_axis is not None:
             try:
                 proto_axis_unit = normalize(proto_axis)
-                parent_axis = normalize(mat_vec(r_urdf, uaxis))
+                # Normalise first: R is linear, so the direction is unchanged and the
+                # rotated components cannot overflow.
+                parent_axis = normalize(mat_vec(r_urdf, normalize(uaxis)))
             except ValueError as exc:
                 errors.append(f"{name}: axis invalid: {exc}")
             else:
