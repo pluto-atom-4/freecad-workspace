@@ -586,3 +586,124 @@ def compare_joints(proto: ProtoRobot, urdf: dict, tol: float = 1e-6) -> list[str
         if "child" in uj and pj.end_name != uj["child"]:
             errors.append(f"{name}: child {pj.end_name!r} != urdf child {uj['child']!r}")
     return errors
+
+
+# ---------------------------------------------------------------------------
+# Per-link mass, centre of mass and inertia (PROTO physics vs URDF <inertial>).
+# ---------------------------------------------------------------------------
+
+LINK_TOL = 1e-6
+# 1e-9, not 1e-6: wheel ixx=2e-6 and iyy=3e-6 differ by exactly 1e-6, so a 1e-6
+# tolerance would let an ixx/iyy swap pass.
+INERTIA_TOL = 1e-9
+INERTIA_KEYS = ("ixx", "iyy", "izz", "ixy", "ixz", "iyz")
+
+
+def _urdf_required(elem, attr: str, where: str) -> str:
+    if elem is None or attr not in elem.attrib:
+        raise ValueError(f"{where}: missing attribute {attr!r}")
+    return elem.attrib[attr]
+
+
+def _urdf_scalar(entry: dict, key: str, name: str, errors: list[str]):
+    """Checked scalar from a URDF link entry (wrapped as a 1-tuple for _checked_vec)."""
+    if key not in entry:
+        errors.append(f"{name}: urdf entry missing key {key!r}")
+        return None
+    return _checked_vec((entry[key],), 1, f"urdf {key}", name, errors)
+
+
+def urdf_links(path: Path) -> dict[str, dict]:
+    """
+    Map link name to {mass, com, rpy, inertia} for each URDF link with an <inertial>.
+    com is the inertial <origin xyz>, rpy its <origin rpy> (default zeros),
+    inertia (ixx, iyy, izz, ixy, ixz, iyz) from the <inertia> attributes.
+    Links without <inertial> are omitted.
+    """
+    root = ET.parse(path).getroot()
+    links: dict[str, dict] = {}
+    for link in root.findall("link"):
+        name = link.get("name")
+        if not name:
+            raise ValueError(f"{path}: <link> without a name")
+        if name in links:
+            raise ValueError(f"{path}: duplicate link name {name!r}")
+        inertial = link.find("inertial")
+        if inertial is None:
+            continue
+        mass_el = inertial.find("mass")
+        inertia_el = inertial.find("inertia")
+        origin = inertial.find("origin")
+        links[name] = {
+            "mass": float(_urdf_required(mass_el, "value", name)),
+            "com": _urdf_vec(origin, "xyz", (0.0, 0.0, 0.0), name),
+            "rpy": _urdf_vec(origin, "rpy", (0.0, 0.0, 0.0), name),
+            "inertia": tuple(float(_urdf_required(inertia_el, k, name)) for k in INERTIA_KEYS),
+        }
+    return links
+
+
+def proto_links(proto: ProtoRobot) -> dict[str, Physics | ProtoJoint]:
+    """Map link name to its physics: Base_Link is the root, each joint's endPoint Solid is keyed by end_name."""
+    links: dict[str, Physics | ProtoJoint] = {"Base_Link": proto.root}
+    for joint in proto.joints.values():
+        if joint.end_name in links:
+            raise ValueError(f"duplicate link name {joint.end_name!r} in PROTO")
+        links[joint.end_name] = joint
+    return links
+
+
+def compare_links(
+    proto: ProtoRobot,
+    urdf_links_: dict,
+    tol: float = LINK_TOL,
+    inertia_tol: float = INERTIA_TOL,
+) -> list[str]:
+    """
+    Compare per-link mass, CoM and inertia. Returns error strings; empty means match.
+    Never raises on malformed per-link data: same contract as compare_joints.
+    """
+    errors: list[str] = []
+    try:
+        plinks = proto_links(proto)
+    except ValueError as exc:
+        return [f"PROTO: {exc}"]
+    proto_names = set(plinks)
+    urdf_names = set(urdf_links_)
+    for name in sorted(proto_names - urdf_names):
+        errors.append(f"{name}: link key only in PROTO, missing from urdf")
+    for name in sorted(urdf_names - proto_names):
+        errors.append(f"{name}: link key only in urdf, missing from PROTO")
+
+    for name in sorted(proto_names & urdf_names):
+        pl = plinks[name]
+        ul = urdf_links_[name]
+        if not isinstance(ul, dict):
+            errors.append(f"{name}: urdf entry is not a mapping")
+            continue
+        pm = _checked_vec((pl.mass,), 1, "PROTO mass", name, errors)
+        um = _urdf_scalar(ul, "mass", name, errors)
+        pc = _checked_vec(pl.com, 3, "PROTO com", name, errors)
+        uc = _urdf_checked(ul, "com", 3, name, errors)
+        pi = _checked_vec(pl.inertia, 6, "PROTO inertia", name, errors)
+        ui = _urdf_checked(ul, "inertia", 6, name, errors)
+        rpy = _urdf_checked(ul, "rpy", 3, name, errors)
+        if rpy is not None and any(abs(x) >= 1e-12 for x in rpy):
+            errors.append(
+                f"{name}: urdf inertial rpy {rpy} is not zero; the comparison "
+                "does not handle a rotated inertia frame"
+            )
+        # NaN-safe comparisons: `not (d <= tol)` also catches a NaN difference.
+        if pm is not None and um is not None:
+            d = max_abs_diff(pm, um)
+            if not (d <= tol):
+                errors.append(f"{name}: mass {pm[0]} != urdf {um[0]} (max diff {d:.3g})")
+        if pc is not None and uc is not None:
+            d = max_abs_diff(pc, uc)
+            if not (d <= tol):
+                errors.append(f"{name}: com {pc} != urdf {uc} (max diff {d:.3g})")
+        if pi is not None and ui is not None:
+            d = max_abs_diff(pi, ui)
+            if not (d <= inertia_tol):
+                errors.append(f"{name}: inertia {pi} != urdf {ui} (max diff {d:.3g})")
+    return errors
