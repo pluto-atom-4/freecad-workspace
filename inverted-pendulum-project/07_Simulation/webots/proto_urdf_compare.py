@@ -593,8 +593,7 @@ def compare_joints(proto: ProtoRobot, urdf: dict, tol: float = 1e-6) -> list[str
 # ---------------------------------------------------------------------------
 
 LINK_TOL = 1e-6
-# 1e-9, not 1e-6: wheel ixx=2e-6 and iyy=3e-6 differ by exactly 1e-6, so a 1e-6
-# tolerance would let an ixx/iyy swap pass.
+# 1e-9: the wheel ixx/iyy gap is 1e-6 to within float rounding (1.0000000000000002e-06), so a 1e-6 tolerance would catch the swap only by rounding; 1e-9 keeps a real margin
 INERTIA_TOL = 1e-9
 INERTIA_KEYS = ("ixx", "iyy", "izz", "ixy", "ixz", "iyz")
 
@@ -603,14 +602,6 @@ def _urdf_required(elem, attr: str, where: str) -> str:
     if elem is None or attr not in elem.attrib:
         raise ValueError(f"{where}: missing attribute {attr!r}")
     return elem.attrib[attr]
-
-
-def _urdf_scalar(entry: dict, key: str, name: str, errors: list[str]):
-    """Checked scalar from a URDF link entry (wrapped as a 1-tuple for _checked_vec)."""
-    if key not in entry:
-        errors.append(f"{name}: urdf entry missing key {key!r}")
-        return None
-    return _checked_vec((entry[key],), 1, f"urdf {key}", name, errors)
 
 
 def urdf_links(path: Path) -> dict[str, dict]:
@@ -661,12 +652,24 @@ def compare_links(
 ) -> list[str]:
     """
     Compare per-link mass, CoM and inertia. Returns error strings; empty means match.
-    Never raises on malformed per-link data: same contract as compare_joints.
+
+    Bad data (per-link values, missing URDF keys, non-mapping entries, wrong-type
+    containers) is returned as error strings, not raised. Bad tol/inertia_tol raise
+    ValueError (caller error). urdf_links() raises ValueError on a malformed URDF file.
     """
+    for label, value in (("tol", tol), ("inertia_tol", inertia_tol)):
+        if not (isinstance(value, (int, float)) and 0 <= value < math.inf):
+            raise ValueError(f"{label} must be a finite number >= 0, got {value!r}")
+    if not isinstance(urdf_links_, dict):
+        return [f"urdf links: expected a mapping, got {type(urdf_links_).__name__}"]
+    if not (isinstance(proto, ProtoRobot) and isinstance(proto.root, Physics)
+            and isinstance(proto.joints, dict)
+            and all(isinstance(j, ProtoJoint) for j in proto.joints.values())):
+        return ["PROTO: malformed ProtoRobot (root must be Physics, joints a dict of ProtoJoint)"]
     errors: list[str] = []
     try:
         plinks = proto_links(proto)
-    except ValueError as exc:
+    except (ValueError, TypeError) as exc:  # TypeError: unhashable end_name
         return [f"PROTO: {exc}"]
     proto_names = set(plinks)
     urdf_names = set(urdf_links_)
@@ -682,17 +685,16 @@ def compare_links(
             errors.append(f"{name}: urdf entry is not a mapping")
             continue
         pm = _checked_vec((pl.mass,), 1, "PROTO mass", name, errors)
-        um = _urdf_scalar(ul, "mass", name, errors)
+        um = _checked_vec((ul["mass"],), 1, "urdf mass", name, errors) if "mass" in ul else None
+        if "mass" not in ul:
+            errors.append(f"{name}: urdf entry missing key 'mass'")
         pc = _checked_vec(pl.com, 3, "PROTO com", name, errors)
         uc = _urdf_checked(ul, "com", 3, name, errors)
         pi = _checked_vec(pl.inertia, 6, "PROTO inertia", name, errors)
         ui = _urdf_checked(ul, "inertia", 6, name, errors)
         rpy = _urdf_checked(ul, "rpy", 3, name, errors)
         if rpy is not None and any(abs(x) >= 1e-12 for x in rpy):
-            errors.append(
-                f"{name}: urdf inertial rpy {rpy} is not zero; the comparison "
-                "does not handle a rotated inertia frame"
-            )
+            errors.append(f"{name}: urdf inertial rpy {rpy} is not zero; rotated inertia frames are not handled")
         # NaN-safe comparisons: `not (d <= tol)` also catches a NaN difference.
         if pm is not None and um is not None:
             d = max_abs_diff(pm, um)
