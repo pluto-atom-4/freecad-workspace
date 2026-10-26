@@ -14,9 +14,14 @@ Usage:
     mamba run -n pendulum-tools python3 -m pytest 07_Simulation/webots/test_proto_urdf_consistency.py -q
 """
 
+import json
 import math
+import os
+import subprocess
 import sys
 from dataclasses import replace
+from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -485,8 +490,8 @@ def _link_pair():
         joints={wheel.name: wheel},
     )
     urdf = {
-        "Base_Link": {"mass": (0.25,), "com": (0.0, 0.0, 0.0), "rpy": (0.0, 0.0, 0.0), "inertia": ZERO_INERTIA},
-        "Wheel_Left": {"mass": (0.03,), "com": (0.0, 0.0, 0.0), "rpy": (0.0, 0.0, 0.0), "inertia": WHEEL_INERTIA},
+        "Base_Link": {"mass": 0.25, "com": (0.0, 0.0, 0.0), "rpy": (0.0, 0.0, 0.0), "inertia": ZERO_INERTIA},
+        "Wheel_Left": {"mass": 0.03, "com": (0.0, 0.0, 0.0), "rpy": (0.0, 0.0, 0.0), "inertia": WHEEL_INERTIA},
     }
     return robot, urdf
 
@@ -570,7 +575,7 @@ def test_wheel_ixx_iyy_swap_caught_by_inertia_tol():
 @pytest.mark.parametrize(
     "target,name,key,value,word",
     [
-        ("urdf", "Wheel_Left", "mass", (math.nan,), "non-finite"),
+        ("urdf", "Wheel_Left", "mass", math.nan, "non-finite"),
         ("proto", "Wheel_Left", "com", (math.inf, 0.0, 0.0), "non-finite"),
         ("urdf", "Base_Link", "inertia", (0.0,) * 5, "malformed"),
         ("urdf", "Wheel_Left", "com", None, "malformed"),
@@ -621,12 +626,18 @@ def test_invalid_tolerance_raises(proto, urdf_link_data, kwargs):
 
 
 @pytest.mark.parametrize(
-    "tol", [math.nan, -1, None, "1e-6", math.inf, True],
-    ids=["nan", "negative", "none", "str", "inf", "bool"],
+    "tol", [math.nan, -1, None, "1e-6", math.inf, True, Decimal("1e-6"), complex(0, 1)],
+    ids=["nan", "negative", "none", "str", "inf", "bool", "decimal", "complex"],
 )
 def test_compare_joints_invalid_tol_raises(proto, urdf, tol):
     with pytest.raises(ValueError):
         compare_joints(proto, urdf, tol=tol)
+
+
+def test_fraction_tolerance_accepted(proto, urdf, urdf_link_data):
+    # numbers.Real covers Fraction (and numpy scalars) without importing numpy here.
+    assert compare_joints(proto, urdf, tol=Fraction(1, 10**6)) == []
+    assert compare_links(proto, urdf_link_data, tol=Fraction(1, 10**6)) == []
 
 
 def test_mixed_key_types_reported_not_raised(proto, urdf_link_data):
@@ -639,3 +650,76 @@ def test_mixed_key_types_reported_not_raised(proto, urdf_link_data):
     assert "Pendulum_Link: link key only in urdf, missing from PROTO" in errors, errors
     assert "None: link key only in urdf, missing from PROTO" in errors, errors
     assert "Q: link key only in urdf, missing from PROTO" in errors, errors
+
+
+def test_urdf_links_mass_is_float(urdf_link_data):
+    mass = urdf_link_data["Wheel_Left"]["mass"]
+    assert isinstance(mass, float) and abs(mass - 0.03) < 1e-9, mass
+
+
+# Probe for the tie case: PROTO end_name 5 (int) and "5" (str) plus URDF keys 5 and "5"
+# land in the same intersection sort, so their error order is what the sort key decides.
+_TIE_PROBE = """
+import json, sys
+from dataclasses import replace
+sys.path.insert(0, sys.argv[1])
+from proto_urdf_compare import PROTO_PATH, ProtoRobot, URDF_PATH, compare_joints, compare_links, parse_proto, urdf_joints, urdf_links
+p = parse_proto(PROTO_PATH.read_text())
+j = dict(p.joints)
+j["wheel_left_joint"] = replace(j["wheel_left_joint"], end_name="5")
+j["pendulum_pivot_joint"] = replace(j["pendulum_pivot_joint"], end_name=5)
+u = urdf_links(URDF_PATH)
+u[5] = dict(u["Wheel_Right"])
+u["5"] = dict(u["Pendulum_Link"])
+links = compare_links(ProtoRobot(root=p.root, joints=j), u)
+# Joint side: PROTO joints keyed 5 and "5" against swapped URDF entries (distinct messages).
+uj = urdf_joints(URDF_PATH)
+pj_joints = {5: j["pendulum_pivot_joint"], "5": j["wheel_left_joint"]}
+uj_swapped = {5: uj["wheel_left_joint"], "5": uj["pendulum_pivot_joint"]}
+joints = compare_joints(ProtoRobot(root=p.root, joints=pj_joints), uj_swapped)
+print(json.dumps({"links": links, "joints": joints}))
+"""
+
+
+def test_mixed_key_tie_order_independent_of_hash_seed():
+    outputs = []
+    for seed in ("0", "1", "2", "3"):
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        run = subprocess.run(
+            [sys.executable, "-c", _TIE_PROBE, str(Path(__file__).resolve().parent)],
+            env=env, capture_output=True, text=True, check=True,
+        )
+        outputs.append(run.stdout)
+    assert len(set(outputs)) == 1, outputs
+    result = json.loads(outputs[0])
+    mass = [e for e in result["links"] if e.startswith("5: mass ")]
+    # Total order: the str "5" (repr "'5'") sorts before the int 5 (repr "5").
+    assert len(mass) == 2 and mass[0].startswith("5: mass 0.03 ") and mass[1].startswith("5: mass 0.175 "), mass
+    anchors = [e for e in result["joints"] if e.startswith("5: anchor ")]
+    assert len(anchors) == 2 and anchors[0].startswith("5: anchor (0.014001"), anchors
+
+
+INERTIA_XML = '<inertia ixx="1" iyy="1" izz="1" ixy="0" ixz="0" iyz="0"/>'
+MALFORMED_INERTIAL = {
+    "com-two-numbers": '<mass value="1"/><origin xyz="1 2"/>' + INERTIA_XML,
+    "missing-mass": '<origin xyz="0 0 0"/>' + INERTIA_XML,
+    "missing-inertia": '<mass value="1"/><origin xyz="0 0 0"/>',
+    "non-numeric-mass": '<mass value="abc"/><origin xyz="0 0 0"/>' + INERTIA_XML,
+}
+
+
+def _urdf_file(tmp_path, inertial):
+    path = tmp_path / "mini.urdf"  # a temp file: the real URDF is never touched
+    path.write_text(f'<robot name="r"><link name="L"><inertial>{inertial}</inertial></link></robot>')
+    return path
+
+
+def test_urdf_links_minimal_valid_file(tmp_path):
+    entry = urdf_links(_urdf_file(tmp_path, '<mass value="2"/><origin xyz="1 2 3"/>' + INERTIA_XML))["L"]
+    assert entry == {"mass": 2.0, "com": (1.0, 2.0, 3.0), "rpy": (0.0, 0.0, 0.0), "inertia": (1.0, 1.0, 1.0, 0.0, 0.0, 0.0)}
+
+
+@pytest.mark.parametrize("inertial", list(MALFORMED_INERTIAL.values()), ids=list(MALFORMED_INERTIAL))
+def test_malformed_urdf_inertial_raises(tmp_path, inertial):
+    with pytest.raises(ValueError):
+        urdf_links(_urdf_file(tmp_path, inertial))

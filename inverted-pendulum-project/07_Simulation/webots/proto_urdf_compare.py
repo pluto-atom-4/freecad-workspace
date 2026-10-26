@@ -26,6 +26,7 @@ Usage (links):
 """
 
 import math
+import numbers
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -513,9 +514,14 @@ def _urdf_checked(entry: dict, key: str, n: int, name: str, errors: list[str]):
 
 
 def _check_tol(label: str, value) -> None:
-    """Tolerances are caller arguments: a bool, non-number, NaN, inf or negative one raises ValueError."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not (0 <= value < math.inf):
+    """Tolerances are caller arguments: a bool, non-Real, NaN, inf or negative one raises ValueError."""
+    if isinstance(value, bool) or not isinstance(value, numbers.Real) or not (0 <= value < math.inf):
         raise ValueError(f"{label} must be a finite number >= 0, got {value!r}")
+
+
+def _sort_key(key) -> tuple[str, str]:
+    """Total order over mixed key types: str(5) == '5' ties on str, so repr breaks the tie."""
+    return (str(key), repr(key))
 
 
 def compare_joints(proto: ProtoRobot, urdf: dict, tol: float = 1e-6) -> list[str]:
@@ -535,12 +541,12 @@ def compare_joints(proto: ProtoRobot, urdf: dict, tol: float = 1e-6) -> list[str
     errors: list[str] = []
     proto_names = set(proto.joints)
     urdf_names = set(urdf)
-    for name in sorted(proto_names - urdf_names, key=str):
+    for name in sorted(proto_names - urdf_names, key=_sort_key):
         errors.append(f"{name}: joint key only in PROTO, missing from urdf")
-    for name in sorted(urdf_names - proto_names, key=str):
+    for name in sorted(urdf_names - proto_names, key=_sort_key):
         errors.append(f"{name}: joint key only in urdf, missing from PROTO")
 
-    for name in sorted(proto_names & urdf_names, key=str):
+    for name in sorted(proto_names & urdf_names, key=_sort_key):
         pj = proto.joints[name]
         uj = urdf[name]
         if not isinstance(uj, dict):
@@ -623,7 +629,7 @@ def _urdf_required(elem, attr: str, where: str) -> str:
 def urdf_links(path: Path) -> dict[str, dict]:
     """
     Map link name to {mass, com, rpy, inertia} for each URDF link with an <inertial>.
-    mass is a 1-tuple, like the other fields. com is the inertial <origin xyz>, rpy its <origin rpy> (default zeros),
+    mass is a float. com is the inertial <origin xyz>, rpy its <origin rpy> (default zeros),
     inertia (ixx, iyy, izz, ixy, ixz, iyz) from the <inertia> attributes.
     Links without <inertial> are omitted.
     """
@@ -642,7 +648,7 @@ def urdf_links(path: Path) -> dict[str, dict]:
         inertia_el = inertial.find("inertia")
         origin = inertial.find("origin")
         links[name] = {
-            "mass": (float(_urdf_required(mass_el, "value", name)),),
+            "mass": float(_urdf_required(mass_el, "value", name)),
             "com": _urdf_vec(origin, "xyz", (0.0, 0.0, 0.0), name),
             "rpy": _urdf_vec(origin, "rpy", (0.0, 0.0, 0.0), name),
             "inertia": tuple(float(_urdf_required(inertia_el, k, name)) for k in INERTIA_KEYS),
@@ -688,19 +694,21 @@ def compare_links(
         return [f"PROTO: {exc}"]
     proto_names = set(plinks)
     urdf_names = set(urdf_links_)
-    for name in sorted(proto_names - urdf_names, key=str):
+    for name in sorted(proto_names - urdf_names, key=_sort_key):
         errors.append(f"{name}: link key only in PROTO, missing from urdf")
-    for name in sorted(urdf_names - proto_names, key=str):
+    for name in sorted(urdf_names - proto_names, key=_sort_key):
         errors.append(f"{name}: link key only in urdf, missing from PROTO")
 
-    for name in sorted(proto_names & urdf_names, key=str):
+    for name in sorted(proto_names & urdf_names, key=_sort_key):
         pl = plinks[name]
         ul = urdf_links_[name]
         if not isinstance(ul, dict):
             errors.append(f"{name}: urdf entry is not a mapping")
             continue
         pm = _checked_vec((pl.mass,), 1, "PROTO mass", name, errors)
-        um = _urdf_checked(ul, "mass", 1, name, errors)
+        um = _checked_vec((ul["mass"],), 1, "urdf mass", name, errors) if "mass" in ul else None
+        if "mass" not in ul:
+            errors.append(f"{name}: urdf entry missing key 'mass'")
         pc = _checked_vec(pl.com, 3, "PROTO com", name, errors)
         uc = _urdf_checked(ul, "com", 3, name, errors)
         pi = _checked_vec(pl.inertia, 6, "PROTO inertia", name, errors)
