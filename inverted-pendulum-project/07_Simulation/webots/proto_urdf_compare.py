@@ -125,6 +125,24 @@ def _block_opener(body: str, pos: int) -> int | None:
     return None
 
 
+def _code_only(text: str) -> str:
+    """Text with '#' comments and string literals removed (quotes kept as '""')."""
+    out: list[str] = []
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if c == '"':
+            i = _skip_string(text, i)
+            out.append('""')
+            continue
+        if c == "#":
+            i = _eol(text, i)
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def top_level_fields(body: str) -> dict[str, str]:
     """
     Map field name to raw value text, depth 0 only.
@@ -270,7 +288,7 @@ def parse_proto(text: str) -> ProtoRobot:
         if node_type != "HingeJoint":
             # Only depth-0 children are read. A joint wrapped in another node
             # would be skipped silently, so refuse it instead.
-            if _HINGE_RE.search(node_body):
+            if _HINGE_RE.search(_code_only(node_body)):
                 raise ValueError(
                     f"HingeJoint nested inside a {node_type} node is not supported; "
                     "joints must be direct children of Robot.children"
@@ -288,7 +306,13 @@ def parse_proto(text: str) -> ProtoRobot:
         if name in joints:
             raise ValueError(f"Duplicate joint name {name!r}")
 
-        sf = top_level_fields(_block_of(_need(hf, "endPoint", "HingeJoint"), f"{name}.endPoint"))
+        solid_body = _block_of(_need(hf, "endPoint", "HingeJoint"), f"{name}.endPoint")
+        if _HINGE_RE.search(_code_only(solid_body)):
+            raise ValueError(
+                f"A HingeJoint is nested inside joint {name!r}'s endPoint; "
+                "chained joints are not supported"
+            )
+        sf = top_level_fields(solid_body)
         where = f"{name}.endPoint"
         end_name = _unquote(_need(sf, "name", where))
         if "translation" in sf:

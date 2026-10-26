@@ -196,7 +196,7 @@ def test_block_body_unmatched_brace_raises_value_error():
 
 
 def test_block_body_rejects_non_block_position():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Expected"):
         block_body("abc", 0)
 
 
@@ -350,3 +350,77 @@ Robot {
 """
     with pytest.raises(ValueError, match="nested inside a Pose"):
         parse_proto(text)
+
+
+# --- wrapper guard (W2/W3/W4): helpers for building a Robot with extra children
+
+ROBOT_TEMPLATE = """PROTO TestRobot [
+  field SFVec3f translation 0 0 0
+]
+{
+Robot {
+  children [
+@@CHILDREN@@
+  ]
+  physics Physics {
+    mass 2
+    centerOfMass [ 0 0 0 ]
+    inertiaMatrix [ 1 1 1 0 0 0 ]
+  }
+}
+}
+"""
+
+JOINT_J1 = """    HingeJoint {
+      jointParameters HingeJointParameters {
+        axis 0 1 0
+        anchor 0 0 0
+      }
+      device [
+        RotationalMotor { name "j1" }
+      ]
+      endPoint Solid {
+        name "l1"
+        physics Physics {
+          mass 0.5
+          centerOfMass [ 0 0 0 ]
+          inertiaMatrix [ 1 1 1 0 0 0 ]
+        }
+      }
+    }"""
+
+
+def robot_with_children(children: str) -> str:
+    return ROBOT_TEMPLATE.replace("@@CHILDREN@@", children)
+
+
+def test_hinge_joint_text_in_string_of_wrapper_does_not_raise():
+    children = 'Pose { children [ Shape {} ] name "HingeJoint {" }\n' + JOINT_J1
+    robot = parse_proto(robot_with_children(children))
+    assert set(robot.joints) == {"j1"}
+
+
+def test_hinge_joint_text_in_comment_of_wrapper_does_not_raise():
+    children = "Pose { # HingeJoint {\n  children [ Shape {} ]\n}\n" + JOINT_J1
+    robot = parse_proto(robot_with_children(children))
+    assert set(robot.joints) == {"j1"}
+
+
+def test_group_with_hinge_joint_text_in_string_does_not_raise():
+    children = 'Group { name "HingeJoint {" }\n' + JOINT_J1
+    robot = parse_proto(robot_with_children(children))
+    assert set(robot.joints) == {"j1"}
+
+
+def test_hinge_joint_nested_in_endpoint_solid_raises_value_error():
+    chained = JOINT_J1.replace(
+        '        name "l1"\n',
+        '        name "l1"\n'
+        "        children [\n"
+        "          HingeJoint {\n"
+        '            device [ RotationalMotor { name "j2" } ]\n'
+        "          }\n"
+        "        ]\n",
+    )
+    with pytest.raises(ValueError, match="nested inside joint 'j1'"):
+        parse_proto(robot_with_children(chained))
