@@ -45,13 +45,14 @@ Usage:
 Exit codes: 0 for input end, duration end, or Ctrl-C once the bridge has armed at least once
 (including one that ends mid re-arm after a device reset; that case prints a "note:" line on
 stderr); 2 for usage error, source error, never armed (not even once), or Ctrl-C before the
-first arm.
+first arm. An unopenable --text-log path also exits 2 (one "--text-log:" error line).
 """
 
 import argparse
 import csv
 import json
 import math
+import os
 import queue
 import socket
 import sys
@@ -68,7 +69,7 @@ if str(_SIM_DIR) not in sys.path:
 from hal.hal import HalFault  # noqa: E402
 from hal.control_core import LqrBalance, PidBalance  # noqa: E402
 
-from dof_frame import Frame, format_frame  # noqa: E402
+from dof_frame import PREFIX, Frame, format_frame  # noqa: E402
 from dof_hal import NOMINAL_DT_S, SerialImuHal  # noqa: E402
 from dof_sources import csv_replay_lines, mock_frame  # noqa: E402
 
@@ -82,9 +83,8 @@ CORES = ("lqr", "pid", "none")
 RECORD_COLUMNS = ("seq", "t_us", "roll", "pitch", "yaw", "wheel_angle", "cmd_rad_s")
 STATUS_PERIOD_S = 1.0
 RECORD_FLUSH_EVERY = 50
-IMU_LINE_PREFIX = "IMU,"          # serial lines with this prefix are frames, every other line is text
+IMU_LINE_PREFIX = PREFIX + ","    # serial lines with this prefix are frames, every other line is text
 TEXT_LINE_MAX = 512               # sanitized output chars per text line
-TEXT_FLUSH_PERIOD_S = 1.0
 TEXT_ECHO_PREFIX = "[fw] "
 _END = "end"
 _ITEM = "item"
@@ -320,20 +320,50 @@ def _still_gen(still_frames, rate_hz, realtime, duration_s):
 
 # ----- firmware text capture (#387) -----------------------------------------------------------
 
-def sanitize_text(s: str) -> str:
-    """Escape non-printable chars as \\xNN (U+FFFD too) and cap the output at TEXT_LINE_MAX chars.
+TEXT_TRUNCATED = "[truncated]"
 
-    Escapes are never split by the cap: output stops before an escape that would not fit.
+
+def _escape_char(c: str) -> str:
+    if c == "\\":
+        return "\\\\"
+    if c.isprintable() and c != "\ufffd":
+        return c
+    cp = ord(c)
+    if cp <= 0xFF:
+        return f"\\x{cp:02x}"
+    if cp <= 0xFFFF:
+        return f"\\u{cp:04x}"
+    return f"\\U{cp:08x}"
+
+
+def sanitize_text(s: str) -> str:
+    """Make one serial text line safe to write or echo. Output is at most TEXT_LINE_MAX chars.
+
+    A literal backslash is written as two backslashes, so text such as \\x41 cannot be read as an
+    escape. Any other char that is not printable, and U+FFFD (a decode-error marker), is written
+    as a fixed-width escape: \\xNN for code points up to 0xFF, \\uNNNN up to 0xFFFF, and
+    \\UNNNNNNNN above that. A line longer than TEXT_LINE_MAX is cut and ends with "[truncated]",
+    which counts inside the cap. The cut never splits an escape or a backslash pair.
     """
-    out = []
-    n = 0
+    pieces = []
+    total = 0
     for c in s:
-        piece = c if (c.isprintable() and c != "\ufffd") else f"\\x{ord(c):02x}"
-        if n + len(piece) > TEXT_LINE_MAX:
+        piece = _escape_char(c)
+        pieces.append(piece)
+        total += len(piece)
+        if total > TEXT_LINE_MAX:
             break
-        out.append(piece)
+    if total <= TEXT_LINE_MAX:
+        return "".join(pieces)
+    budget = TEXT_LINE_MAX - len(TEXT_TRUNCATED)
+    kept = []
+    n = 0
+    for piece in pieces:
+        if n + len(piece) > budget:
+            break
+        kept.append(piece)
         n += len(piece)
-    return "".join(out)
+    return "".join(kept) + TEXT_TRUNCATED
 
 
 def _wall_iso() -> str:
@@ -341,78 +371,110 @@ def _wall_iso() -> str:
 
 
 class TextSink:
-    """Firmware text lines -> optional file (text_log path) and/or stderr (echo).
+    """Firmware text lines -> optional file (path) and/or stderr (echo). Thread-safe.
 
-    write() runs on the serial reader thread and never raises: the first OSError or ValueError
-    disables the sink and prints one warning, and the bridge keeps running. close() is
-    idempotent; writes after close change nothing. A lock makes write and close mutually exclusive.
-    The file is opened with mode "w" (fresh per run). Timestamps are clock() minus the clock()
-    value taken at construction (the bridge start).
+    write() runs on the serial reader thread and never raises for any Exception. The file gets one
+    row per write and is flushed after each row. Per-write flush is cheap at the rate of the BRC
+    tilt_servo source, which prints [imu] every 100 ms (README Step D), and a tail line is never left
+    in the buffer. The file is opened with mode "w", so it is fresh
+    per run.
+
+    The file and the echo are disabled independently. The first exception on the file path (open
+    row write, flush, or the clock/timestamp calls) disables only the file capture. The first
+    exception on the echo path (closed or broken stderr, or no stderr at all) disables only the
+    echo. Each one prints at most one warning, best-effort. A sanitize_text() failure affects both
+    paths, since neither can produce a line, so it prints one warning per path (two lines).
+
+    Timestamps are clock() minus _t0, the clock() value taken at construction. main() builds the sink
+    before WheelPublisher and SerialImuHal, and so before serial_lines() opens the port.
+
+    close() is idempotent, and writes after close are ignored (no file write, no echo). The lock
+    covers only the file write and the state change. The stderr echo runs outside the lock, so a
+    stalled stderr cannot block close(). close() does not wait for an echo that is already past the
+    lock, so that echo can run after close() returns. Accepted limit: a stalled stderr can still
+    stall the reader thread.
     """
 
-    def __init__(self, path=None, *, echo=False, clock=time.monotonic, wall_clock=None, err=None):
+    def __init__(self, path=None, *, echo=False, clock=time.monotonic, wall_clock=None):
         self._clock = clock
         self._wall = _wall_iso if wall_clock is None else wall_clock
         self._echo = echo
-        self._err = err
         self._lock = threading.Lock()
         self._closed = False
-        self._disabled = False
+        self._file_disabled = False
+        self._echo_disabled = False
         self._t0 = clock()
-        self._last_flush = self._t0
-        self._fh = None
-        self.written = 0
-        if path is not None:
-            self._fh = open(path, "w", newline="", encoding="utf-8", errors="replace")
+        self._fh = None if path is None else open(path, "w", newline="", encoding="utf-8")
 
-    def _err_stream(self):
-        return sys.stderr if self._err is None else self._err
-
-    def _disable(self, exc) -> None:
-        if self._disabled:
-            return
-        self._disabled = True
+    @staticmethod
+    def _warn(kind: str, exc) -> None:
         try:
-            print(f"dof_wheel_bridge: warning: firmware text capture disabled after write error: "
-                  f"{exc}", file=self._err_stream(), flush=True)
-        except OSError:
+            sys.stderr.write(f"dof_wheel_bridge: warning: firmware text {kind} disabled after "
+                             f"error: {exc}\n")
+            sys.stderr.flush()
+        except Exception:
             pass
 
+    def _echo_line(self, clean: str) -> None:
+        try:
+            sys.stderr.write(f"{TEXT_ECHO_PREFIX}{clean}\n")   # one write: no mid-line interleave
+            sys.stderr.flush()
+        except Exception as exc:
+            with self._lock:
+                first = not self._echo_disabled
+                self._echo_disabled = True
+            if first:
+                self._warn("echo", exc)
+
     def write(self, line: str) -> None:
+        file_warn = None
+        echo_warn = None
+        echo_text = None
         with self._lock:
-            if self._closed or self._disabled:
+            if self._closed:
                 return
-            now = self._clock()
-            clean = sanitize_text(line)
-            try:
-                if self._fh is not None:
-                    self._fh.write(f"{now - self._t0:.3f}\t{self._wall()}\t{clean}\n")
-                    if now - self._last_flush >= TEXT_FLUSH_PERIOD_S:
-                        self._fh.flush()
-                        self._last_flush = now
-                if self._echo:
-                    print(f"{TEXT_ECHO_PREFIX}{clean}", file=self._err_stream(), flush=True)
-            except (OSError, ValueError) as exc:
-                self._disable(exc)
-                return
-            self.written += 1
+            file_wanted = self._fh is not None and not self._file_disabled
+            echo_wanted = self._echo and not self._echo_disabled
+            clean = None
+            if file_wanted:
+                try:
+                    clean = sanitize_text(line)
+                    self._fh.write(f"{self._clock() - self._t0:.3f}\t{self._wall()}\t{clean}\n")
+                    self._fh.flush()
+                except Exception as exc:
+                    self._file_disabled = True
+                    file_warn = exc
+            if echo_wanted:
+                try:
+                    if clean is None:
+                        clean = sanitize_text(line)
+                    echo_text = clean
+                except Exception as exc:
+                    self._echo_disabled = True
+                    echo_warn = exc
+        if file_warn is not None:
+            self._warn("file", file_warn)
+        if echo_warn is not None:
+            self._warn("echo", echo_warn)
+        if echo_text is not None:
+            self._echo_line(echo_text)
 
     def close(self) -> None:
+        file_warn = None
         with self._lock:
             if self._closed:
                 return
             self._closed = True
             fh, self._fh = self._fh, None
-            if fh is None:
-                return
-            try:
-                fh.flush()
-            except (OSError, ValueError) as exc:
-                self._disable(exc)
-            try:
-                fh.close()
-            except (OSError, ValueError) as exc:
-                self._disable(exc)
+            if fh is not None:
+                try:
+                    fh.close()
+                except Exception as exc:
+                    if not self._file_disabled:
+                        self._file_disabled = True
+                        file_warn = exc
+        if file_warn is not None:
+            self._warn("file", file_warn)
 
 
 def _tee_text(lines, sink):
@@ -424,6 +486,22 @@ def _tee_text(lines, sink):
         if not line.startswith(IMU_LINE_PREFIX):
             sink.write(line)
         yield line
+
+
+def _same_file(first: str, second: str) -> bool:
+    """True when both names are the same file: equal realpaths (symlinks followed), or, when both
+    exist, the same inode (hard links). os.path.realpath does not raise on a symlink loop, unlike
+    Path.resolve() on Python 3.11. Any error (bad path, loop, permission) gives False, and the
+    later open reports the real problem.
+    """
+    try:
+        if os.path.realpath(first) == os.path.realpath(second):
+            return True
+        if os.path.exists(first) and os.path.exists(second):
+            return os.path.samefile(first, second)
+        return False
+    except Exception:
+        return False
 
 
 # ----- bridge loop ----------------------------------------------------------------------------
@@ -610,10 +688,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="complementary filter gyro weight 0..1 (default 0.98)")
     p.add_argument("--text-log", metavar="PATH", default=None,
                    help="save firmware text lines (lines not starting with 'IMU,') with timestamps "
-                        "to PATH, a fresh file per run (needs --port; default off)")
+                        "to PATH, a fresh file per run (needs --port; default off; escaping and "
+                        "[truncated] are in README Step D)")
     p.add_argument("--echo-text", action="store_true",
                    help="print firmware text lines to stderr with a '[fw] ' prefix "
-                        "(needs --port; default off)")
+                        "(needs --port; default off; escaping and [truncated] are in README Step D)")
     return p
 
 
@@ -638,6 +717,9 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
     want_text = args.text_log is not None or args.echo_text
     if want_text and args.port is None:
         parser.error("--text-log and --echo-text need --port (not --mock or --replay)")
+    if args.text_log is not None and args.record is not None \
+            and _same_file(args.text_log, args.record):
+        parser.error("--text-log and --record must not be the same file")
     try:
         gains = load_gains() if args.core != "none" else None
         core, ref = build_core(args.core, gains)
@@ -648,13 +730,18 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
     hal = pub = record_fh = text_sink = None
     progress = {"ever_armed": False}
     try:
-        if args.record is not None:
-            record_fh = open(args.record, "w", newline="", encoding="utf-8")
         if want_text:
-            text_sink = TextSink(args.text_log, echo=args.echo_text, clock=clock)
+            try:
+                text_sink = TextSink(args.text_log, echo=args.echo_text, clock=clock)
+            except (OSError, ValueError) as exc:     # ValueError: e.g. a NUL byte in the path
+                print(f"dof_wheel_bridge: error: --text-log: cannot open {args.text_log!r}: "
+                      f"{getattr(exc, 'strerror', None) or exc}", file=sys.stderr, flush=True)
+                return 2
+        if args.record is not None:
+            # After the text sink: a bad --text-log path exits 2 and leaves an existing record intact.
+            record_fh = open(args.record, "w", newline="", encoding="utf-8")
         pub = WheelPublisher(port=args.udp_port)
-        source_kwargs = {} if text_sink is None else {"text_sink": text_sink}
-        hal = SerialImuHal(_make_source(args, **source_kwargs), reference_pitch_rad=ref,
+        hal = SerialImuHal(_make_source(args, text_sink=text_sink), reference_pitch_rad=ref,
                            alpha=args.alpha, clock=clock)
         result = run_bridge(hal, core, pub, duration_s=args.duration, record=record_fh,
                             clock=clock, sleep=sleep, progress=progress)
@@ -700,10 +787,15 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
             hal.close()
         if pub is not None:
             pub.close()
-        if record_fh is not None:
-            record_fh.close()
-        if text_sink is not None:
-            text_sink.close()
+        try:
+            if record_fh is not None:
+                record_fh.close()
+        except OSError as exc:
+            print(f"dof_wheel_bridge: warning: closing --record failed: {exc}",
+                  file=sys.stderr, flush=True)
+        finally:
+            if text_sink is not None:          # always closed, even if the record close failed
+                text_sink.close()
 
 
 if __name__ == "__main__":
