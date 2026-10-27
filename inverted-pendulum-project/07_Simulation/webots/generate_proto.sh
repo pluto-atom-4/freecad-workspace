@@ -2,7 +2,7 @@
 # Generate InvertedPendulumRobot.proto from prepared URDF via urdf2webots.
 #
 # Pipeline: prepare URDF → validate structure → generate PROTO via urdf2webots →
-# inject shadows + sensors → validate final PROTO
+# inject shadows + sensors → normalize header path (repo-relative) → validate final PROTO
 #
 # Usage: ./generate_proto.sh
 #   (Run from the webots/ directory.)
@@ -218,6 +218,22 @@ if ! mamba run -n pendulum-tools python3 "$SCRIPT_DIR/inject_sensors.py" \
 fi
 
 log "✓ inject_sensors.py completed successfully"
+
+# Step 6: Normalize the "Extracted from:" header to a repo-relative path.
+# urdf2webots writes the absolute --input path, which differs on every checkout and
+# would show a spurious diff in the tracked PROTO. Replace it with a fixed literal.
+# Idempotent: the anchored sed rewrites the same line to the same text on every run.
+HEADER_URDF_REL="inverted-pendulum-project/07_Simulation/webots/.generated/robot_webots.urdf"
+HEADER_MATCHES=$(grep -c '^# Extracted from: ' "$PROTO_OUTPUT" || true)
+if [ "$HEADER_MATCHES" -ne 1 ]; then
+    log "ERROR: expected exactly 1 '# Extracted from: ' header line in PROTO, found $HEADER_MATCHES"
+    echo "FATAL: expected exactly 1 '# Extracted from: ' header line in PROTO, found $HEADER_MATCHES." >&2
+    exit 1
+fi
+
+sed -i.bak -E "s|^# Extracted from: .*\$|# Extracted from: ${HEADER_URDF_REL}|" "$PROTO_OUTPUT" && rm -f "$PROTO_OUTPUT.bak"
+
+log "✓ PROTO header path normalized (repo-relative)"
 
 echo ""
 echo "=================================================================="

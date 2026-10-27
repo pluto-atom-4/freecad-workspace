@@ -2,7 +2,7 @@
 # license: Apache License 2.0
 # license url: http://www.apache.org/licenses/LICENSE-2.0
 # This is a proto file for Webots for the InvertedPendulumRobot
-# Extracted from: /home/pluto-atom-4/freecad-workspace/inverted-pendulum-project/07_Simulation/webots/.generated/robot_webots.urdf
+# Extracted from: inverted-pendulum-project/07_Simulation/webots/.generated/robot_webots.urdf
 
 PROTO InvertedPendulumRobot [
   field  SFVec3f     translation     0 0 0
