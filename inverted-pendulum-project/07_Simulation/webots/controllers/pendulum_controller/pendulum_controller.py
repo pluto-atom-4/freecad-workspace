@@ -11,6 +11,11 @@ Gains are placeholders pending real tuning. PID stability is untested. Webots be
 is unverified.
 
 Loop runs through hal.webots_hal.WebotsHal and hal.control_core.PidBalance.
+
+CONTROLLER_DISABLED=1 (exact value "1" only; any other value, including unset, leaves the
+controller on) sends 0.0/0.0 rad/s to the wheels instead of the PID output. The PID core
+still runs and its output is logged, so while the switch is on the PID_Cmd column is the
+core output, NOT the applied wheel command. Used by tests/test_stage_d_balance.sh (#405).
 """
 
 import sys
@@ -97,7 +102,7 @@ def main():
         log_msg(format_wheel_motors_line(wheel_left_max_vel, wheel_left_max_torque, wheel_right_max_vel, wheel_right_max_torque), always_flush=True)
         log_msg("NOTE: Pivot servo motors (pendulum_pivot_joint/pendulum_pivot_right_joint) intentionally left at Webots default position-hold this stage.", always_flush=True)
         if CONTROLLER_DISABLED:
-            log_msg("CONTROLLER_DISABLED=1: control-off run, wheel commands forced to 0.0 rad/s (PID still computed and logged).", always_flush=True)
+            log_msg("CONTROLLER_DISABLED=1: control-off run, wheel commands forced to 0.0 rad/s. PID_Cmd column is the PID core output, NOT the applied wheel command.", always_flush=True)
 
         control_step_count = 0
         control_fire_times = []

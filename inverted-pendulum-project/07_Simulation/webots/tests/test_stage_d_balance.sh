@@ -15,19 +15,20 @@
 #     equilibrium of ~-0.1086rad, catches regressions like PID sign flips)
 #   - Fail test if tilt exceeds threshold
 #
-# Informational control-off pass (#405): after the normal run passes, the same
-# world is run again with CONTROLLER_DISABLED=1 (wheels commanded to 0 rad/s).
-# Max |pitch|, last log time and wheel drift (t >= 10 s) are printed for both
-# runs. The control-off run does NOT change the exit status, except when the
-# switch itself is broken (wheels still drift, or the run is truncated/crashes).
+# Control-off pass (#405): after the normal run passes, the same world is run
+# again with CONTROLLER_DISABLED=1 (wheels commanded to 0 rad/s). The pitch
+# check cannot tell the two apart (both pass), so the wheel drift is the
+# switch check: the normal run must move the wheels (drift >= 0.002 rad/s, else
+# the switch cannot be tested) and the control-off run must hold them
+# (drift < 0.001 rad/s and < half the normal drift).
 #
 # Usage:
 #   cd inverted-pendulum-project/07_Simulation/webots
 #   bash tests/test_stage_d_balance.sh
 #
 # Exit code:
-#   0 if max |tilt| <= 0.15rad and test PASS (and the control-off switch works)
-#   1 if max |tilt| > 0.15rad or test FAIL
+#   0 if the normal run passes and the control-off switch check passes
+#   1 otherwise
 
 set -euo pipefail
 
@@ -36,17 +37,21 @@ WEBOTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONTROLLER_DIR="$WEBOTS_DIR/controllers/pendulum_controller"
 CONTROLLER_LOG="$CONTROLLER_DIR/controller.log"
 WORLD="$WEBOTS_DIR/worlds/pendulum_robot.wbt"
-TMP_DIR="$(mktemp -d)"
-NORMAL_LOG_COPY="$TMP_DIR/normal_controller.log"
-trap 'rm -rf "$TMP_DIR"' EXIT
 
 # Test parameters
 THRESHOLD_RAD=0.15
-TIMEOUT_S=20          # wall-clock safety cap per Webots run
+# Wall-clock cap per Webots run. Known limitation (pre-existing, not fixed here):
+# this outer timeout kills only run_batch.sh, so a Webots process can outlive it.
+TIMEOUT_S=20
 SIM_TIME_S=30         # simulated time per run (TEST_MAX_SIM_TIME_S)
 MIN_LAST_T_S=25       # a run whose last log row is earlier than this is truncated
-DRIFT_LIMIT=0.01     # rad/s; control-off wheel drift must stay below this
 DRIFT_FROM_T=10       # drift window starts at first row with t >= this
+# Normal-run floor: today's PID drift is 0.2086 rad/s and the expected drift after
+# the setpoint fix (#408) is about 0.0034 rad/s, so 0.002 is below both.
+NORMAL_DRIFT_FLOOR=0.002
+# Disabled wheels hold exactly 0 rad/s; 0.001 leaves float margin. The control-off
+# drift must also be under half the normal drift.
+OFF_DRIFT_MAX=0.001
 
 echo "========================================"
 echo "Stage D: Balance Validation Harness"
@@ -99,90 +104,22 @@ if [ ! -f "$CONTROLLER_LOG" ]; then
     exit 1
 fi
 
-# Parse IMU_Pitch column (3rd field) from data lines in controller.log.
-# Data lines start with a numeric timestamp; skip header/status lines.
-# Compute maximum absolute tilt angle across all cycles.
-
-# Use awk to:
-#   1. Filter lines where first field is numeric (matches timestamp pattern)
-#   2. Extract IMU_Pitch (3rd field) from each data line
-#   3. Track maximum absolute value across all samples
-max_tilt=$(awk '
-  $1 ~ /^[0-9]+\.?[0-9]*$/ {
-    pitch = $3
-    abs_pitch = (pitch < 0) ? -pitch : pitch
-    if (abs_pitch > max) {
-      max = abs_pitch
-    }
-  }
-  END {
-    if (max == "") {
-      # No valid data lines found
-      print "NONE"
-    } else {
-      printf "%.4f\n", max
-    }
-  }
-' "$CONTROLLER_LOG")
-
-if [ "$max_tilt" = "NONE" ]; then
-    echo "FAIL: No valid IMU data rows found in controller log"
-    echo "Last 20 lines of log:"
-    tail -n 20 "$CONTROLLER_LOG"
-    exit 1
-fi
-
-# Last logged simulation time (first field of the last data row).
-last_t=$(awk '$1 ~ /^[0-9]+\.?[0-9]*$/ { t = $1 } END { if (t == "") print "NONE"; else printf "%.3f\n", t }' "$CONTROLLER_LOG")
-
-echo "IMU data parsed from controller.log"
-echo "Max |IMU_Pitch|: ${max_tilt}rad"
-echo "Last logged time: ${last_t}s"
-echo "Threshold: ${THRESHOLD_RAD}rad"
-echo ""
-
-# Compare using floating point arithmetic
-pass=$(awk -v tilt="$max_tilt" -v threshold="$THRESHOLD_RAD" 'BEGIN { print (tilt <= threshold) ? 1 : 0 }')
-
-if [ "$pass" -ne 1 ]; then
-    echo "FAIL: Max |tilt| ${max_tilt}rad exceeds ${THRESHOLD_RAD}rad threshold"
-    echo ""
-    echo "Last 20 lines of log:"
-    tail -n 20 "$CONTROLLER_LOG"
-    exit 1
-fi
-
-# Truncation guard: the normal run must reach the full simulated time.
-if [ "$last_t" = "NONE" ] || [ "$(awk -v t="$last_t" -v m="$MIN_LAST_T_S" 'BEGIN { print (t >= m) ? 1 : 0 }')" -ne 1 ]; then
-    echo "FAIL: Normal run truncated: last logged time ${last_t}s < ${MIN_LAST_T_S}s"
-    echo "Last 20 lines of log:"
-    tail -n 20 "$CONTROLLER_LOG"
-    exit 1
-fi
-
-echo "PASS: Max |tilt| ${max_tilt}rad <= ${THRESHOLD_RAD}rad threshold"
-echo ""
-echo "Robot remained balanced throughout the ${SIM_TIME_S}s simulated run."
-echo ""
-
-# ---------------------------------------------------------------------------
-# Informational control-off pass (#405). Does not affect the exit status above.
-# ---------------------------------------------------------------------------
-
-# Keep the normal run's log: the control-off run overwrites controller.log.
-cp "$CONTROLLER_LOG" "$NORMAL_LOG_COPY"
-
-# Print per-run metrics from a controller log:
-#   max |pitch|, last logged time, WheelL drift rate, WheelR drift rate (rad/s),
-#   and the max absolute drift of the two wheels. Drift uses rows with t >= DRIFT_FROM_T.
-# Output: "max_pitch last_t drift_L drift_R drift_max" or "NONE" if no usable rows.
+# Per-run metrics from a controller log. A data row is a line whose first field is
+# a number (or nan/inf). Header and status lines are ignored. A data row is used only
+# when fields 1, 3, 8 and 9 (time, pitch, WheelL, WheelR) are plain decimal numbers;
+# any other data row is counted as malformed and makes the test FAIL.
+#   max |pitch|, last logged time, drift_max (larger absolute WheelL/WheelR rate over
+#   rows with t >= DRIFT_FROM_T), malformed row count, usable row count.
+# Output: "max_pitch last_t drift_max bad_rows n_rows", or "NONE ..." with no usable rows.
 run_metrics() {
     awk -v from_t="$DRIFT_FROM_T" '
-      $1 ~ /^[0-9]+\.?[0-9]*$/ {
+      function isnum(s) { return s ~ /^[-+]?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?$/ }
+      $1 ~ /^[-+]?[0-9]/ || tolower($1) ~ /^[-+]?(nan|inf)$/ {
+        if (!(isnum($1) && isnum($3) && isnum($8) && isnum($9))) { bad++; next }
         n++
         t = $1 + 0
         p = ($3 < 0) ? -$3 : $3
-        if (p > max_p) max_p = p
+        if (!have_p || p > max_p) { max_p = p; have_p = 1 }
         last_t = t
         last_l = $8 + 0
         last_r = $9 + 0
@@ -192,19 +129,76 @@ run_metrics() {
         }
       }
       END {
-        if (n == 0 || !have_w || last_t == w_t) { print "NONE"; exit }
+        if (n == 0 || !have_w || last_t == w_t) { print "NONE NONE NONE " bad+0 " " n+0; exit }
         dl = (last_l - w_l) / (last_t - w_t)
         dr = (last_r - w_r) / (last_t - w_t)
         dm = (dl < 0 ? -dl : dl)
         if ((dr < 0 ? -dr : dr) > dm) dm = (dr < 0 ? -dr : dr)
-        printf "%.4f %.3f %.5f %.5f %.5f\n", max_p, last_t, dl, dr, dm
+        printf "%.4f %.3f %.5f %d %d\n", max_p, last_t, dm, bad+0, n
       }
     ' "$1"
 }
 
-normal_metrics=$(run_metrics "$NORMAL_LOG_COPY")
+# Succeeds when the last logged time $1 reaches MIN_LAST_T_S (guards truncated runs).
+reached_min_t() {
+    [ "$(awk -v t="$1" -v m="$MIN_LAST_T_S" 'BEGIN { print (t >= m) ? 1 : 0 }')" -eq 1 ]
+}
 
-# Control-off run: same command, CONTROLLER_DISABLED=1.
+# Sets PITCH_MAX, LAST_T, DRIFT_MAX from controller log $2 (label $1). Exits 1 when the
+# log is unreadable, has no usable rows, or has any malformed data row.
+load_stats() {
+    local label="$1" file="$2" out
+    out=$(run_metrics "$file") || { echo "FAIL: ${label} controller log unreadable: $file"; exit 1; }
+    read -r PITCH_MAX LAST_T DRIFT_MAX BAD_ROWS N_ROWS <<< "$out" || true
+    if [ -z "$PITCH_MAX" ] || [ -z "$LAST_T" ] || [ -z "$DRIFT_MAX" ] || [ -z "$BAD_ROWS" ] || [ -z "$N_ROWS" ] || [ "$PITCH_MAX" = NONE ]; then
+        echo "FAIL: ${label} controller log has no usable data rows (drift window t >= ${DRIFT_FROM_T}s)"
+        exit 1
+    fi
+    if [ "$BAD_ROWS" -ne 0 ]; then
+        echo "FAIL: ${label} controller log has ${BAD_ROWS} malformed data row(s) (non-numeric or nan/inf field)"
+        exit 1
+    fi
+}
+
+load_stats normal "$CONTROLLER_LOG"
+NORM_PITCH=$PITCH_MAX
+NORM_T=$LAST_T
+NORM_DRIFT=$DRIFT_MAX
+
+echo "IMU data parsed from controller.log"
+echo "Max |IMU_Pitch|: ${NORM_PITCH}rad"
+echo "Last logged time: ${NORM_T}s"
+echo "Threshold: ${THRESHOLD_RAD}rad"
+echo ""
+
+# Compare using floating point arithmetic
+pass=$(awk -v tilt="$NORM_PITCH" -v threshold="$THRESHOLD_RAD" 'BEGIN { print (tilt <= threshold) ? 1 : 0 }')
+
+if [ "$pass" -ne 1 ]; then
+    echo "FAIL: Max |tilt| ${NORM_PITCH}rad exceeds ${THRESHOLD_RAD}rad threshold"
+    echo ""
+    echo "Last 20 lines of log:"
+    tail -n 20 "$CONTROLLER_LOG"
+    exit 1
+fi
+
+# The normal run must reach the full simulated time.
+if ! reached_min_t "$NORM_T"; then
+    echo "FAIL: Normal run truncated: last logged time ${NORM_T}s < ${MIN_LAST_T_S}s"
+    echo "Last 20 lines of log:"
+    tail -n 20 "$CONTROLLER_LOG"
+    exit 1
+fi
+
+echo "PASS: Max |tilt| ${NORM_PITCH}rad <= ${THRESHOLD_RAD}rad threshold"
+echo ""
+echo "Robot remained balanced through t=${NORM_T}s (measured last logged time)."
+echo ""
+
+# ---------------------------------------------------------------------------
+# Control-off pass (#405). Runs after the normal result above is final.
+# ---------------------------------------------------------------------------
+
 rm -f "$CONTROLLER_LOG"
 echo "Running Webots control-off pass (CONTROLLER_DISABLED=1)..."
 set +e
@@ -222,47 +216,42 @@ if [ ! -f "$CONTROLLER_LOG" ]; then
     exit 1
 fi
 
-off_metrics=$(run_metrics "$CONTROLLER_LOG")
-cp "$CONTROLLER_LOG" "$TMP_DIR/off_controller.log"
+load_stats control-off "$CONTROLLER_LOG"
+OFF_PITCH=$PITCH_MAX
+OFF_T=$LAST_T
+OFF_DRIFT=$DRIFT_MAX
 
 echo ""
-echo "Control-off comparison (t >= ${DRIFT_FROM_T}s drift window):"
-echo "  run          max|pitch|(rad)  last_t(s)  driftL(rad/s)  driftR(rad/s)  drift_max(rad/s)"
-if [ "$normal_metrics" = "NONE" ]; then
-    echo "  normal       NONE (no usable rows)"
-else
-    read -r n_p n_t n_dl n_dr n_dm <<< "$normal_metrics"
-    echo "  normal       ${n_p}           ${n_t}      ${n_dl}       ${n_dr}       ${n_dm}"
-fi
-if [ "$off_metrics" = "NONE" ]; then
-    echo "  control-off  NONE (no usable rows)"
-    echo "FAIL: control-off run has no usable data rows (switch check cannot be evaluated)"
+echo "Control-off comparison (drift window t >= ${DRIFT_FROM_T}s):"
+echo "  run          max|pitch|(rad)  last_t(s)  drift_max(rad/s)"
+echo "  normal       ${NORM_PITCH}           ${NORM_T}      ${NORM_DRIFT}"
+echo "  control-off  ${OFF_PITCH}           ${OFF_T}      ${OFF_DRIFT}"
+echo ""
+
+# Floor: the normal run must move the wheels, or the switch cannot be tested.
+if [ "$(awk -v d="$NORM_DRIFT" -v f="$NORMAL_DRIFT_FLOOR" 'BEGIN { print (d >= f) ? 1 : 0 }')" -ne 1 ]; then
+    echo "FAIL: normal run's wheels did not move (drift ${NORM_DRIFT} rad/s < ${NORMAL_DRIFT_FLOOR}); the switch cannot be tested"
     exit 1
 fi
-read -r o_p o_t o_dl o_dr o_dm <<< "$off_metrics"
-echo "  control-off  ${o_p}           ${o_t}      ${o_dl}       ${o_dr}       ${o_dm}"
-echo ""
 
-# Switch check: with wheels commanded to 0, the wheel angles must not drift.
-switch_ok=$(awk -v d="$o_dm" -v lim="$DRIFT_LIMIT" 'BEGIN { a = (d < 0 ? -d : d); print (a < lim) ? 1 : 0 }')
+# Switch check: disabled wheels must hold, i.e. drift < OFF_DRIFT_MAX and < half the normal drift.
+switch_ok=$(awk -v o="$OFF_DRIFT" -v n="$NORM_DRIFT" -v lim="$OFF_DRIFT_MAX" 'BEGIN { print (o < lim && o < n / 2) ? 1 : 0 }')
 if [ "$switch_ok" -ne 1 ]; then
-    echo "FAIL: CONTROLLER_DISABLED=1 switch not effective: wheel drift ${o_dm} rad/s >= ${DRIFT_LIMIT} rad/s"
+    echo "FAIL: CONTROLLER_DISABLED=1 switch not effective: control-off drift ${OFF_DRIFT} rad/s (need < ${OFF_DRIFT_MAX} and < half of normal ${NORM_DRIFT})"
     exit 1
 fi
-echo "Switch check: control-off wheel drift ${o_dm} rad/s < ${DRIFT_LIMIT} rad/s (switch works)"
+echo "Switch check: control-off drift ${OFF_DRIFT} rad/s < ${OFF_DRIFT_MAX} and < half of normal ${NORM_DRIFT} rad/s (switch works)"
 
-# Truncation guard for the control-off run.
-if [ "$(awk -v t="$o_t" -v m="$MIN_LAST_T_S" 'BEGIN { print (t >= m) ? 1 : 0 }')" -ne 1 ]; then
-    echo "FAIL: control-off run truncated: last logged time ${o_t}s < ${MIN_LAST_T_S}s"
+if ! reached_min_t "$OFF_T"; then
+    echo "FAIL: control-off run truncated: last logged time ${OFF_T}s < ${MIN_LAST_T_S}s"
     exit 1
 fi
 
-# Informational: does the pitch check also pass with the controller off?
-off_pass=$(awk -v tilt="$o_p" -v threshold="$THRESHOLD_RAD" 'BEGIN { print (tilt <= threshold) ? 1 : 0 }')
-if [ "$off_pass" -eq 1 ]; then
+# Informational: the pitch check does not separate the two runs.
+if [ "$(awk -v tilt="$OFF_PITCH" -v threshold="$THRESHOLD_RAD" 'BEGIN { print (tilt <= threshold) ? 1 : 0 }')" -eq 1 ]; then
     echo "NOTE: pitch check is blind to the controller (control-off run passes too)"
 fi
 
 echo ""
-echo "Stage D normal run: PASS (control-off pass is informational)."
+echo "Stage D normal run: PASS (control-off switch check passed)."
 exit 0
