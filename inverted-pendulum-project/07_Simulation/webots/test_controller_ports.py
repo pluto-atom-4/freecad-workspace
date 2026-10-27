@@ -1066,3 +1066,46 @@ class TestPidNumpyFree:
 
         rc = mod.main()
         assert rc == 0
+
+
+class TestPidSetpoint:
+    """PID_SETPOINT_RAD (#408): unset = old behaviour; set = error from pitch - setpoint."""
+
+    @staticmethod
+    def _data_rows(tmp_path):
+        lines = (tmp_path / "controller.log").read_text().splitlines()
+        return [ln.split() for ln in lines if ln and ln[0].isdigit()]
+
+    def test_unset_keeps_error_equal_to_negative_pitch(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("PID_SETPOINT_RAD", raising=False)
+        devices = make_devices(pitch=-0.1086, gyro_y=0.0)
+        robot = StubRobot(devices, basic_ms=16.0, max_steps=3)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        assert mod.main() == 0
+        assert "PID_SETPOINT_RAD" not in (tmp_path / "controller.log").read_text()
+        row = self._data_rows(tmp_path)[0]
+        assert float(row[11]) == pytest.approx(0.1086, abs=1e-4)  # error = -pitch
+
+    def test_setpoint_shifts_error_and_logs_real_pitch(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("PID_SETPOINT_RAD", "-0.1086")
+        devices = make_devices(pitch=-0.1086, gyro_y=0.0)
+        robot = StubRobot(devices, basic_ms=16.0, max_steps=3)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        assert mod.main() == 0
+        assert "PID_SETPOINT_RAD=-0.1086rad" in (tmp_path / "controller.log").read_text()
+        row = self._data_rows(tmp_path)[0]
+        assert float(row[2]) == pytest.approx(-0.1086, abs=1e-4)  # IMU_Pitch is the REAL pitch
+        assert float(row[11]) == pytest.approx(0.0, abs=1e-4)      # error = -(pitch - setpoint) = 0
+
+    @pytest.mark.parametrize("bad", ["abc", "", "nan", "inf", "-inf", "1e999", "1_0"])
+    def test_invalid_setpoint_exits_1_at_startup(self, monkeypatch, tmp_path, bad):
+        monkeypatch.setenv("PID_SETPOINT_RAD", bad)
+        devices = make_devices(pitch=0.0, gyro_y=0.0)
+        robot = StubRobot(devices, basic_ms=16.0, max_steps=3)
+        mod = load_controller(monkeypatch, tmp_path, robot, env={"SENSOR_LOG_THROTTLE": "1"}, path=PID_FILE)
+
+        assert mod.main() == 1
+        assert robot.step_calls == 0
+        assert "ERROR: PID_SETPOINT_RAD" in (tmp_path / "controller.log").read_text()

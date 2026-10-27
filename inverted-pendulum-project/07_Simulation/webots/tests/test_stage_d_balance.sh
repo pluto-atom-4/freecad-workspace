@@ -20,20 +20,31 @@
 # row FAILs the test. A sensor READING_ERROR row FAILs with its own message. CRLF
 # logs are accepted (CR stripped).
 #
+# Setpoint (#408): the normal run exports PID_SETPOINT_RAD=-0.1086 (the rest pitch,
+# which is the LQR theta_ref). The test always uses this constant and IGNORES any
+# PID_SETPOINT_RAD in the operator's environment (a note is printed if one is set).
+# Drift gate (#408): the normal run's wheel drift (t >= 10 s) must be <= 0.05 rad/s.
+# Without the setpoint the PID drifts the wheels at ~0.21 rad/s, so this FAILs on
+# that. This is a SETPOINT-CORRECTNESS gate, NOT proof of balancing: a passive model
+# with wheels held still passes the pitch check, and this gate only checks that the
+# controller is not driving the wheels at a steady rate.
+#
 # Control-off pass (#405): after the normal run passes, the same world is run
 # again with CONTROLLER_DISABLED=1 (wheels commanded to 0 rad/s). The pitch
 # check cannot tell the two apart (both pass), so the wheel drift is the
 # switch check: the normal run must move the wheels (drift >= 0.002 rad/s, else
 # the switch cannot be tested) and the control-off run must hold them
-# (drift < 0.001 rad/s and < half the normal drift).
+# (drift < 0.001 rad/s and < half the normal drift). The control-off run gets the
+# same PID_SETPOINT_RAD value; it is irrelevant there because the wheels are disabled.
 #
 # Usage:
 #   cd inverted-pendulum-project/07_Simulation/webots
 #   bash tests/test_stage_d_balance.sh
 #
 # Exit code:
-#   0 if the normal run passes and the control-off switch check passes
-#   1 otherwise
+#   0 if the normal run passes (pitch, truncation, drift gate) and the control-off
+#     switch check passes
+#   1 otherwise (including a controller that refuses to start on a bad PID_SETPOINT_RAD)
 
 set -euo pipefail
 
@@ -45,6 +56,11 @@ WORLD="$WEBOTS_DIR/worlds/pendulum_robot.wbt"
 
 # Test parameters
 THRESHOLD_RAD=0.15
+# PID setpoint for both runs (#408). -0.1086 = rest pitch = LQR theta_ref. Fixed here:
+# an operator PID_SETPOINT_RAD in the environment is ignored (see note below).
+PID_SETPOINT_RAD_TEST=-0.1086
+# Drift gate (#408): normal-run wheel drift must be <= this (rad/s).
+DRIFT_GATE_MAX=0.05
 # Wall-clock cap per Webots run. Known limitation (pre-existing, not fixed here):
 # this outer timeout kills only run_batch.sh, so a Webots process can outlive it.
 TIMEOUT_S=20
@@ -61,7 +77,7 @@ OFF_DRIFT_MAX=0.001
 echo "========================================"
 echo "Stage D: Balance Validation Harness"
 echo "========================================"
-echo "Test: Verify robot stays balanced (max |tilt| <= ${THRESHOLD_RAD}rad)"
+echo "Test: max |tilt| <= ${THRESHOLD_RAD}rad; normal-run wheel drift <= ${DRIFT_GATE_MAX}rad/s (setpoint gate, #408); control-off switch (#405)"
 echo "Sim time: ${SIM_TIME_S}s (TEST_MAX_SIM_TIME_S); wall-clock cap: ${TIMEOUT_S}s"
 echo "World: $WORLD"
 echo "Controller log: $CONTROLLER_LOG"
@@ -78,6 +94,10 @@ if [ -f "$CONTROLLER_LOG" ]; then
     rm -f "$CONTROLLER_LOG"
 fi
 
+if [ -n "${PID_SETPOINT_RAD+x}" ]; then
+    echo "NOTE: PID_SETPOINT_RAD=${PID_SETPOINT_RAD} is set in the environment and IGNORED; the test uses ${PID_SETPOINT_RAD_TEST}."
+fi
+
 # Run the simulation (batch mode, headless)
 echo "Running Webots (batch, headless)..."
 
@@ -85,9 +105,10 @@ echo "Running Webots (batch, headless)..."
 # We allow both 0 and 124 to be acceptable; 124 means the wall-clock cap was hit.
 # Any other non-zero code is a real failure.
 # CONTROLLER_DISABLED=0 is passed explicitly so an exported value cannot disable the normal run.
+# PID_SETPOINT_RAD is passed explicitly (#408) so the test value wins over the environment.
 export TEST_MAX_SIM_TIME_S=$SIM_TIME_S
 set +e
-(cd "$WEBOTS_DIR" && CONTROLLER_DISABLED=0 timeout "${TIMEOUT_S}s" ./run_batch.sh "$WORLD" > /dev/null 2>&1)
+(cd "$WEBOTS_DIR" && CONTROLLER_DISABLED=0 PID_SETPOINT_RAD="$PID_SETPOINT_RAD_TEST" timeout "${TIMEOUT_S}s" ./run_batch.sh "$WORLD" > /dev/null 2>&1)
 rc=$?
 set -e
 
@@ -232,6 +253,19 @@ echo ""
 echo "Robot remained balanced through t=${NORM_T}s (measured last logged time)."
 echo ""
 
+# Drift gate (#408): setpoint-correctness check, NOT proof of balancing.
+cmp_expr "a <= b" "$NORM_DRIFT" "$DRIFT_GATE_MAX"
+if [ "$CMP" -ne 1 ]; then
+    echo "FAIL: drift gate: normal-run wheel drift ${NORM_DRIFT} rad/s > ${DRIFT_GATE_MAX} rad/s (t >= ${DRIFT_FROM_T}s, PID_SETPOINT_RAD=${PID_SETPOINT_RAD_TEST})."
+    echo "      The controller is driving the wheels at a steady rate, so it is not holding the rest-pitch setpoint."
+    echo "      This is a setpoint-correctness gate, NOT proof of balancing."
+    echo "Last 20 lines of log:"
+    tail -n 20 "$CONTROLLER_LOG"
+    exit 1
+fi
+echo "PASS: drift gate: normal-run wheel drift ${NORM_DRIFT} rad/s <= ${DRIFT_GATE_MAX} rad/s (setpoint-correctness gate, NOT proof of balancing)"
+echo ""
+
 # ---------------------------------------------------------------------------
 # Control-off pass (#405). Runs after the normal result above is final.
 # ---------------------------------------------------------------------------
@@ -239,7 +273,7 @@ echo ""
 rm -f "$CONTROLLER_LOG"
 echo "Running Webots control-off pass (CONTROLLER_DISABLED=1)..."
 set +e
-(cd "$WEBOTS_DIR" && CONTROLLER_DISABLED=1 timeout "${TIMEOUT_S}s" ./run_batch.sh "$WORLD" > /dev/null 2>&1)
+(cd "$WEBOTS_DIR" && CONTROLLER_DISABLED=1 PID_SETPOINT_RAD="$PID_SETPOINT_RAD_TEST" timeout "${TIMEOUT_S}s" ./run_batch.sh "$WORLD" > /dev/null 2>&1)
 off_rc=$?
 set -e
 sleep 1
