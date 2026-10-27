@@ -67,8 +67,9 @@ MOVE_EXCURSION_MIN=0.01
 DRIFT_GATE_MAX=0.05
 OFF_EXCURSION_MAX=0.001
 OFF_DRIFT_MAX=0.001
-# Wall-clock cap per Webots run. run_batch.sh runs Webots in its own process group and sweeps it
-# on TERM/INT/EXIT (#415), so this timeout's TERM does not leave Webots behind; SIGKILL of run_batch.sh skips that cleanup.
+# Wall-clock cap per Webots run. run_batch.sh sweeps its Webots process group on
+# TERM/INT/EXIT (#415), so this timeout's TERM should stop Webots too (see the run_batch.sh
+# header for caveats). A SIGKILL of run_batch.sh skips the sweep. Not checked against real Webots.
 TIMEOUT_S=20
 SIM_TIME_S=30         # simulated time per run (TEST_MAX_SIM_TIME_S)
 MIN_LAST_T_S=25       # a run whose last log row is earlier than this is truncated

@@ -50,7 +50,9 @@ LQR_CONTROLLER="$CONTROLLER_DIR/lqr_controller.py"
 
 # Test parameters
 THRESHOLD_RAD=0.15
-TIMEOUT_S=20                 # WALL-CLOCK timeout (real s). Outer TERM -> run_batch.sh trap sweeps the Webots process group (#415); SIGKILL of run_batch.sh would not.
+# WALL-CLOCK timeout (real s). Outer TERM should make run_batch.sh's trap sweep the Webots process
+# group (#415); SIGKILL of run_batch.sh would not sweep it.
+TIMEOUT_S=20                 # WALL-CLOCK timeout (real s)
 SIM_LIMIT_S=30               # SIMULATED-time limit passed to the controller (TEST_MAX_SIM_TIME_S)
 DRIFT_WINDOW_START_S=10      # simulated time from which wheel drift is measured
 LAST_TIME_MIN_S=25           # both runs must log up to at least this simulated time
