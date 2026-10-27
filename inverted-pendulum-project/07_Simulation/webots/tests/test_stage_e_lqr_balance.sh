@@ -15,8 +15,9 @@
 # Part 3: Informational control-off run (issue #406, follows #404 S2).
 # Runs the same world again with CONTROLLER_DISABLED=1 (the LQR core still runs
 # and logs, but both wheel commands are forced to 0.0 rad/s). The switch check
-# asserts that it works: the max wheel drift over both wheels for t >= 10 s must
-# be < 0.001 rad/s (and under half the normal drift when that is >= 0.002), and
+# asserts that it works: the normal run's wheels must move (max wheel drift over
+# both wheels >= 0.002 rad/s for t >= 10 s, else the switch cannot be tested), and
+# the control-off drift must be < 0.001 rad/s (and under half the normal drift), and
 # the run must reach LAST_TIME_MIN_S of simulated time before the wall-clock
 # timeout. If the control-off run also passes the pitch check, a NOTE says the
 # pitch check cannot tell control from no control.
@@ -304,6 +305,15 @@ else
 fi
 echo ""
 
+# The switch is only testable if the normal run's wheels move (the LQR drifts ~0.0042 rad/s).
+# A controller that never writes to the wheels would otherwise pass the drift bounds vacuously.
+WHEELS_MOVED=1
+if [ "$normal_drift" = "NONE" ] || ! num_test "$normal_drift" ">=" "$DRIFT_NORMAL_MIN_RAD_S"; then
+    echo "FAIL: normal run's wheels did not move; the switch cannot be tested"
+    echo "  normal drift ${normal_drift} rad/s, floor ${DRIFT_NORMAL_MIN_RAD_S} rad/s"
+    WHEELS_MOVED=0
+fi
+
 # --- Part 3: Informational control-off run (CONTROLLER_DISABLED=1) ---
 echo "--- Control-off run: CONTROLLER_DISABLED=1 ---"
 run_webots_pass 1
@@ -319,7 +329,7 @@ off_fr=$STAT_FR
 echo "Control-off run: max |IMU_Pitch| $(show "$off_max" rad), wheel drift $(show "$off_drift" ' rad/s') (t >= ${DRIFT_WINDOW_START_S}s), last log t $(show "$off_last" s)"
 echo ""
 
-SWITCH_OK=1
+SWITCH_OK=$WHEELS_MOVED
 if [ "$off_bad" -gt 0 ] || [ "$off_rerr" -gt 0 ]; then
     row_diagnostics "control-off run" "$off_bad" "$off_rerr" "$off_fb" "$off_fr"
     show_tail
