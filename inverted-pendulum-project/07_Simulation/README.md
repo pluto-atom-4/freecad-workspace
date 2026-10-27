@@ -64,7 +64,7 @@ export DISPLAY=:1  # Set to your active X display
 ```
 
 Expected behavior:
-- Script auto-generates `protos/InvertedPendulumRobot.proto` if missing.
+- Script does NOT regenerate `protos/InvertedPendulumRobot.proto` (git-tracked, #398). If it is missing or empty the script exits non-zero and tells you to run `generate_proto.sh`. If `robot.urdf` is newer it prints a warning and continues. To regenerate on purpose: `REGEN_PROTO=1 ./run_gui.sh` (this rewrites the tracked PROTO header path).
 - Webots GUI opens with the robot visible.
 - Robot should show:
   - A thin ~2.5mm base plate (flat, narrow).
@@ -84,7 +84,7 @@ cd inverted-pendulum-project/07_Simulation/webots/
 ```
 
 Expected behavior:
-- Script auto-generates the PROTO if needed.
+- Script does NOT regenerate the PROTO (#398). Missing or empty PROTO = FATAL with a pointer to `generate_proto.sh`; newer URDF = warning only. Opt in to regeneration with `REGEN_PROTO=1 ./run_batch.sh`.
 - Webots runs in batch mode (no GUI, no rendering).
 - Webots exits 0 if initialization succeeds (PROTO resolved, world loaded, no crash).
 
@@ -183,7 +183,7 @@ The source URDF references meshes via `package://inverted_pendulum_robot/meshes/
 
 ### run_gui.sh / run_batch.sh
 - Validate world file and WEBOTS_BIN.
-- Auto-invoke `generate_proto.sh` if PROTO is missing or source URDF is newer.
+- PROTO guard (#398): fail if the PROTO is missing or empty; warn if the source URDF is newer; never regenerate unless `REGEN_PROTO=1` is set (then runs `generate_proto.sh` first).
 - Launch Webots (GUI or batch respectively).
 
 ### pendulum_robot.wbt
@@ -483,7 +483,7 @@ sensors:
 ### To Add/Modify/Remove a Sensor:
 
 1. Edit `sensors.yaml` in the `webots/` directory.
-2. Run `generate_proto.sh` (or any script that calls it, e.g., `run_gui.sh`):
+2. Run `generate_proto.sh` (the run scripts do not regenerate the PROTO unless `REGEN_PROTO=1` is set):
    ```bash
    cd inverted-pendulum-project/07_Simulation/webots/
    ./generate_proto.sh

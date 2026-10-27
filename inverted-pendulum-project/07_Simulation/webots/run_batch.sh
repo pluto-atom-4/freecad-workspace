@@ -2,11 +2,20 @@
 # Run the inverted pendulum robot Webots world in headless batch mode (smoke test).
 #
 # Usage: ./run_batch.sh [path/to/world.wbt]
+#        REGEN_PROTO=1 ./run_batch.sh [path/to/world.wbt]
 #   Defaults to worlds/pendulum_robot.wbt
+#
+# Env:
+#   REGEN_PROTO=1   Opt in to running generate_proto.sh first. WARNING: this REWRITES
+#                   the git-tracked protos/InvertedPendulumRobot.proto (the header
+#                   path changes). Default (unset or 0) never regenerates.
+#   WEBOTS_BIN      Webots binary (default /usr/local/bin/webots).
+#   WEBOTS_TIMEOUT_S  Batch run timeout in seconds (default 30).
 #
 # This script:
 # 1. Validates world file and WEBOTS_BIN.
-# 2. Auto-generates the InvertedPendulumRobot PROTO if needed.
+# 2. Guards the committed InvertedPendulumRobot PROTO (#398): fails if it is missing
+#    or empty; warns if the source URDF is newer; never regenerates it silently.
 # 3. Runs Webots in batch mode (--batch --mode=fast --no-rendering --minimize).
 #    Falls back to xvfb-run if DISPLAY-related errors occur.
 #
@@ -71,13 +80,22 @@ if ! command -v "$WEBOTS_BIN" >/dev/null 2>&1 && [ ! -x "$WEBOTS_BIN" ]; then
     exit 1
 fi
 
-# Auto-generate PROTO if missing or source URDF is newer.
-if [ ! -s "$PROTO_FILE" ] || [ "$URDF_SOURCE" -nt "$PROTO_FILE" ]; then
-    echo "InvertedPendulumRobot.proto not found or out-of-date—auto-generating..."
+# PROTO guard (#398): the committed PROTO is git-tracked; never regenerate silently.
+# REGEN_PROTO=1 opts in to running generate_proto.sh first.
+if [ "${REGEN_PROTO:-0}" = "1" ]; then
+    echo "REGEN_PROTO=1: regenerating InvertedPendulumRobot.proto..."
     if ! "$SCRIPT_DIR/generate_proto.sh"; then
         echo "FATAL: PROTO generation failed." >&2
         exit 1
     fi
+elif [ ! -s "$PROTO_FILE" ]; then
+    echo "FATAL: PROTO not found or empty: $PROTO_FILE" >&2
+    echo "Generate it first:  $SCRIPT_DIR/generate_proto.sh" >&2
+    echo "(or re-run with REGEN_PROTO=1)" >&2
+    exit 1
+elif [ "$URDF_SOURCE" -nt "$PROTO_FILE" ]; then
+    echo "WARNING: $URDF_SOURCE is newer than $PROTO_FILE; the PROTO may be out of date." >&2
+    echo "Continuing with the existing PROTO. To regenerate: REGEN_PROTO=1 (or ./generate_proto.sh)." >&2
 fi
 
 run_webots() {
