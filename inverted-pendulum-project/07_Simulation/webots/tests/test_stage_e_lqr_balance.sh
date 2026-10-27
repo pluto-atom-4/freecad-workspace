@@ -11,10 +11,19 @@
 # and that the LQR world file differs from the PID world file only in the
 # controller field (no undocumented PROTO/world drift).
 #
+# Part 3: Informational control-off run (issue #406, follows #404 S2).
+# Runs the same world again with CONTROLLER_DISABLED=1 (the LQR core still runs
+# and logs, but both wheel commands are forced to 0.0 rad/s). Prints max |pitch|,
+# wheel drift rate and last log time for both runs. Asserts only that the switch
+# works: the disabled run must drift < 0.01 rad/s over t >= 10 s and must reach
+# t >= 25 s. If the disabled run also passes the pitch check, the pitch check
+# cannot tell control from no control; a NOTE line says so.
+#
 # Requirements (from #221):
-#   - Run LQR controller ~20 seconds on pendulum_robot_lqr.wbt (sim-time-bound
-#     via TEST_MAX_SIM_TIME_S, not a wall-clock-only timeout -- see #219/D5's
-#     floor-edge lesson).
+#   - Run LQR controller for 30 s of SIMULATED time on pendulum_robot_lqr.wbt
+#     (TEST_MAX_SIM_TIME_S=30). The Webots process also has a 20 s WALL-CLOCK
+#     timeout (TIMEOUT_S); the sim time reached within that window is what the
+#     checks read from the log.
 #   - Parse controller.log and extract IMU_Pitch column (3rd field).
 #   - Assert max |tilt| <= 0.15rad. Independently justified from LQR's own
 #     empirical logs (not copy-pasted from PID): LQR settles at the same
@@ -27,8 +36,8 @@
 #   bash tests/test_stage_e_lqr_balance.sh
 #
 # Exit code:
-#   0 if both balance and compatibility checks PASS
-#   1 if either check FAILs
+#   0 if balance, compatibility and control-off switch checks PASS
+#   1 if any of them FAILs
 
 set -euo pipefail
 
@@ -43,13 +52,17 @@ LQR_CONTROLLER="$CONTROLLER_DIR/lqr_controller.py"
 
 # Test parameters
 THRESHOLD_RAD=0.15
-TIMEOUT_S=20
+TIMEOUT_S=20                 # WALL-CLOCK timeout for the Webots process (real seconds)
+SIM_LIMIT_S=30               # SIMULATED-time limit passed to the controller (TEST_MAX_SIM_TIME_S)
+DRIFT_WINDOW_START_S=10      # simulated time from which wheel drift is measured
+DRIFT_MAX_RAD_S=0.01         # control-off run must drift less than this (rad/s)
+LAST_TIME_MIN_S=25           # control-off run must log up to at least this sim time
 
 echo "========================================"
 echo "Stage E: LQR Balance + Compatibility Harness"
 echo "========================================"
 echo "Test: Verify robot stays balanced (max |tilt| <= ${THRESHOLD_RAD}rad)"
-echo "Timeout: ${TIMEOUT_S}s"
+echo "Sim time limit: ${SIM_LIMIT_S}s (TEST_MAX_SIM_TIME_S); wall-clock timeout: ${TIMEOUT_S}s"
 echo "World: $WORLD"
 echo "Controller log: $CONTROLLER_LOG"
 echo ""
@@ -99,84 +112,161 @@ fi
 echo "PASS: world files identical except the controller field"
 echo ""
 
-# --- Part 1: Balance validation ---
-if [ ! -f "$WORLD" ]; then
-    echo "FAIL: World file not found: $WORLD"
-    exit 1
-fi
+# --- Helpers ---
 
-if [ -f "$CONTROLLER_LOG" ]; then
-    rm -f "$CONTROLLER_LOG"
-fi
+# Run Webots once on $WORLD with CONTROLLER_DISABLED=$1 ("0" or "1").
+# Sets RUN_RC. Exits 1 on a real Webots error (anything but 0 or 124).
+run_webots_pass() {
+    local disabled="$1"
+    if [ ! -f "$WORLD" ]; then
+        echo "FAIL: World file not found: $WORLD"
+        exit 1
+    fi
+    if [ -f "$CONTROLLER_LOG" ]; then
+        rm -f "$CONTROLLER_LOG"
+    fi
+    echo "Running Webots (batch, headless, CONTROLLER_DISABLED=${disabled})..."
+    export TEST_MAX_SIM_TIME_S=$SIM_LIMIT_S
+    export CONTROLLER_DISABLED="$disabled"
+    set +e
+    (cd "$WEBOTS_DIR" && timeout "${TIMEOUT_S}s" ./run_batch.sh "$WORLD" > /dev/null 2>&1)
+    RUN_RC=$?
+    set -e
+    if [ "$RUN_RC" -ne 0 ] && [ "$RUN_RC" -ne 124 ]; then
+        echo "FAIL: Webots exited with error code $RUN_RC (expected 0 or 124)"
+        tail -n 20 "$CONTROLLER_LOG" 2>/dev/null || echo "  (no controller log found)"
+        exit 1
+    fi
+    echo "Webots completed (exit code: $RUN_RC, timeout or normal completion)."
+    echo ""
+    sleep 1
+    if [ ! -f "$CONTROLLER_LOG" ]; then
+        echo "FAIL: Controller log not found: $CONTROLLER_LOG"
+        exit 1
+    fi
+}
 
-echo "Running Webots (batch, headless)..."
+# Print "max_tilt drift_rad_s last_time" for the current controller log.
+# max_tilt is "NONE" if there are no data rows. drift_rad_s is the least-squares
+# slope of mean(WheelL, WheelR) over t >= DRIFT_WINDOW_START_S, absolute value;
+# "NONE" if fewer than 2 rows fall in that window.
+log_stats() {
+    awk -v W="$DRIFT_WINDOW_START_S" '
+      $1 ~ /^[0-9]+\.?[0-9]*$/ {
+        t = $1 + 0
+        pitch = $3 + 0
+        abs_pitch = (pitch < 0) ? -pitch : pitch
+        if (rows == 0 || abs_pitch > max) max = abs_pitch
+        rows++
+        last = t
+        if (t >= W) {
+          y = ($8 + $9) / 2
+          k++; st += t; sy += y; stt += t * t; sty += t * y
+        }
+      }
+      END {
+        if (rows == 0) { printf "NONE NONE NONE\n"; exit }
+        printf "%.4f ", max
+        if (k >= 2 && (k * stt - st * st) != 0) {
+          slope = (k * sty - st * sy) / (k * stt - st * st)
+          if (slope < 0) slope = -slope
+          printf "%.5f ", slope
+        } else {
+          printf "NONE "
+        }
+        printf "%.3f\n", last
+      }
+    ' "$CONTROLLER_LOG"
+}
 
-export TEST_MAX_SIM_TIME_S=30
-set +e
-(cd "$WEBOTS_DIR" && timeout "${TIMEOUT_S}s" ./run_batch.sh "$WORLD" > /dev/null 2>&1)
-rc=$?
-set -e
+# --- Part 1: Balance validation (normal controller) ---
+run_webots_pass 0
 
-if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
-    echo "FAIL: Webots exited with error code $rc (expected 0 or 124)"
-    tail -n 20 "$CONTROLLER_LOG" 2>/dev/null || echo "  (no controller log found)"
-    exit 1
-fi
-
-echo "Webots completed (exit code: $rc, timeout or normal completion)."
-echo ""
-
-sleep 1
-
-if [ ! -f "$CONTROLLER_LOG" ]; then
-    echo "FAIL: Controller log not found: $CONTROLLER_LOG"
-    exit 1
-fi
-
-max_tilt=$(awk '
-  $1 ~ /^[0-9]+\.?[0-9]*$/ {
-    pitch = $3
-    abs_pitch = (pitch < 0) ? -pitch : pitch
-    if (abs_pitch > max) {
-      max = abs_pitch
-    }
-  }
-  END {
-    if (max == "") {
-      print "NONE"
-    } else {
-      printf "%.4f\n", max
-    }
-  }
-' "$CONTROLLER_LOG")
-
+read -r max_tilt _ _ <<< "$(log_stats)"
+BALANCE_OK=0
 if [ "$max_tilt" = "NONE" ]; then
     echo "FAIL: No valid IMU data rows found in controller log"
     echo "Last 20 lines of log:"
     tail -n 20 "$CONTROLLER_LOG"
-    exit 1
+    BALANCE_OK=0
+else
+    echo "IMU data parsed from controller.log"
+    echo "Max |IMU_Pitch|: ${max_tilt}rad"
+    echo "Threshold: ${THRESHOLD_RAD}rad"
+    echo ""
+    pass=$(awk -v tilt="$max_tilt" -v threshold="$THRESHOLD_RAD" 'BEGIN { print (tilt <= threshold) ? 1 : 0 }')
+    if [ "$pass" -eq 1 ]; then
+        echo "PASS: Max |tilt| ${max_tilt}rad <= ${THRESHOLD_RAD}rad threshold"
+        BALANCE_OK=1
+    else
+        echo "FAIL: Max |tilt| ${max_tilt}rad exceeds ${THRESHOLD_RAD}rad threshold"
+        echo ""
+        echo "Last 20 lines of log:"
+        tail -n 20 "$CONTROLLER_LOG"
+    fi
 fi
-
-echo "IMU data parsed from controller.log"
-echo "Max |IMU_Pitch|: ${max_tilt}rad"
-echo "Threshold: ${THRESHOLD_RAD}rad"
 echo ""
 
-pass=$(awk -v tilt="$max_tilt" -v threshold="$THRESHOLD_RAD" 'BEGIN { print (tilt <= threshold) ? 1 : 0 }')
+# Normal run numbers (for the summary table below). Copy before the next run deletes the log.
+read -r normal_max normal_drift normal_last <<< "$(log_stats)"
+normal_rc=$RUN_RC
 
-if [ "$pass" -eq 1 ]; then
-    echo "PASS: Max |tilt| ${max_tilt}rad <= ${THRESHOLD_RAD}rad threshold"
-    echo ""
-    echo "Robot remained balanced throughout the ${TIMEOUT_S}s run."
+# --- Part 3: Informational control-off run (CONTROLLER_DISABLED=1) ---
+echo "--- Control-off run: CONTROLLER_DISABLED=1 ---"
+run_webots_pass 1
+
+read -r off_max off_drift off_last <<< "$(log_stats)"
+echo "Control-off run: max |IMU_Pitch| ${off_max}rad, wheel drift ${off_drift} rad/s (t >= ${DRIFT_WINDOW_START_S}s), last log t ${off_last}s"
+echo ""
+
+SWITCH_OK=1
+if [ "$off_drift" = "NONE" ]; then
+    echo "FAIL: control-off run has too few rows at t >= ${DRIFT_WINDOW_START_S}s to measure wheel drift"
+    SWITCH_OK=0
+elif [ "$(awk -v d="$off_drift" -v m="$DRIFT_MAX_RAD_S" 'BEGIN { print (d < m) ? 1 : 0 }')" -ne 1 ]; then
+    echo "FAIL: control-off run wheel drift ${off_drift} rad/s >= ${DRIFT_MAX_RAD_S} rad/s (CONTROLLER_DISABLED did not stop the wheels)"
+    SWITCH_OK=0
+fi
+if [ "$off_last" = "NONE" ] || [ "$(awk -v t="$off_last" -v m="$LAST_TIME_MIN_S" 'BEGIN { print (t >= m) ? 1 : 0 }')" -ne 1 ]; then
+    echo "FAIL: control-off run last log time ${off_last}s < ${LAST_TIME_MIN_S}s"
+    SWITCH_OK=0
+fi
+if [ "$SWITCH_OK" -eq 1 ]; then
+    echo "PASS: control-off switch works (drift ${off_drift} rad/s < ${DRIFT_MAX_RAD_S} rad/s, last t ${off_last}s >= ${LAST_TIME_MIN_S}s)"
+fi
+
+off_pitch_pass=$(awk -v tilt="$off_max" -v threshold="$THRESHOLD_RAD" 'BEGIN { print (tilt != "NONE" && tilt <= threshold) ? 1 : 0 }')
+if [ "$off_pitch_pass" -eq 1 ]; then
+    echo "NOTE: pitch check is blind to the controller (control-off run passes too)"
+fi
+echo ""
+
+# --- Summary ---
+echo "--- Summary (normal vs control-off, simulated time) ---"
+printf "%-12s %-14s %-22s %-12s\n" "run" "max|pitch|" "drift(t>=${DRIFT_WINDOW_START_S}s)" "last t"
+printf "%-12s %-14s %-22s %-12s\n" "normal" "${normal_max}rad" "${normal_drift} rad/s" "${normal_last}s"
+printf "%-12s %-14s %-22s %-12s\n" "disabled" "${off_max}rad" "${off_drift} rad/s" "${off_last}s"
+echo ""
+
+if [ "$BALANCE_OK" -ne 1 ]; then
+    echo "FAIL: Balance check failed (see above)"
     echo ""
     echo "========================================"
-    echo "ALL CHECKS PASSED (balance + compatibility)"
+    echo "CHECKS FAILED (balance)"
     echo "========================================"
-    exit 0
-else
-    echo "FAIL: Max |tilt| ${max_tilt}rad exceeds ${THRESHOLD_RAD}rad threshold"
-    echo ""
-    echo "Last 20 lines of log:"
-    tail -n 20 "$CONTROLLER_LOG"
     exit 1
 fi
+
+if [ "$SWITCH_OK" -ne 1 ]; then
+    echo "========================================"
+    echo "CHECKS FAILED (control-off switch)"
+    echo "========================================"
+    exit 1
+fi
+
+echo "Robot remained balanced through the ${SIM_LIMIT_S}s simulated run (wall-clock timeout ${TIMEOUT_S}s)."
+echo ""
+echo "========================================"
+echo "ALL CHECKS PASSED (balance + compatibility + control-off switch)"
+echo "========================================"
+exit 0
