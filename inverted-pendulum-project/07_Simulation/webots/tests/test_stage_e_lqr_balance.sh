@@ -19,9 +19,11 @@
 # Runs the same world again with CONTROLLER_DISABLED=1 (the LQR core still runs
 # and logs, but both wheel commands are forced to 0.0 rad/s). The switch check
 # asserts that it works: the normal run's wheels must move (max wheel drift over
-# both wheels >= 0.002 rad/s for t >= 10 s, AND the weaker wheel's whole-run excursion
-# >= 0.01 rad (#424, so one-wheel control fails), else the switch cannot be tested), and
-# the control-off drift must be < 0.001 rad/s (and under half the normal drift), and
+# both wheels >= 0.002 rad/s for t >= 10 s, else the switch cannot be tested; this is the
+# only movement precondition of the switch check). The per-wheel excursion floor (#424,
+# weaker wheel >= 0.01 rad over the whole run) is a normal-run BALANCE-only check: it fails
+# BALANCE_OK, not the switch. Together these make one-wheel control fail. The
+# control-off drift must be < 0.001 rad/s (and under half the normal drift), and
 # the run must reach LAST_TIME_MIN_S of simulated time before the wall-clock
 # timeout. If the control-off run also passes the pitch check, a NOTE says the
 # pitch check cannot tell control from no control.
