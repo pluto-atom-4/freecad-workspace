@@ -391,7 +391,9 @@ Exit codes: 0 for duration end, input end, or Ctrl-C once the bridge has armed a
 that ends mid re-arm after a device reset also exits 0; see the stderr note below); 2 for usage
 errors, a source error (for example a bad replay row after arming), never armed (not even once; for
 example a replay shorter than the 50-frame arm window, which prints `window incomplete`), or Ctrl-C
-before the first arm.
+before the first arm. An unopenable `--text-log` path (for example a NUL byte or a missing directory)
+also exits 2 with one `--text-log:` error line. `--text-log` and `--record` naming the same file
+(relative, absolute, or symlink spellings) exit 2 before any file is opened.
 
 **Two CSV formats (do not mix them):**
 
@@ -550,10 +552,15 @@ opened while the bridge runs would silently take part of the IMU byte stream (no
 reader can safely own the port, which is why this step is a separate run. `--record` keeps no raw serial
 lines. By default the bridge ignores the firmware's text lines. `--text-log PATH` saves them with
 timestamps (a fresh file per run) and `--echo-text` prints them to stderr with a `[fw] ` prefix; both
-are off by default. This is unit-tested against a fake serial source ONLY, not run on hardware. The
-two-run flow above stays valid; a single run with `--text-log` is an option that has not been tried.
-BRC balancing-robot-controller#159 has the matching capture steps. Stop the bridge first, then make a separate run with the same kind of motion and capture the
-board's `[imu] ... fused=` lines with a serial monitor. The BRC `tilt_servo` frames build also prints `[imu] accel=... fused=... goal=... torque=...` every 100 ms (10 Hz) on the same port, interleaved
+are off by default. Escaping: a literal backslash and any non-printable character are written as
+fixed-width escapes (`\xNN`, `\uNNNN`, `\UNNNNNNNN`); a line over 512 chars is cut and ends with
+`[truncated]`. The file and the echo are disabled independently: a failed echo (for example `| head`)
+keeps the file, and a file error keeps the echo. This is unit-tested against a fake serial source
+ONLY, not run on hardware. The two-run flow above stays valid; a single run with `--text-log` is an
+option that has not been tried. BRC balancing-robot-controller#159 has the matching capture steps.
+Stop the bridge first, then make a separate run with the same kind of motion and capture the board's
+`[imu] ... fused=` lines with a serial monitor. The BRC `tilt_servo` frames build also prints
+`[imu] accel=... fused=... goal=... torque=...` every 100 ms (10 Hz) on the same port, interleaved
 with the `IMU,` frames; the bridge ignores those lines by default. The `fused=` value is degrees from BRC's own
 filter on the board: absolute, not host-fused, not tared. The bridge's `pitch` is tared and
 sign-adjusted (see Behaviour and Arming), so only the shape of the two can be compared. No numeric

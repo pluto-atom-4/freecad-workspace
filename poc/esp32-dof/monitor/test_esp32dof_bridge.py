@@ -1298,7 +1298,8 @@ def test_duration_expires_mid_rearm_returns_0_with_note(monkeypatch, capsys):
 
 
 # ----- firmware text capture (#387) -----------------------------------------------------------
-# Fake serial source only. No hardware. Thread tests block on Events, never on sleeps.
+# Fake serial source only, no hardware. Thread tests use Events and bounded timeouts, never
+# unbounded waits, so a regression fails the test instead of hanging the run.
 
 class _CollectSink:
     def __init__(self):
@@ -1349,6 +1350,23 @@ class _ClosedStderr:
         raise ValueError("I/O operation on closed file")
 
 
+class _FlakyStderr:
+    """The first write() raises (broken pipe, e.g. `| head`); later calls are recorded."""
+
+    def __init__(self):
+        self.calls = []
+        self._failed = False
+
+    def write(self, s):
+        if not self._failed:
+            self._failed = True
+            raise OSError(32, "Broken pipe")
+        self.calls.append(s)
+
+    def flush(self):
+        pass
+
+
 class _BlockingStderr:
     """First write() signals entered, then waits for release (bounded, so a bug cannot hang)."""
 
@@ -1362,6 +1380,30 @@ class _BlockingStderr:
 
     def flush(self):
         pass
+
+
+class _CloseDuringWriteFh:
+    """write() starts close() on another thread and waits 0.5 s; records whether close() finished
+    while the write was still in progress. With the lock, close() must wait for the write."""
+
+    def __init__(self, sink):
+        self.sink = sink
+        self.closer = None
+        self.close_done_during_write = None
+        self.closed = False
+
+    def write(self, s):
+        if self.closer is None:
+            self.closer = threading.Thread(target=self.sink.close, daemon=True)
+            self.closer.start()
+            self.closer.join(0.5)
+            self.close_done_during_write = not self.closer.is_alive()
+
+    def flush(self):
+        pass
+
+    def close(self):
+        self.closed = True
 
 
 def _fake_serial(monkeypatch, lines):
@@ -1383,13 +1425,14 @@ def _capture_polled(monkeypatch):
 
 
 def _fw_lines():
-    """Armed still stream with text lines interleaved, plus an empty line and control chars."""
+    """Armed still stream with text lines interleaved, plus control chars. The real dof_serial
+    drops empty lines, so no empty-line fixture here (the tee unit test covers ''). """
     out = []
     for i, ln in enumerate(still_lines(60)):
         out.append(ln)
         if i % 20 == 0:
             out.append(f"[imu] accel=0.0 fused={i}.0")
-    out += ["", "\x1b[0mboot\x00"]
+    out.append("\x1b[0mboot\x00")
     return out
 
 
@@ -1487,26 +1530,34 @@ def test_echo_is_one_stderr_write_per_line(monkeypatch):
     assert err.calls == ["[fw] boot\\x1b\n"]
 
 
-def test_closed_stderr_echo_never_raises_and_disables(monkeypatch):
-    monkeypatch.setattr(sys, "stderr", _ClosedStderr())
-    sink = b.TextSink(None, echo=True, clock=FakeClock())
-    sink.write("a")                                    # echo raises ValueError inside the sink
-    sink.write("b")                                    # disabled: nothing
+def test_closed_stderr_echo_disables_echo_only_and_file_keeps_rows(tmp_path, monkeypatch):
+    err = _FlakyStderr()
+    monkeypatch.setattr(sys, "stderr", err)
+    path = tmp_path / "fw.txt"
+    sink = b.TextSink(path, echo=True, clock=FakeClock(), wall_clock=lambda: "W")
+    sink.write("a")                                    # echo write raises: echo disabled, one warning
+    sink.write("b")                                    # echo suppressed; file still written
     sink.close()
+    assert len(err.calls) == 1                         # the one warning, nothing else
+    assert err.calls[0].startswith("dof_wheel_bridge: warning: firmware text echo disabled")
+    assert path.read_text(encoding="utf-8") == "0.000\tW\ta\n0.000\tW\tb\n"
 
 
-def test_closed_stderr_in_warning_path_does_not_raise(monkeypatch):
-    monkeypatch.setattr(sys, "stderr", _ClosedStderr())
-    sink = b.TextSink(None, clock=FakeClock())
+def test_file_error_disables_file_only_and_echo_keeps_going(monkeypatch):
+    err = _RecordingStderr()
+    monkeypatch.setattr(sys, "stderr", err)
+    sink = b.TextSink(None, echo=True, clock=FakeClock())
     fail = _FailFh()
     sink._fh = fail
-    sink.write("a")                                    # file error -> warning print raises ValueError
+    sink.write("a")
     sink.write("b")
-    sink.close()
-    assert fail.writes == 1 and fail.closed
+    assert fail.writes == 1                            # file disabled after the first failure
+    assert len(err.calls) == 3
+    assert err.calls[0].startswith("dof_wheel_bridge: warning: firmware text file disabled")
+    assert err.calls[1:] == ["[fw] a\n", "[fw] b\n"]   # echo unaffected by the file error
 
 
-def test_file_write_error_disables_once_and_warns_once(capsys):
+def test_file_write_error_warns_once(capsys):
     sink = b.TextSink(None, clock=FakeClock())
     fail = _FailFh()
     sink._fh = fail
@@ -1514,21 +1565,19 @@ def test_file_write_error_disables_once_and_warns_once(capsys):
     sink.write("b")
     sink.write("c")
     assert fail.writes == 1
-    assert capsys.readouterr().err.count("text capture disabled") == 1
+    assert capsys.readouterr().err.count("firmware text file disabled") == 1
     sink.close()
     assert fail.closed
 
 
-def test_file_error_also_silences_echo(monkeypatch):
-    err = _RecordingStderr()
-    monkeypatch.setattr(sys, "stderr", err)
-    sink = b.TextSink(None, echo=True, clock=FakeClock())
-    sink._fh = _FailFh()
+def test_stderr_none_never_raises_and_file_keeps_rows(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "stderr", None)
+    path = tmp_path / "fw.txt"
+    sink = b.TextSink(path, echo=True, clock=FakeClock(), wall_clock=lambda: "W")
     sink.write("a")
     sink.write("b")
-    assert len(err.calls) == 1
-    assert err.calls[0].startswith("dof_wheel_bridge: warning: firmware text capture disabled")
-    assert "[fw]" not in err.calls[0]
+    sink.close()
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 2
 
 
 def test_close_is_not_blocked_by_a_stalled_echo(monkeypatch):
@@ -1548,30 +1597,6 @@ def test_close_is_not_blocked_by_a_stalled_echo(monkeypatch):
         writer.join(5)
 
 
-class _CloseDuringWriteFh:
-    """write() starts close() on another thread and waits 0.5 s; records whether close() finished
-    while the write was still in progress. With the lock, close() must wait for the write."""
-
-    def __init__(self, sink):
-        self.sink = sink
-        self.closer = None
-        self.close_done_during_write = None
-        self.closed = False
-
-    def write(self, s):
-        if self.closer is None:
-            self.closer = threading.Thread(target=self.sink.close, daemon=True)
-            self.closer.start()
-            self.closer.join(0.5)
-            self.close_done_during_write = not self.closer.is_alive()
-
-    def flush(self):
-        pass
-
-    def close(self):
-        self.closed = True
-
-
 def test_close_waits_for_an_in_progress_file_write():
     sink = b.TextSink(None, clock=FakeClock())
     fh = _CloseDuringWriteFh(sink)
@@ -1582,25 +1607,29 @@ def test_close_waits_for_an_in_progress_file_write():
     assert not fh.closer.is_alive() and fh.closed
 
 
-def test_concurrent_writes_and_close_leave_only_whole_rows(tmp_path):
+def test_close_during_live_writer_leaves_only_whole_rows(tmp_path):
     path = tmp_path / "fw.txt"
     sink = b.TextSink(path, clock=FakeClock(), wall_clock=lambda: "W")
-    first_done = threading.Event()
+    mid_run = threading.Event()        # writer has done 100 writes and has 200 more to go
+    close_called = threading.Event()   # main has called close(); writer may continue
 
     def pump():
-        for i in range(3000):
+        for i in range(300):
             sink.write(f"line{i}")
-            first_done.set()
+            if i == 99:
+                mid_run.set()
+                close_called.wait(5)
 
     writer = threading.Thread(target=pump, daemon=True)
     writer.start()
-    assert first_done.wait(5)
+    assert mid_run.wait(5)
     sink.close()
-    writer.join(10)
+    close_called.set()
+    writer.join(5)
     assert not writer.is_alive()
     rows = [r.split("\t") for r in path.read_text(encoding="utf-8").splitlines()]
-    assert rows and all(len(r) == 3 and r[2].startswith("line") for r in rows)
-    assert len(path.read_text(encoding="utf-8")) == sum(len("\t".join(r)) + 1 for r in rows)
+    assert [r[2] for r in rows] == [f"line{i}" for i in range(100)]   # whole rows, none after close
+    assert all(len(r) == 3 for r in rows)
 
 
 def test_sanitize_escapes_by_fixed_width_codepoint_range():
@@ -1615,12 +1644,25 @@ def test_sanitize_escapes_backslash_so_escapes_are_unambiguous():
     assert b.sanitize_text("\\") == "\\\\"
 
 
-def test_sanitize_caps_at_text_line_max_without_splitting_escapes():
+def test_sanitize_exact_cap_is_not_truncated():
+    assert b.sanitize_text("x" * 512) == "x" * 512
+    assert b.sanitize_text("x" * 513) == "x" * 501 + "[truncated]"
+
+
+def test_sanitize_truncation_marker_counts_inside_cap_and_is_bounded():
     assert len(b.sanitize_text("x" * 600)) == b.TEXT_LINE_MAX
-    assert b.sanitize_text("\x1b" * 300) == "\\x1b" * (b.TEXT_LINE_MAX // 4)
-    assert b.sanitize_text("x" * 511 + "\x1b") == "x" * 511
-    assert b.sanitize_text("​" * 200) == "\\u200b" * 85        # 6-char escapes: 85 fit in 512
-    assert b.sanitize_text("\\" * 600) == "\\\\" * (b.TEXT_LINE_MAX // 2)
+    assert b.sanitize_text("x" * 600).endswith("[truncated]")
+    assert b.sanitize_text("\x1b" * 300) == "\\x1b" * 125 + "[truncated]"
+    assert b.sanitize_text("x" * 511 + "\x1b") == "x" * 501 + "[truncated]"
+    assert b.sanitize_text("​" * 200) == "\\u200b" * 83 + "[truncated]"
+    assert b.sanitize_text("\\" * 600) == "\\\\" * 250 + "[truncated]"
+
+
+def test_sanitize_does_not_split_a_u_escape_at_the_cap():
+    # "\U000e0001" is 10 chars and would straddle position 512 if it were kept whole.
+    out = b.sanitize_text("x" * 509 + "\U000e0001")
+    assert out == "x" * 501 + "[truncated]"
+    assert "\\U" not in out
 
 
 def test_main_text_log_writes_file_and_closes_it(monkeypatch, tmp_path):
@@ -1671,7 +1713,7 @@ def test_main_keyboard_interrupt_closes_text_log(monkeypatch, tmp_path):
     assert made[0].opened_fh.closed
 
 
-def test_main_text_sink_write_error_keeps_bridge_running(monkeypatch, tmp_path, capsys):
+def test_main_text_sink_write_error_keeps_bridge_running(monkeypatch, tmp_path):
     _fake_serial(monkeypatch, _fw_lines())
     made = []
 
@@ -1687,10 +1729,8 @@ def test_main_text_sink_write_error_keeps_bridge_running(monkeypatch, tmp_path, 
     rc = b.main(["--port", "/dev/fake", "--text-log", str(tmp_path / "fw.txt"),
                  "--udp-port", str(free_udp_port())])
     assert rc == 0                                     # the bridge still armed and ran to input end
+    assert made[0].failing.writes == 1                 # file disabled after one failed write
     assert made[0]._fh is None                         # closed at the end of main
-    assert made[0]._disabled
-    assert made[0].failing.writes == 1
-    assert capsys.readouterr().err.count("text capture disabled") == 1
 
 
 @pytest.mark.parametrize("extra", [["--mock"], ["--replay", "raw.csv"]])
@@ -1704,20 +1744,44 @@ def test_text_flags_need_port(extra, flags, tmp_path, monkeypatch, capsys):
     assert not (tmp_path / "fw.txt").exists()
 
 
-def test_text_log_same_path_as_record_is_rejected(tmp_path, monkeypatch, capsys):
-    _fake_serial(monkeypatch, still_lines(60))
-    path = tmp_path / "same.csv"
+def test_same_file_helper_distinguishes_different_files(tmp_path):
+    (tmp_path / "a.csv").write_text("", encoding="utf-8")
+    (tmp_path / "b.csv").write_text("", encoding="utf-8")
+    assert b._same_file(str(tmp_path / "a.csv"), str(tmp_path / "b.csv")) is False
+    assert b._same_file("\0bad", str(tmp_path / "a.csv")) is False   # bad path: not same, no raise
+
+
+@pytest.mark.parametrize("spelling", ["identical", "relative_vs_absolute", "symlink"])
+def test_text_log_same_file_as_record_is_rejected(tmp_path, monkeypatch, capsys, spelling):
+    record = tmp_path / "same.csv"
+    record.write_text("", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    if spelling == "identical":
+        text_log = "same.csv"
+    elif spelling == "relative_vs_absolute":
+        text_log = str(record)                         # record is passed as "same.csv" below
+    else:
+        link = tmp_path / "link.csv"
+        link.symlink_to(record)
+        text_log = str(link)
     with pytest.raises(SystemExit) as ei:
-        b.main(["--port", "/dev/fake", "--text-log", str(path), "--record", str(path)])
+        b.main(["--port", "/dev/fake", "--text-log", text_log, "--record", "same.csv"])
     assert ei.value.code == 2
     assert "must not be the same file" in capsys.readouterr().err
-    assert not path.exists()
+    assert record.read_text(encoding="utf-8") == ""     # not truncated by the rejected run
 
 
-def test_unwritable_text_log_returns_2_with_one_named_error_line(tmp_path, capsys):
-    rc = b.main(["--port", "/dev/fake", "--text-log", str(tmp_path / "no" / "fw.txt"),
-                 "--udp-port", str(free_udp_port())])
+@pytest.mark.parametrize("bad_path, reason", [
+    ("no/such/dir/fw.txt", "No such file or directory"),
+    ("bad\0name.txt", "embedded null byte"),
+])
+def test_unopenable_text_log_returns_2_with_one_named_error_line(
+        tmp_path, monkeypatch, capsys, bad_path, reason):
+    monkeypatch.chdir(tmp_path)
+    rc = b.main(["--port", "/dev/fake", "--text-log", bad_path, "--udp-port", str(free_udp_port())])
     assert rc == 2
     err_lines = [ln for ln in capsys.readouterr().err.splitlines() if ln]
     assert len(err_lines) == 1
-    assert err_lines[0].startswith("dof_wheel_bridge: error: --text-log:")
+    assert err_lines[0].startswith("dof_wheel_bridge: error: --text-log: cannot open ")
+    assert repr(bad_path) in err_lines[0]
+    assert reason in err_lines[0]
