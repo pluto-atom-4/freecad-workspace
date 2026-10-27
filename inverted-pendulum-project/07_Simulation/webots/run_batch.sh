@@ -26,9 +26,9 @@
 #    Falls back to xvfb-run if DISPLAY-related errors occur.
 #    Process-group cleanup: each launch (main and xvfb-run) runs as `setsid timeout ...`
 #    in its own process group. That group is swept (TERM, sleep 1, KILL) on abort (EXIT,
-#    INT or TERM), after a timeout, and after a normal exit if any member survives the
-#    leader. Only that pgid is signalled; processes are never matched by name.
-#    Requires Linux util-linux `setsid` (like `timeout`). Assumes setsid does not fork when
+#    INT or TERM), and after a timeout or a normal exit if any member survives the leader.
+#    Only that pgid is signalled; processes are never matched by name.
+#    Requires util-linux `setsid` and GNU coreutils `timeout`. Assumes setsid does not fork when
 #    backgrounded from this non-interactive script, so $! equals the pgid. A signal arriving
 #    in the instant between fork and WPID assignment is not swept.
 #
@@ -142,8 +142,9 @@ run_group() {
     setsid timeout "${TIMEOUT_S}s" "$@" > "$out" 2>&1 &
     WPID=$!
     wait "$WPID" || rc=$?
-    # The leader can exit while group members survive (wrapper exits, or the inner
-    # timeout's TERM reaches only part of the chain). Sweep the group before clearing WPID.
+    # The leader (timeout) can exit while group members survive: a member left the group,
+    # or the wrapper exited while webots-bin lives on. Sweep the group before clearing WPID.
+    # kill -0 may also match a zombie member; the sweep then costs the 1 s sleep, harmlessly.
     if kill -0 -- "-$WPID" 2>/dev/null; then
         cleanup
     fi
