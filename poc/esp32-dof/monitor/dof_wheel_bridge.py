@@ -373,17 +373,17 @@ def _wall_iso() -> str:
 class TextSink:
     """Firmware text lines -> optional file (path) and/or stderr (echo). Thread-safe.
 
-    write() runs on the serial reader thread and never raises, for any exception. The file gets one
-    row per write and is flushed after each row. Per-write flush is cheap at the rates seen on the
-    board: the BRC tilt_servo build (README Step D) prints about 10 Hz [imu] lines plus 1 Hz stats,
-    and a tail line is never left in the buffer. The file is opened with mode "w", so it is fresh
+    write() runs on the serial reader thread and never raises for any Exception. The file gets one
+    row per write and is flushed after each row. Per-write flush is cheap at the rate of the BRC
+    tilt_servo source, which prints [imu] every 100 ms (README Step D), and a tail line is never left
+    in the buffer. The file is opened with mode "w", so it is fresh
     per run.
 
     The file and the echo are disabled independently. The first exception on the file path (open
     row write, flush, or the clock/timestamp calls) disables only the file capture. The first
     exception on the echo path (closed or broken stderr, or no stderr at all) disables only the
     echo. Each one prints at most one warning, best-effort. A sanitize_text() failure affects both
-    paths, since neither can produce a line.
+    paths, since neither can produce a line, so it prints one warning per path (two lines).
 
     Timestamps are clock() minus _t0, the clock() value taken at construction. main() builds the sink
     before WheelPublisher and SerialImuHal, and so before serial_lines() opens the port.
@@ -787,10 +787,15 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
             hal.close()
         if pub is not None:
             pub.close()
-        if record_fh is not None:
-            record_fh.close()
-        if text_sink is not None:
-            text_sink.close()
+        try:
+            if record_fh is not None:
+                record_fh.close()
+        except OSError as exc:
+            print(f"dof_wheel_bridge: warning: closing --record failed: {exc}",
+                  file=sys.stderr, flush=True)
+        finally:
+            if text_sink is not None:          # always closed, even if the record close failed
+                text_sink.close()
 
 
 if __name__ == "__main__":

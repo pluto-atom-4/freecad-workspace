@@ -1839,7 +1839,10 @@ def test_text_log_hard_link_to_record_is_rejected(tmp_path, monkeypatch, capsys)
     record = tmp_path / "rec.csv"
     record.write_text("KEEP", encoding="utf-8")
     hard = tmp_path / "hard.csv"
-    os.link(record, hard)                              # same inode, different name
+    try:
+        os.link(record, hard)                          # same inode, different name
+    except OSError as exc:
+        pytest.skip(f"filesystem does not support hard links: {exc}")
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as ei:
         b.main(["--port", "/dev/fake", "--text-log", "hard.csv", "--record", "rec.csv"])
@@ -1873,6 +1876,48 @@ def test_unopenable_text_log_leaves_existing_record_untouched(tmp_path, monkeypa
     assert rc == 2
     assert "--text-log: cannot open" in capsys.readouterr().err
     assert record.read_text(encoding="utf-8") == "KEEP"   # record opened only after the sink
+
+
+def test_record_close_oserror_still_closes_text_sink_and_does_not_traceback(monkeypatch, tmp_path, capsys):
+    import builtins
+
+    class _RecordCloseFails:
+        """Delegates to the real file; close() really closes it, then raises like a failed flush."""
+
+        def __init__(self, fh):
+            self._fh = fh
+
+        def __getattr__(self, name):
+            return getattr(self._fh, name)
+
+        def close(self):
+            self._fh.close()
+            raise OSError(5, "Input/output error (simulated flush failure)")
+
+    record = tmp_path / "rec.csv"
+
+    def fake_open(path, *a, **kw):
+        fh = builtins.open(path, *a, **kw)
+        return _RecordCloseFails(fh) if str(path) == str(record) else fh
+
+    monkeypatch.setattr(b, "open", fake_open, raising=False)
+    _fake_serial(monkeypatch, still_lines(60))
+    made = _recording_text_sink(monkeypatch)
+    rc = b.main(["--port", "/dev/fake", "--text-log", str(tmp_path / "fw.txt"),
+                 "--record", str(record), "--udp-port", str(free_udp_port())])
+    assert rc == 0                                     # no traceback: main returned
+    assert made[0].opened_fh.closed                    # text sink closed despite the record failure
+    assert "warning: closing --record failed" in capsys.readouterr().err
+
+
+def test_bad_record_open_with_text_log_exits_2_and_closes_text_sink(monkeypatch, tmp_path, capsys):
+    made = _recording_text_sink(monkeypatch)
+    rc = b.main(["--port", "/dev/fake", "--text-log", str(tmp_path / "fw.txt"),
+                 "--record", str(tmp_path / "no" / "rec.csv"), "--udp-port", str(free_udp_port())])
+    assert rc == 2
+    err_lines = [ln for ln in capsys.readouterr().err.splitlines() if ln]
+    assert len(err_lines) == 1 and "rec.csv" in err_lines[0]
+    assert made[0].opened_fh.closed
 
 
 def test_symlink_loop_text_log_exits_2_without_traceback(tmp_path, monkeypatch, capsys):
