@@ -63,7 +63,7 @@ sudo usermod -aG dialout $USER
 
 Do NOT run this command as part of automated setup — it requires an interactive login afterward and may not succeed in a headless environment.
 
-If `serial_lines` raises `DofSerialError` ("cannot open serial port ..."), the port is missing (see `dof_monitor.py --list-ports`), grabbed by ModemManager, or you are not in `dialout` (see above). The port is not locked: a second reader such as a serial monitor opens without error and splits the stream, so close other readers first. More in "Troubleshooting".
+If `serial_lines` raises `DofSerialError` ("cannot open serial port ..."), the port is missing (see `dof_monitor.py --list-ports`) or you are not in `dialout` (see above). Close other readers first (the port is not locked; see Step D). More in "Troubleshooting".
 
 ## Layout
 
@@ -510,8 +510,9 @@ A hand-held board is not a balancing robot.
 **Setup:** start the display on the same port the bridge will publish to (no `--mock`, so only Webots
 starts; press Play if it starts paused). Board firmware for this #377 run: BRC `programs/tilt_servo`
 built with `PLATFORMIO_BUILD_FLAGS="-D TILT_SERVO_IMU_FRAMES"`, not the POC sketch. The servo must be
-secured or absent. The reset on port open re-runs servoStart (torque on, goal = present position); this is
-UNVERIFIED, so never run with the wheel free to turn.
+secured or absent. Opening the port resets the board (DTR/RTS; human-verified, see the checklist). That the
+firmware then re-runs servoStart (torque on, goal = present position) is UNVERIFIED (BRC firmware, not
+checked here), so never run with the wheel free to turn.
 
 ```bash
 cd poc/servo-wheel-dof
@@ -520,9 +521,9 @@ SWD_UDP_PORT=5006 ./run_demo.sh --gui
 
 **Step A (mirror, no gains):** hold the board FLAT and STILL in the pose you want as zero, then start
 the bridge. Keep it still through the ~1 s (50-frame) arm window; the pose held then is the pitch
-zero (tare). Do not touch it while arming. Opening the serial port resets the board (DTR/RTS), so stay
-still and flat from just BEFORE the start command until `armed` appears (the arm window starts after the
-reset). Stop with Ctrl-C after about 30 s:
+zero (tare). Opening the serial port resets the board (DTR/RTS), so stay still and flat from just BEFORE
+the start command until `armed` appears; the arm window starts after the reset. Stop with Ctrl-C after
+about 30 s:
 
 ```bash
 cd poc/esp32-dof
@@ -542,12 +543,14 @@ Before tilting, note cmd and wheel at the start pose (expect about zero cmd; see
 
 **Step C (PID):** same as Step B with `--core pid --record run_pid.csv`.
 
-**Step D (jitter and lag, qualitative only):** nothing locks `/dev/ttyACM0` (pyserial is opened without
-`exclusive=True`), so a second reader (e.g. a serial monitor) opened while the bridge runs can silently
-take part of the IMU byte stream. `--record` keeps no raw serial lines. Why two runs: the bridge does not
-echo the firmware's text lines (FW #387, optional, not implemented); BRC #159 has the matching capture steps. Stop the bridge first, then make a
-separate run with the same kind of motion and capture the board's `[imu] ... fused=` lines with a serial
-monitor. The BRC `tilt_servo` frames build also prints `[imu] accel=... fused=... goal=... torque=...` every 100 ms (10 Hz) on the same port, interleaved
+**Step D (jitter and lag, qualitative only):** nothing locks `/dev/ttyACM0`. The bridge opens it with
+pyserial without `exclusive=True`. By reading `dof_serial.py`, a second reader (e.g. a serial monitor)
+opened while the bridge runs would silently take part of the IMU byte stream (not observed). So only one
+reader can safely own the port, which is why this step is a separate run. `--record` keeps no raw serial
+lines. The bridge does not echo the firmware's text lines; that optional option is tracked as
+freecad-workspace#387 (OPEN, not implemented). BRC balancing-robot-controller#159 has the matching capture
+steps. Stop the bridge first, then make a separate run with the same kind of motion and capture the
+board's `[imu] ... fused=` lines with a serial monitor. The BRC `tilt_servo` frames build also prints `[imu] accel=... fused=... goal=... torque=...` every 100 ms (10 Hz) on the same port, interleaved
 with the `IMU,` frames; the bridge ignores those lines. The `fused=` value is degrees from BRC's own
 filter on the board: absolute, not host-fused, not tared. The bridge's `pitch` is tared and
 sign-adjusted (see Behaviour and Arming), so only the shape of the two can be compared. No numeric
@@ -788,7 +791,7 @@ Tick a box only after doing it yourself. Nothing here was done by the automation
 ## Troubleshooting
 
 - **`FATAL: $DISPLAY is not set`** (from `run_gui.sh` / `run_mock_demo.sh`): no X session. Export your display (`export DISPLAY=:1`) and re-run. There is no xvfb fallback for the GUI scripts. For a window-less smoke test use the headless command in "Reproducing end to end".
-- **`cannot open serial port ... Permission denied`, monitor exit code 2**: you are not in the `dialout` group (`groups`; `sudo usermod -aG dialout $USER`, then log out and back in). Or the port is missing (`--list-ports`) or ModemManager has it (a second plain reader does not cause an open error; it silently takes part of the stream, see Step D).
+- **`cannot open serial port ... Permission denied`, monitor exit code 2**: you are not in the `dialout` group (`groups`; `sudo usermod -aG dialout $USER`, then log out and back in). Or the port is missing (`--list-ports`).
 - **ModemManager grabs `/dev/ttyACM*`** (port opens then vanishes/garbles): stop it while testing (`sudo systemctl stop ModemManager`) or add a udev rule to ignore the board.
 - **Boot text / bad_frames right after opening the port**: opening the port toggles DTR/RTS and resets the ESP32, which prints ROM boot text. Those lines do not start with `IMU,`, so the monitor ignores them and they are not counted in `bad_frames`. Only corrupt `IMU,` lines are counted. A torn frame whose `IMU,` start is lost or has junk in front is ignored and shows as `bad_frames` 0. The first line after each (re)open is discarded by design. Harmless.
 - **Webots does not react**: (1) the simulation must be RUNNING (press Play; `--mode=realtime` starts running); (2) check that UDP 5005 is bound: `ss -uln | grep 5005`; (3) the controller log must show `listening on 127.0.0.1:5005`; (4) sender and controller must agree on port (`--udp-port`, default 5005); (5) the monitor `published : N` count in the summary must be > 0; (6) run Webots with `DOF_FOLLOWER_DEBUG=1` to see applied rotations (must be in Webots' own environment, e.g. `DOF_FOLLOWER_DEBUG=1 ./webots/run_gui.sh`).
