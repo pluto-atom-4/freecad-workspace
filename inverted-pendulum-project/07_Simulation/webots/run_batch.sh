@@ -24,10 +24,13 @@
 #    or empty; warns if the source URDF is newer; never regenerates it silently.
 # 3. Runs Webots in batch mode (--batch --mode=fast --no-rendering --minimize).
 #    Falls back to xvfb-run if DISPLAY-related errors occur.
-#    Each launch (main and xvfb-run) runs under setsid in its own process group. On EXIT,
-#    INT or TERM, this script signals only that group (TERM, then KILL after 1 s), so the
-#    timeout -> webots wrapper -> webots-bin chain is stopped, not left writing the log.
-#    Processes are never matched by name.
+#    Process-group cleanup: each launch (main and xvfb-run) runs as `setsid timeout ...`
+#    in its own process group. That group is swept (TERM, sleep 1, KILL) on abort (EXIT,
+#    INT or TERM), after a timeout, and after a normal exit if any member survives the
+#    leader. Only that pgid is signalled; processes are never matched by name.
+#    Requires Linux util-linux `setsid` (like `timeout`). Assumes setsid does not fork when
+#    backgrounded from this non-interactive script, so $! equals the pgid. A signal arriving
+#    in the instant between fork and WPID assignment is not swept.
 #
 # NOTE: This is a STRUCTURAL SMOKE TEST only. It validates:
 #   - The world file is valid and loads.
@@ -139,6 +142,11 @@ run_group() {
     setsid timeout "${TIMEOUT_S}s" "$@" > "$out" 2>&1 &
     WPID=$!
     wait "$WPID" || rc=$?
+    # The leader can exit while group members survive (wrapper exits, or the inner
+    # timeout's TERM reaches only part of the chain). Sweep the group before clearing WPID.
+    if kill -0 -- "-$WPID" 2>/dev/null; then
+        cleanup
+    fi
     WPID=""
     return "$rc"
 }
