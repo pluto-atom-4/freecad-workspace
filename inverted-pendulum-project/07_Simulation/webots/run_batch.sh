@@ -24,7 +24,7 @@
 #    or empty; warns if the source URDF is newer; never regenerates it silently.
 # 3. Runs Webots in batch mode (--batch --mode=fast --no-rendering --minimize).
 #    Falls back to xvfb-run if DISPLAY-related errors occur.
-#    Process-group cleanup: each launch (main and xvfb-run) runs as `setsid timeout ...`
+#    Process-group cleanup: each launch (main and xvfb-run) runs as `setsid timeout -k ...`
 #    in its own process group. That group is swept (TERM, sleep 1, KILL) on abort (EXIT,
 #    INT or TERM), and after a timeout or a normal exit if any member survives the leader.
 #    Only that pgid is signalled; processes are never matched by name.
@@ -52,10 +52,15 @@
 # Actual crashes, import errors, or malformed worlds will exit non-zero before timeout.
 #
 # KILL ESCALATION (#425): at the timeout, `timeout` sends TERM. If the child is still alive
-# KILL_GRACE_S seconds later, `timeout -k` sends KILL. Exit 137 (KILL needed) is a FAIL with
-# a "child ignored TERM and needed KILL" message; it is never retried and never a PASS.
-# Only exits 0 and 124 are PASS. --preserve-status is deliberately NOT used, so 124 stays 124.
-# Worst case standalone run: TIMEOUT_S + KILL_GRACE_S + 1 s (post-wait sweep sleep).
+# KILL_GRACE_S seconds later, `timeout -k` sends KILL. run_group rc 137 is a FAIL with a
+# "exited 137 (SIGKILL)" message: it means KILL escalation (child ignored TERM) or an external
+# SIGKILL/OOM. It is never retried and never a PASS. run_group rc 0 and 124 are PASS (the
+# script exits 0 on both). --preserve-status is deliberately NOT used, so 124 stays 124.
+# Worst case per launch: TIMEOUT_S + KILL_GRACE_S + 1 s (post-wait sweep sleep). With the xvfb
+# fallback there can be two launches, so up to 2 * (TIMEOUT_S + KILL_GRACE_S + 1) s.
+# Note: the Stage C/D/E test wrappers use an outer `timeout 20s`, which fires before the inner
+# TIMEOUT_S + KILL_GRACE_S, so the 137 path is only reachable standalone or with a lower
+# WEBOTS_TIMEOUT_S.
 
 set -euo pipefail
 
@@ -140,6 +145,12 @@ trap cleanup EXIT
 trap 'cleanup; exit 143' TERM
 trap 'cleanup; exit 130' INT
 
+# kill_fail LABEL: single source of the rc 137 FAIL text (main and xvfb paths use it, so the
+# wording cannot drift). Only prints; callers exit 1. Never retried, never a PASS.
+kill_fail() {
+    echo "FAIL: $1 exited 137 (SIGKILL): timeout escalated to KILL after the ${KILL_GRACE_S}s grace (child ignored TERM), or an external SIGKILL/OOM. Not retried; not a PASS."
+}
+
 # run_group OUT_FILE CMD [ARGS...]: run CMD under `timeout -k ${KILL_GRACE_S}s ${TIMEOUT_S}s`
 # inside its own session/process group, stdout+stderr to OUT_FILE. Returns the command's exit
 # code: 124 = timeout (TERM was enough, PASS); 137 = TERM ignored, KILL escalation after the
@@ -187,8 +198,8 @@ elif [ "$rc" -eq 124 ]; then
     tail -n 20 "$LOG_FILE"
     exit 0
 elif [ "$rc" -eq 137 ]; then
-    echo "FAIL: child ignored TERM and needed KILL (killed ${KILL_GRACE_S}s after the ${TIMEOUT_S}s timeout)."
-    echo "Not retried; not a PASS. Log tail:"
+    kill_fail "child"
+    echo "Log tail:"
     tail -n 20 "$LOG_FILE"
     exit 1
 fi
@@ -219,8 +230,8 @@ if grep -qiE "display|xcb|cannot open|EGL" "$LOG_FILE"; then
             tail -n 20 "$LOG_FILE.xvfb"
             exit 0
         elif [ "$rc" -eq 137 ]; then
-            echo "FAIL: xvfb-run child ignored TERM and needed KILL (killed ${KILL_GRACE_S}s after the ${TIMEOUT_S}s timeout)."
-            echo "Not a PASS. Log tail:"
+            kill_fail "xvfb-run child"
+            echo "Log tail:"
             tail -n 20 "$LOG_FILE.xvfb"
             exit 1
         else
