@@ -88,6 +88,11 @@ TEST_MAX_SIM_TIME_S = float(os.environ.get("TEST_MAX_SIM_TIME_S", "0"))
 # across both PID and LQR live logs (~-0.1084 to -0.1086 rad).
 THETA_REF_RAD = float(os.environ.get("THETA_REF_RAD", "-0.1086"))
 
+# Control-off switch (issue #406, informational run in the Stage E test).
+# Only the literal "1" turns it on. The LQR core still runs and its values are
+# still logged; only the wheel command is replaced by 0.0 rad/s.
+CONTROLLER_DISABLED = os.environ.get("CONTROLLER_DISABLED", "0") == "1"
+
 # Log file path
 LOG_PATH = Path(__file__).parent / "controller.log"
 
@@ -110,6 +115,8 @@ def main():
                 log_file.flush()
 
         log_msg("LQR controller started. Reading all sensors (IMU, Gyro, wheel position, pivot joints).", always_flush=True)
+        if CONTROLLER_DISABLED:
+            log_msg("CONTROLLER_DISABLED=1: wheel commands forced to 0.0 rad/s (control-off run; LQR core still computed and logged).", always_flush=True)
         log_msg(format_startup_rate_line(CONTROL_RATE_MS), always_flush=True)
         # LQR_Theta is offset-corrected (pitch - THETA_REF_RAD) to target true resting equilibrium; see issue #220
         log_msg("Time(s) IMU_Roll(rad) IMU_Pitch(rad) IMU_Yaw(rad) IMU_Ax(m/s2) IMU_Ay(m/s2) IMU_Az(m/s2) WheelL(rad) WheelR(rad) PivotL(rad) PivotR(rad) LQR_Theta(rad) LQR_ThetaDot(rad/s) LQR_Cmd_Raw LQR_Cmd_Clamped", always_flush=True)
@@ -154,7 +161,10 @@ def main():
                 if is_saturated(out.raw_cmd):
                     saturation_count += 1
 
-                hal.write_wheel_velocity(out.cmd_rad_s, out.cmd_rad_s)
+                if CONTROLLER_DISABLED:
+                    hal.write_wheel_velocity(0.0, 0.0)
+                else:
+                    hal.write_wheel_velocity(out.cmd_rad_s, out.cmd_rad_s)
 
                 sensor_log_count += 1
                 if should_log_row(sensor_log_count, SENSOR_LOG_THROTTLE):
