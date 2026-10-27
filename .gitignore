@@ -60,6 +60,8 @@ test*_results.json
 /inverted-pendulum-project/03_Parts/Generators/servo_link_config.json
 /inverted-pendulum-project/03_Parts/Generators/servo_placement.json
 /inverted-pendulum-project/03_Parts/Mechanical/feetech-STS3032_conversion_report.json
+# Phase 12 validator output; timestamp and absolute path change every run (#414).
+/inverted-pendulum-project/03_Parts/Generators/12_urdf_export_validation_report.json
 
 issue-content*.json
 

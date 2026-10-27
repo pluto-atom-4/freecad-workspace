@@ -174,7 +174,7 @@ Complete workflow for creating a two-wheel self-balancing robot assembly from St
 | 9 | `09_compute_mass_properties.py` | `09_mass_properties.json` | `freecadcmd -c` | ✅ |
 | 10 | `10_export_urdf.py` | `06_Exports/urdf/robot.urdf`, `06_Exports/urdf/meshes/`, `10_urdf_export_metadata.json` | `python3` | ✅ |
 | 11 | `11_validate_inertia.py` | `11_inertia_validation_report.json` | `python3` | ✅ |
-| 12 | `12_validate_urdf_export.py` | `12_urdf_export_validation_report.json` | `python3` | ✅ |
+| 12 | `12_validate_urdf_export.py` | `12_urdf_export_validation_report.json` (generated, gitignored) | `python3` | ✅ |
 
 **Run phases 7, 9-12 end-to-end:** `./run_urdf_export.sh`  
 **Run Phase 8 separately:** Requires FreeCAD MCP bridge (see Phase 8 section below for details)
@@ -440,7 +440,7 @@ python3 -m pytest -q test_12_validate_urdf_export.py
 ```
 
 **Output:**
-- `12_urdf_export_validation_report.json` — machine-readable pass/fail report with detailed per-check results and error descriptions
+- `12_urdf_export_validation_report.json` (generated, gitignored) — machine-readable pass/fail report with detailed per-check results and error descriptions
 - `pipeline_audit.log` (shared, appended with validation timestamp and per-check results via `log_event()`)
 - Console: human-readable summary of all 4 checks
 
