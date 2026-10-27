@@ -323,12 +323,14 @@ OFF_T=$LAST_T
 OFF_DRIFT=$DRIFT_MAX
 OFF_EXC=$EXCURSION
 OFF_MIN_EXC=$MIN_EXCURSION
+OFF_WEAK=$WEAK_WHEEL
+# OFF_MIN_EXC / OFF_WEAK are DISPLAY-ONLY: the control-off switch checks stay max-based on purpose.
 
 echo ""
 echo "Control-off comparison:"
 echo "  run          max|pitch|(rad)  last_t(s)  drift_max(rad/s, t>=${DRIFT_FROM_T}s)  excursion(rad)  min-wheel exc(rad)"
 echo "  normal       ${NORM_PITCH}           ${NORM_T}      ${NORM_DRIFT}                          ${NORM_EXC}  ${NORM_MIN_EXC} (${NORM_WEAK})"
-echo "  control-off  ${OFF_PITCH}           ${OFF_T}      ${OFF_DRIFT}                          ${OFF_EXC}  ${OFF_MIN_EXC} (${WEAK_WHEEL})"
+echo "  control-off  ${OFF_PITCH}           ${OFF_T}      ${OFF_DRIFT}                          ${OFF_EXC}  ${OFF_MIN_EXC} (${OFF_WEAK})"
 echo ""
 
 # Switch check: disabled wheels must hold (excursion and drift both below their bounds).

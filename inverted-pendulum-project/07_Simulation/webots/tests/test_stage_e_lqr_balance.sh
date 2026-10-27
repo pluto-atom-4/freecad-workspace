@@ -64,26 +64,29 @@ LAST_TIME_MIN_S=25           # both runs must log up to at least this simulated 
 # must also be under half of it. At these constants that clause is implied by the
 # absolute 0.001 bound (0.5 x 0.002 = 0.001), so it adds no separate constraint today.
 # Rounding: the pitch and drift checks compare the printed values (pitch %.4f, error
-# up to 5e-5 rad; drift %.5f, error up to 5e-6 rad/s).
+# up to 5e-5 rad; drift %.5f, error up to 5e-6 rad/s). The weaker-wheel excursion (#424) is
+# compared at the printed %.5f precision too (error up to 5e-6 rad, negligible against the 0.01 floor).
 DRIFT_MAX_RAD_S=0.001        # bounds the CONTROL-OFF run's drift (upper bound)
 # Normal-run drift bounds (rad/s, max over BOTH wheels, normal run only,
 # t >= DRIFT_WINDOW_START_S). The LQR at its correct setpoint drifts ~0.0042 rad/s on
 # this world (measured headless sim, PR #419: 0.00419). DRIFT_NORMAL_MIN_RAD_S is the
-# wheels-moved floor. DRIFT_NORMAL_MAX_RAD_S is a setpoint-correctness ceiling: a wrong
-# setpoint (THETA_REF_RAD=0) pins the wheels near -1.0 rad/s (measured headless sim,
-# PR #419: 0.99998). It is a setpoint-correctness gate, NOT proof of balancing.
-DRIFT_NORMAL_MIN_RAD_S=0.002 # bounds the NORMAL run's drift (lower bound)
+# max-wheel drift floor: it catches a run where the wheels creep less than this (the larger
+# of the two wheels' drift must reach it). DRIFT_NORMAL_MAX_RAD_S is a setpoint-correctness
+# ceiling: a wrong setpoint (THETA_REF_RAD=0) pins the wheels near -1.0 rad/s (measured
+# headless sim, PR #419: 0.99998). It is a setpoint-correctness gate, NOT proof of balancing.
+DRIFT_NORMAL_MIN_RAD_S=0.002 # max-wheel drift floor, normal run (lower bound)
 DRIFT_NORMAL_MAX_RAD_S=0.05  # bounds the NORMAL run's drift (upper bound, setpoint gate)
-# Per-wheel movement floor (#424). The max-over-wheels drift floor above passes a controller that
-# drives only one wheel, so the normal run also needs the WEAKER wheel's whole-run excursion (largest
-# minus smallest angle) >= this. Measured headless, PR #424 (normal run, 30 s, both wheels equal):
-# excursion 0.1217 rad per wheel, about 12x this floor, so 0.01 is a comfortable margin.
+# Per-wheel movement floor (#424): EACH wheel must have moved. The max-wheel drift floor above
+# passes a controller that drives only one wheel, so the normal run also needs the WEAKER wheel's
+# whole-run excursion (largest minus smallest angle) >= this. Measured headless sim, 2026-10-27
+# (PR #424, normal run, 30 s, both wheels equal): about 0.12 rad per wheel, roughly 12x this
+# floor, so 0.01 leaves a comfortable margin.
 MOVE_EXCURSION_MIN=0.01      # rad, weaker-wheel excursion floor (normal run only)
 
 echo "========================================"
 echo "Stage E: LQR Balance + Compatibility Harness"
 echo "========================================"
-echo "Test: Verify robot stays balanced (max |tilt| <= ${THRESHOLD_RAD}rad)"
+echo "Test: Verify robot stays balanced (max |tilt| <= ${THRESHOLD_RAD}rad); normal-run weaker-wheel excursion >= ${MOVE_EXCURSION_MIN}rad (#424)"
 echo "Sim time limit: ${SIM_LIMIT_S}s (TEST_MAX_SIM_TIME_S); wall-clock timeout: ${TIMEOUT_S}s"
 echo "World: $WORLD"
 echo "Controller log: $CONTROLLER_LOG"
@@ -170,17 +173,20 @@ run_webots_pass() {
     fi
 }
 
-# The single log parser, used for both runs. Prints one line:
-#   "max drift last good bad rerr first_bad_line first_READING_ERROR_line"
+# The single log parser, used for both runs. Prints one line of 10 fields:
+#   "max drift last good bad rerr first_bad_line first_READING_ERROR_line minexc weak"
 #   max   = max |IMU_Pitch| over accepted rows ("NONE" if none)
 #   drift = larger |least-squares slope| of WheelL and WheelR over t >= W
 #           ("NONE" if fewer than 2 accepted rows in that window)
 #   last  = time of the last accepted row (the largest, since times must increase)
 #   good / bad / rerr = accepted rows / malformed rows / READING_ERROR rows
-#   line numbers are 0 when there is none
+#   first_bad_line / first_READING_ERROR_line = line numbers, 0 when there is none
 #   minexc = the smaller of the WheelL and WheelR whole-run excursions (max-min over ALL
-#           accepted rows; "NONE" if none); weak = which wheel that is ("WheelL", "WheelR", or
-#           "NONE"; WheelL on a tie). Output is 10 fields in total.
+#           accepted rows; "NONE" if none)
+#   weak   = which wheel that is ("WheelL", "WheelR", or "NONE"; WheelL on a tie)
+# Number grammar: for TIME this parser rejects an exponent ("1e1"); Stage D accepts it. For
+# VALUES (pitch, wheels) this parser accepts "1."; Stage D rejects it. Known and deliberate:
+# the two awk parsers are kept separate, not unified.
 log_stats() {
     awk -v W="$DRIFT_WINDOW_START_S" '
       function num(x)      { return (x ~ /^[-+]?[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?$/) }
@@ -336,8 +342,10 @@ else
 fi
 echo ""
 
-# The switch is only testable if the normal run's wheels move (normal-run drift bounds above).
-# A controller that never writes to the wheels would otherwise pass the drift bounds vacuously.
+# The switch is only testable if the normal run's wheels move: this is the max-over-wheels drift
+# floor (DRIFT_NORMAL_MIN_RAD_S), and only it feeds WHEELS_MOVED -> SWITCH_OK. Without it, a
+# controller that never writes to the wheels would pass the drift bounds vacuously. The per-wheel
+# excursion floor (#424) is checked separately below and is a balance (normal-run) failure.
 WHEELS_MOVED=1
 if [ "$normal_drift" = "NONE" ] || ! num_test "$normal_drift" ">=" "$DRIFT_NORMAL_MIN_RAD_S"; then
     echo "FAIL: normal run's wheels did not move; the switch cannot be tested"
@@ -346,11 +354,16 @@ if [ "$normal_drift" = "NONE" ] || ! num_test "$normal_drift" ">=" "$DRIFT_NORMA
 fi
 
 # Per-wheel movement floor (#424): the max-over-wheels drift floor above passes a controller that
-# drives only one wheel, so the WEAKER wheel's whole-run excursion must also clear the floor.
-if [ "$normal_minexc" = "NONE" ] || ! num_test "$normal_minexc" ">=" "$MOVE_EXCURSION_MIN"; then
-    echo "FAIL: normal run's weaker wheel ${normal_weak} did not move: excursion $(show "$normal_minexc" rad) < ${MOVE_EXCURSION_MIN}rad (per-wheel movement floor); the switch cannot be tested"
-    WHEELS_MOVED=0
-elif [ "$WHEELS_MOVED" -eq 1 ]; then
+# drives only one wheel, so the WEAKER wheel's whole-run excursion must also clear the floor. This is
+# a NORMAL-run (balance) failure, reported once here. It does NOT feed WHEELS_MOVED: the switch check
+# still depends only on the max-wheel drift floor, so a one-wheel failure gives no second switch FAIL.
+if [ "$normal_minexc" = "NONE" ]; then
+    echo "FAIL: normal run has no data rows, so the per-wheel movement floor (#424) cannot be measured"
+    BALANCE_OK=0
+elif ! num_test "$normal_minexc" ">=" "$MOVE_EXCURSION_MIN"; then
+    echo "FAIL: normal run's weaker wheel ${normal_weak} did not move: excursion ${normal_minexc}rad < ${MOVE_EXCURSION_MIN}rad (per-wheel movement floor, #424)"
+    BALANCE_OK=0
+else
     echo "PASS: per-wheel movement floor: weaker wheel (${normal_weak}) excursion ${normal_minexc}rad >= ${MOVE_EXCURSION_MIN}rad"
 fi
 
