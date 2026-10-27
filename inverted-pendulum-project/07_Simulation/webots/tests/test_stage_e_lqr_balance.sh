@@ -4,7 +4,10 @@
 # Part 1: Balance validation (mirrors test_stage_d_balance.sh's pattern).
 # Runs the LQR controller against the undisturbed resting state and validates
 # the IMU pitch angle stays within acceptable bounds, and that the run reached
-# LAST_TIME_MIN_S of simulated time.
+# LAST_TIME_MIN_S of simulated time. It also gates the normal run's wheel drift
+# (max over both wheels, t >= DRIFT_WINDOW_START_S) at DRIFT_NORMAL_MAX_RAD_S:
+# a setpoint-correctness gate (e.g. THETA_REF_RAD=0 saturates the wheels at about
+# -1.0 rad/s). It is NOT proof of balancing.
 #
 # Part 2: Compatibility validation. Asserts LQR's controller reads/commands
 # the same core device set as PID's controller (imu, both wheel position
@@ -62,6 +65,11 @@ LAST_TIME_MIN_S=25           # both runs must log up to at least this simulated 
 # up to 5e-5 rad; drift %.5f, error up to 5e-6 rad/s).
 DRIFT_MAX_RAD_S=0.001
 DRIFT_NORMAL_MIN_RAD_S=0.002
+# Normal-run drift ceiling (rad/s, max over BOTH wheels, t >= DRIFT_WINDOW_START_S).
+# The LQR at its correct setpoint drifts ~0.0042 rad/s on this world. A wrong setpoint
+# (e.g. THETA_REF_RAD=0) pins the wheels near -1.0 rad/s. This is a setpoint-correctness
+# gate, NOT proof of balancing.
+DRIFT_NORMAL_MAX_RAD_S=0.05
 
 echo "========================================"
 echo "Stage E: LQR Balance + Compatibility Harness"
@@ -312,6 +320,13 @@ if [ "$normal_drift" = "NONE" ] || ! num_test "$normal_drift" ">=" "$DRIFT_NORMA
     echo "FAIL: normal run's wheels did not move; the switch cannot be tested"
     echo "  normal drift ${normal_drift} rad/s, floor ${DRIFT_NORMAL_MIN_RAD_S} rad/s"
     WHEELS_MOVED=0
+fi
+
+# Normal-run drift gate (setpoint correctness, NOT proof of balancing). A NONE drift is
+# already reported by the WHEELS_MOVED check above, so it is skipped here (no double report).
+if [ "$normal_drift" != "NONE" ] && ! num_test "$normal_drift" "<=" "$DRIFT_NORMAL_MAX_RAD_S"; then
+    echo "FAIL: normal run wheel drift ${normal_drift} rad/s > ${DRIFT_NORMAL_MAX_RAD_S} rad/s (t >= ${DRIFT_WINDOW_START_S}s): wheels are not holding the setpoint (check THETA_REF_RAD)"
+    BALANCE_OK=0
 fi
 
 # --- Part 3: Informational control-off run (CONTROLLER_DISABLED=1) ---
