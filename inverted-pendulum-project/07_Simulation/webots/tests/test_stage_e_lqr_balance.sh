@@ -4,7 +4,10 @@
 # Part 1: Balance validation (mirrors test_stage_d_balance.sh's pattern).
 # Runs the LQR controller against the undisturbed resting state and validates
 # the IMU pitch angle stays within acceptable bounds, and that the run reached
-# LAST_TIME_MIN_S of simulated time.
+# LAST_TIME_MIN_S of simulated time. It also gates the normal run's wheel drift
+# (max over both wheels, t >= DRIFT_WINDOW_START_S) at DRIFT_NORMAL_MAX_RAD_S:
+# a setpoint-correctness gate (e.g. THETA_REF_RAD=0 saturates the wheels at about
+# -1.0 rad/s). It is NOT proof of balancing.
 #
 # Part 2: Compatibility validation. Asserts LQR's controller reads/commands
 # the same core device set as PID's controller (imu, both wheel position
@@ -51,17 +54,23 @@ TIMEOUT_S=20                 # WALL-CLOCK timeout (real s). Pre-existing limit: 
 SIM_LIMIT_S=30               # SIMULATED-time limit passed to the controller (TEST_MAX_SIM_TIME_S)
 DRIFT_WINDOW_START_S=10      # simulated time from which wheel drift is measured
 LAST_TIME_MIN_S=25           # both runs must log up to at least this simulated time
-# Control-off drift bounds (rad/s, max over BOTH wheels). With the switch on, both
-# wheel commands are exactly 0.0, so the drift is float noise only; 0.001 leaves
-# margin over that. The normal LQR run drifts ~0.0042 rad/s on this world, so a dead
-# switch would sit above 0.001.
+# Control-off drift bounds (rad/s, max over BOTH wheels, control-off run only).
+# With the switch on, both wheel commands are exactly 0.0, so the drift is float
+# noise only; 0.001 leaves margin over that. A dead switch would sit above 0.001.
 # Defence in depth: when the normal drift is >= 0.002 rad/s, the control-off drift
 # must also be under half of it. At these constants that clause is implied by the
 # absolute 0.001 bound (0.5 x 0.002 = 0.001), so it adds no separate constraint today.
 # Rounding: the pitch and drift checks compare the printed values (pitch %.4f, error
 # up to 5e-5 rad; drift %.5f, error up to 5e-6 rad/s).
-DRIFT_MAX_RAD_S=0.001
-DRIFT_NORMAL_MIN_RAD_S=0.002
+DRIFT_MAX_RAD_S=0.001        # bounds the CONTROL-OFF run's drift (upper bound)
+# Normal-run drift bounds (rad/s, max over BOTH wheels, normal run only,
+# t >= DRIFT_WINDOW_START_S). The LQR at its correct setpoint drifts ~0.0042 rad/s on
+# this world (measured headless sim, PR #419: 0.00419). DRIFT_NORMAL_MIN_RAD_S is the
+# wheels-moved floor. DRIFT_NORMAL_MAX_RAD_S is a setpoint-correctness ceiling: a wrong
+# setpoint (THETA_REF_RAD=0) pins the wheels near -1.0 rad/s (measured headless sim,
+# PR #419: 0.99998). It is a setpoint-correctness gate, NOT proof of balancing.
+DRIFT_NORMAL_MIN_RAD_S=0.002 # bounds the NORMAL run's drift (lower bound)
+DRIFT_NORMAL_MAX_RAD_S=0.05  # bounds the NORMAL run's drift (upper bound, setpoint gate)
 
 echo "========================================"
 echo "Stage E: LQR Balance + Compatibility Harness"
@@ -305,13 +314,21 @@ else
 fi
 echo ""
 
-# The switch is only testable if the normal run's wheels move (the LQR drifts ~0.0042 rad/s).
+# The switch is only testable if the normal run's wheels move (normal-run drift bounds above).
 # A controller that never writes to the wheels would otherwise pass the drift bounds vacuously.
 WHEELS_MOVED=1
 if [ "$normal_drift" = "NONE" ] || ! num_test "$normal_drift" ">=" "$DRIFT_NORMAL_MIN_RAD_S"; then
     echo "FAIL: normal run's wheels did not move; the switch cannot be tested"
     echo "  normal drift ${normal_drift} rad/s, floor ${DRIFT_NORMAL_MIN_RAD_S} rad/s"
     WHEELS_MOVED=0
+fi
+
+# Normal-run drift gate (setpoint correctness, NOT proof of balancing). A NONE drift is
+# already reported by the WHEELS_MOVED check above, so it is skipped here (no double report).
+if [ "$normal_drift" != "NONE" ] && ! num_test "$normal_drift" "<=" "$DRIFT_NORMAL_MAX_RAD_S"; then
+    echo "FAIL: normal run wheel drift ${normal_drift} rad/s > ${DRIFT_NORMAL_MAX_RAD_S} rad/s (t >= ${DRIFT_WINDOW_START_S}s): wheels are not holding the setpoint (check THETA_REF_RAD)"
+    show_tail
+    BALANCE_OK=0
 fi
 
 # --- Part 3: Informational control-off run (CONTROLLER_DISABLED=1) ---
