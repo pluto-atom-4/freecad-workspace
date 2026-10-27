@@ -50,6 +50,12 @@
 #   - Reaching timeout means Webots successfully initialized, loaded the world, and ran
 #     without crashing — the expected healthy outcome for this smoke test.
 # Actual crashes, import errors, or malformed worlds will exit non-zero before timeout.
+#
+# KILL ESCALATION (#425): at the timeout, `timeout` sends TERM. If the child is still alive
+# KILL_GRACE_S seconds later, `timeout -k` sends KILL. Exit 137 (KILL needed) is a FAIL with
+# a "child ignored TERM and needed KILL" message; it is never retried and never a PASS.
+# Only exits 0 and 124 are PASS. --preserve-status is deliberately NOT used, so 124 stays 124.
+# Worst case standalone run: TIMEOUT_S + KILL_GRACE_S + 1 s (post-wait sweep sleep).
 
 set -euo pipefail
 
@@ -76,6 +82,8 @@ LOG_FILE="$SCRIPT_DIR/run_batch.log"
 PROTO_FILE="$SCRIPT_DIR/protos/InvertedPendulumRobot.proto"
 URDF_SOURCE="$SCRIPT_DIR/../../06_Exports/urdf/robot.urdf"
 TIMEOUT_S="${WEBOTS_TIMEOUT_S:-30}"
+# Fixed (not env-overridable) grace between the TERM at timeout and the KILL escalation (#425).
+KILL_GRACE_S=5
 
 # Fail fast: world file must exist.
 if [ ! -f "$WORLD" ]; then
@@ -132,14 +140,16 @@ trap cleanup EXIT
 trap 'cleanup; exit 143' TERM
 trap 'cleanup; exit 130' INT
 
-# run_group OUT_FILE CMD [ARGS...]: run CMD under `timeout ${TIMEOUT_S}s` inside its own
-# session/process group, stdout+stderr to OUT_FILE. Returns the command's exit code
-# (124 = timeout). Callers keep `set +e` around it.
+# run_group OUT_FILE CMD [ARGS...]: run CMD under `timeout -k ${KILL_GRACE_S}s ${TIMEOUT_S}s`
+# inside its own session/process group, stdout+stderr to OUT_FILE. Returns the command's exit
+# code: 124 = timeout (TERM was enough, PASS); 137 = TERM ignored, KILL escalation after the
+# grace (FAIL); 0 = normal exit. Any other code is passed through unchanged. Callers keep
+# `set +e` around it.
 run_group() {
     local out="$1"
     shift
     local rc=0
-    setsid timeout "${TIMEOUT_S}s" "$@" > "$out" 2>&1 &
+    setsid timeout -k "${KILL_GRACE_S}s" "${TIMEOUT_S}s" "$@" > "$out" 2>&1 &
     WPID=$!
     wait "$WPID" || rc=$?
     # The leader (timeout) can exit while group members survive: a member left the group,
@@ -176,6 +186,11 @@ elif [ "$rc" -eq 124 ]; then
     echo "(structural smoke test: init + run w/o crash confirmed; this world's controller is intentionally a no-op and never self-terminates, so hitting the timeout is the expected, healthy outcome, not a failure)"
     tail -n 20 "$LOG_FILE"
     exit 0
+elif [ "$rc" -eq 137 ]; then
+    echo "FAIL: child ignored TERM and needed KILL (killed ${KILL_GRACE_S}s after the ${TIMEOUT_S}s timeout)."
+    echo "Not retried; not a PASS. Log tail:"
+    tail -n 20 "$LOG_FILE"
+    exit 1
 fi
 
 echo "Direct invocation failed or exited non-zero. Log tail:"
@@ -203,6 +218,11 @@ if grep -qiE "display|xcb|cannot open|EGL" "$LOG_FILE"; then
             echo ""
             tail -n 20 "$LOG_FILE.xvfb"
             exit 0
+        elif [ "$rc" -eq 137 ]; then
+            echo "FAIL: xvfb-run child ignored TERM and needed KILL (killed ${KILL_GRACE_S}s after the ${TIMEOUT_S}s timeout)."
+            echo "Not a PASS. Log tail:"
+            tail -n 20 "$LOG_FILE.xvfb"
+            exit 1
         else
             echo "xvfb-run attempt also failed. Log tail:"
             tail -n 20 "$LOG_FILE.xvfb"
