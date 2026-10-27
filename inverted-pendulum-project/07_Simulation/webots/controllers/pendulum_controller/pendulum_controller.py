@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
 """Pendulum robot controller: PID balance control for pitch stabilization.
 
-Error = -pitch (setpoint 0 = upright). Sign UNVERIFIED (#359) — requires manual GUI test:
+Error = -(pitch - setpoint). Sign UNVERIFIED (#359) — requires manual GUI test:
 tilt robot and confirm wheels drive to correct not amplify the fall.
+
+PID_SETPOINT_RAD (#408) sets the pitch setpoint in rad. Default: unset (= 0), error = -pitch,
+behaviour unchanged. The value -0.1086 is the robot's rest pitch, which is the LQR design
+reference (lqr.theta_ref_rad in hal/parity_vectors.json); with it the PID error is ~0 at rest.
+Implemented as a controller-local shift of the IMU sample before PidBalance.step, so the
+core and its PID_Error sign are untouched. Non-numeric, empty, nan, inf, underscore and Unicode
+digit text exits 1 at startup, with the message in controller.log and stderr. "1e-400" parses
+to 0.0 and behaves as unset (accepted).
+Logging: IMU_Pitch is the REAL measured pitch; PID_Error is the core's error (shifted by the
+setpoint). The sign (#359) is still unresolved, so the setpoint sign is not verified either.
 
 Logging cadence: data rows are logged every Nth control tick (mean 20 ms), not
 every Nth 16 ms Webots step (changed in #346).
@@ -20,6 +30,9 @@ core output, NOT the applied wheel command. Used by tests/test_stage_d_balance.s
 
 import sys
 import os
+import dataclasses
+import math
+import re
 from pathlib import Path
 
 from controller import Supervisor
@@ -73,7 +86,31 @@ CONTROLLER_DISABLED = os.environ.get("CONTROLLER_DISABLED", "0") == "1"
 # Log file path
 LOG_PATH = Path(__file__).parent / "controller.log"
 
+# PID_SETPOINT_RAD (#408): plain ASCII decimal only (no nan, inf, underscores, Unicode digits, or empty text).
+_PLAIN_DECIMAL = re.compile(r"[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?")
+
+
+def parse_pid_setpoint(text):
+    """Return the PID setpoint in rad from PID_SETPOINT_RAD text; raise ValueError if invalid."""
+    s = text.strip()
+    if not _PLAIN_DECIMAL.fullmatch(s):
+        raise ValueError(f"PID_SETPOINT_RAD={text!r} is not a plain decimal number (e.g. -0.1086)")
+    value = float(s)
+    if not math.isfinite(value):
+        raise ValueError(f"PID_SETPOINT_RAD={text!r} is not finite")
+    return value
+
+
 def main():
+    raw_setpoint = os.environ.get("PID_SETPOINT_RAD")
+    try:
+        pid_setpoint = 0.0 if raw_setpoint is None else parse_pid_setpoint(raw_setpoint)
+    except ValueError as exc:
+        msg = f"ERROR: {exc}. Controller not started."
+        print(msg, file=sys.stderr)
+        LOG_PATH.write_text(msg + "\n")
+        return 1
+
     robot = Supervisor()
     try:
         hal = WebotsHal(robot, SENSOR_NAMES, MOTOR_NAMES, control_period_ms=CONTROL_RATE_MS)
@@ -101,6 +138,8 @@ def main():
         wheel_right_max_torque = float(hal.robot.getDevice(MOTOR_NAMES["wheel_right"]).getMaxTorque())
         log_msg(format_wheel_motors_line(wheel_left_max_vel, wheel_left_max_torque, wheel_right_max_vel, wheel_right_max_torque), always_flush=True)
         log_msg("NOTE: Pivot servo motors (pendulum_pivot_joint/pendulum_pivot_right_joint) intentionally left at Webots default position-hold this stage.", always_flush=True)
+        if pid_setpoint != 0.0:
+            log_msg(f"PID_SETPOINT_RAD={pid_setpoint:g}rad: PID error = -(pitch - setpoint). IMU_Pitch column is the REAL pitch; PID_Error is the core's shifted error.", always_flush=True)
         if CONTROLLER_DISABLED:
             log_msg("CONTROLLER_DISABLED=1: control-off run, wheel commands forced to 0.0 rad/s. PID_Cmd column is the PID core output, NOT the applied wheel command.", always_flush=True)
 
@@ -132,7 +171,8 @@ def main():
                 control_step_count += 1
                 control_fire_times.append(t)
 
-                out = core.step(imu, dt)
+                # Setpoint shift (#408): the core sees pitch - setpoint; the log keeps the real imu.
+                out = core.step(dataclasses.replace(imu, pitch_rad=imu.pitch_rad - pid_setpoint), dt)
 
                 if is_saturated(out.cmd_rad_s):
                     saturation_count += 1

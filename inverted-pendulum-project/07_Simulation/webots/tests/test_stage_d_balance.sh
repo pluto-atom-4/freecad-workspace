@@ -20,20 +20,36 @@
 # row FAILs the test. A sensor READING_ERROR row FAILs with its own message. CRLF
 # logs are accepted (CR stripped).
 #
-# Control-off pass (#405): after the normal run passes, the same world is run
-# again with CONTROLLER_DISABLED=1 (wheels commanded to 0 rad/s). The pitch
-# check cannot tell the two apart (both pass), so the wheel drift is the
-# switch check: the normal run must move the wheels (drift >= 0.002 rad/s, else
-# the switch cannot be tested) and the control-off run must hold them
-# (drift < 0.001 rad/s and < half the normal drift).
+# Thresholds (constants below; the reasons are given once, here):
+#   MOVE_EXCURSION_MIN   movement floor, normal run. Wheel excursion (largest minus
+#                        smallest wheel angle over the whole run, either wheel) must be
+#                        >= this. It only checks that the wheels moved at all, so a
+#                        controller that holds still later still passes.
+#   DRIFT_GATE_MAX       setpoint-correctness gate, normal run. Wheel drift (t >= 10 s)
+#                        must be <= this. Without the setpoint the PID drives the wheels
+#                        at a steady rate, which this catches. This is a SETPOINT-
+#                        CORRECTNESS gate, NOT proof of balancing: a passive model with
+#                        wheels held still passes the pitch check.
+#   OFF_EXCURSION_MAX,   switch check, control-off run (#405). The wheels must hold:
+#   OFF_DRIFT_MAX        excursion and drift both below these.
+#
+# Setpoint (#408): the normal run exports PID_SETPOINT_RAD=-0.1086 (the rest pitch,
+# which is the LQR theta_ref). An operator PID_SETPOINT_RAD in the environment is
+# IGNORED (a NOTE is printed if one is set).
+#
+# Control-off pass (#405): after the normal run passes, the same world runs again with
+# CONTROLLER_DISABLED=1 (wheels commanded to 0 rad/s). It gets the same PID_SETPOINT_RAD,
+# which is irrelevant with the wheels disabled. The pitch check cannot tell the two runs
+# apart, so the switch check uses wheel excursion and drift.
 #
 # Usage:
 #   cd inverted-pendulum-project/07_Simulation/webots
 #   bash tests/test_stage_d_balance.sh
 #
 # Exit code:
-#   0 if the normal run passes and the control-off switch check passes
-#   1 otherwise
+#   0 if the normal run passes (pitch, truncation, movement, drift gate) and the
+#     control-off switch check passes
+#   1 otherwise (including a controller that refuses to start on a bad PID_SETPOINT_RAD)
 
 set -euo pipefail
 
@@ -43,25 +59,25 @@ CONTROLLER_DIR="$WEBOTS_DIR/controllers/pendulum_controller"
 CONTROLLER_LOG="$CONTROLLER_DIR/controller.log"
 WORLD="$WEBOTS_DIR/worlds/pendulum_robot.wbt"
 
-# Test parameters
+# Test parameters (thresholds explained in the header)
 THRESHOLD_RAD=0.15
+# PID setpoint for both runs (#408): -0.1086 = rest pitch = LQR theta_ref.
+PID_SETPOINT_RAD_TEST=-0.1086
+MOVE_EXCURSION_MIN=0.01
+DRIFT_GATE_MAX=0.05
+OFF_EXCURSION_MAX=0.001
+OFF_DRIFT_MAX=0.001
 # Wall-clock cap per Webots run. Known limitation (pre-existing, not fixed here):
 # this outer timeout kills only run_batch.sh, so a Webots process can outlive it.
 TIMEOUT_S=20
 SIM_TIME_S=30         # simulated time per run (TEST_MAX_SIM_TIME_S)
 MIN_LAST_T_S=25       # a run whose last log row is earlier than this is truncated
 DRIFT_FROM_T=10       # drift window starts at first row with t >= this
-# Normal-run floor: today's PID drift is 0.2086 rad/s and the expected drift after
-# the setpoint fix (#408) is about 0.0034 rad/s, so 0.002 is below both.
-NORMAL_DRIFT_FLOOR=0.002
-# Disabled wheels hold exactly 0 rad/s; 0.001 leaves float margin. The control-off
-# drift must also be under half the normal drift.
-OFF_DRIFT_MAX=0.001
 
 echo "========================================"
 echo "Stage D: Balance Validation Harness"
 echo "========================================"
-echo "Test: Verify robot stays balanced (max |tilt| <= ${THRESHOLD_RAD}rad)"
+echo "Test: max |tilt| <= ${THRESHOLD_RAD}rad; normal-run wheel excursion >= ${MOVE_EXCURSION_MIN}rad; normal-run drift <= ${DRIFT_GATE_MAX}rad/s (setpoint gate, see DRIFT_GATE_MAX); control-off switch (#405)"
 echo "Sim time: ${SIM_TIME_S}s (TEST_MAX_SIM_TIME_S); wall-clock cap: ${TIMEOUT_S}s"
 echo "World: $WORLD"
 echo "Controller log: $CONTROLLER_LOG"
@@ -78,6 +94,10 @@ if [ -f "$CONTROLLER_LOG" ]; then
     rm -f "$CONTROLLER_LOG"
 fi
 
+if [ -n "${PID_SETPOINT_RAD+x}" ]; then
+    echo "NOTE: PID_SETPOINT_RAD=${PID_SETPOINT_RAD} is set in the environment and IGNORED; the test uses ${PID_SETPOINT_RAD_TEST}."
+fi
+
 # Run the simulation (batch mode, headless)
 echo "Running Webots (batch, headless)..."
 
@@ -87,7 +107,7 @@ echo "Running Webots (batch, headless)..."
 # CONTROLLER_DISABLED=0 is passed explicitly so an exported value cannot disable the normal run.
 export TEST_MAX_SIM_TIME_S=$SIM_TIME_S
 set +e
-(cd "$WEBOTS_DIR" && CONTROLLER_DISABLED=0 timeout "${TIMEOUT_S}s" ./run_batch.sh "$WORLD" > /dev/null 2>&1)
+(cd "$WEBOTS_DIR" && CONTROLLER_DISABLED=0 PID_SETPOINT_RAD="$PID_SETPOINT_RAD_TEST" timeout "${TIMEOUT_S}s" ./run_batch.sh "$WORLD" > /dev/null 2>&1)
 rc=$?
 set -e
 
@@ -116,8 +136,9 @@ fi
 #   Counted as malformed: any other data row that fails a check (field count != header,
 #   non-plain number in time/pitch/WheelL/WheelR, time not strictly increasing).
 #   Used rows feed: max |pitch|, last time (the largest), drift_max (larger absolute
-#   WheelL/WheelR rate over rows with t >= DRIFT_FROM_T).
-# Output: "STATUS max_pitch last_t drift_max bad rerr rows first_line_no"
+#   WheelL/WheelR rate over rows with t >= DRIFT_FROM_T), excursion (over ALL used rows:
+#   larger of the WheelL and WheelR max-minus-min angle).
+# Output: "STATUS max_pitch last_t drift_max bad rerr rows first_line_no excursion"
 #   STATUS is OK or NONE (no usable rows for the drift window).
 run_metrics() {
     awk -v from_t="$DRIFT_FROM_T" '
@@ -137,17 +158,24 @@ run_metrics() {
         last_t = t
         last_l = $8 + 0
         last_r = $9 + 0
+        if (n == 1 || last_l < min_l) min_l = last_l
+        if (n == 1 || last_l > max_l) max_l = last_l
+        if (n == 1 || last_r < min_r) min_r = last_r
+        if (n == 1 || last_r > max_r) max_r = last_r
         if (!have_w && t >= from_t) { have_w = 1; w_t = t; w_l = $8 + 0; w_r = $9 + 0 }
       }
       END {
+        ex_l = max_l - min_l
+        ex_r = max_r - min_r
+        exc = (ex_l > ex_r) ? ex_l : ex_r
         if (n == 0 || !have_w || last_t == w_t) {
-          printf "NONE 0 0 0 %d %d %d %d\n", bad, rerr, n, first_no; exit
+          printf "NONE 0 0 0 %d %d %d %d 0\n", bad, rerr, n, first_no; exit
         }
         dl = (last_l - w_l) / (last_t - w_t)
         dr = (last_r - w_r) / (last_t - w_t)
         dm = (dl < 0 ? -dl : dl)
         if ((dr < 0 ? -dr : dr) > dm) dm = (dr < 0 ? -dr : dr)
-        printf "OK %.4f %.3f %.5f %d %d %d %d\n", max_p, last_t, dm, bad, rerr, n, first_no
+        printf "OK %.4f %.3f %.5f %d %d %d %d %.5f\n", max_p, last_t, dm, bad, rerr, n, first_no, exc
       }
     ' "$1"
 }
@@ -161,23 +189,23 @@ show_bad_line() {
     tail -n 20 "$1"
 }
 
-# Sets CMP to 1 or 0 for awk expression $1 over a=$2, b=$3, c=$4. Exits 1 on any awk
+# Sets CMP to 1 or 0 for awk expression $1 over a=$2, b=$3, c=$4, d=$5. Exits 1 on any awk
 # failure or non-0/1 output, so an empty value can never pass a check.
 cmp_expr() {
-    CMP=$(awk -v a="$2" -v b="$3" -v c="${4:-}" "BEGIN { print ($1) ? 1 : 0 }") || CMP=""
+    CMP=$(awk -v a="$2" -v b="$3" -v c="${4:-}" -v d="${5:-}" "BEGIN { print ($1) ? 1 : 0 }") || CMP=""
     case "$CMP" in
         0|1) ;;
         *) echo "FAIL: internal comparison error for expression: $1" >&2; exit 1 ;;
     esac
 }
 
-# Sets PITCH_MAX, LAST_T, DRIFT_MAX (and counts) from controller log $2 (label $1).
-# Exits 1 on an unreadable log, a READING_ERROR row, a malformed row, or no usable rows.
+# Sets STATUS, PITCH_MAX, LAST_T, DRIFT_MAX, EXCURSION (and counts) from controller log $2
+# (label $1). Exits 1 on an unreadable log, a READING_ERROR row, a malformed row, or no usable rows.
 load_stats() {
     local label="$1" file="$2" out
     out=$(run_metrics "$file") || { echo "FAIL: ${label} controller log unreadable: $file"; exit 1; }
-    read -r STATUS PITCH_MAX LAST_T DRIFT_MAX BAD_ROWS RERR_ROWS N_ROWS FIRST_NO <<< "$out" || true
-    if [ -z "$STATUS" ] || [ -z "$PITCH_MAX" ] || [ -z "$LAST_T" ] || [ -z "$DRIFT_MAX" ] || [ -z "$BAD_ROWS" ] || [ -z "$RERR_ROWS" ] || [ -z "$N_ROWS" ] || [ -z "$FIRST_NO" ]; then
+    read -r STATUS PITCH_MAX LAST_T DRIFT_MAX BAD_ROWS RERR_ROWS N_ROWS FIRST_NO EXCURSION <<< "$out" || true
+    if [ -z "$STATUS" ] || [ -z "$PITCH_MAX" ] || [ -z "$LAST_T" ] || [ -z "$DRIFT_MAX" ] || [ -z "$BAD_ROWS" ] || [ -z "$RERR_ROWS" ] || [ -z "$N_ROWS" ] || [ -z "$FIRST_NO" ] || [ -z "$EXCURSION" ]; then
         echo "FAIL: ${label} controller log: could not parse metrics"
         exit 1
     fi
@@ -202,10 +230,12 @@ load_stats normal "$CONTROLLER_LOG"
 NORM_PITCH=$PITCH_MAX
 NORM_T=$LAST_T
 NORM_DRIFT=$DRIFT_MAX
+NORM_EXC=$EXCURSION
 
 echo "IMU data parsed from controller.log"
 echo "Max |IMU_Pitch|: ${NORM_PITCH}rad"
 echo "Last logged time: ${NORM_T}s"
+echo "Wheel excursion (whole run): ${NORM_EXC}rad"
 echo "Threshold: ${THRESHOLD_RAD}rad"
 echo ""
 
@@ -232,6 +262,28 @@ echo ""
 echo "Robot remained balanced through t=${NORM_T}s (measured last logged time)."
 echo ""
 
+# Movement floor (#405/#408): the normal run's wheels must have moved at all. Uses excursion
+# over the whole run, so a correct controller that settles to zero drift still passes.
+cmp_expr "a >= b" "$NORM_EXC" "$MOVE_EXCURSION_MIN"
+if [ "$CMP" -ne 1 ]; then
+    echo "FAIL: normal run's wheels did not move: wheel excursion ${NORM_EXC}rad < ${MOVE_EXCURSION_MIN}rad (movement floor); the switch cannot be tested"
+    exit 1
+fi
+echo "PASS: movement floor: normal-run wheel excursion ${NORM_EXC}rad >= ${MOVE_EXCURSION_MIN}rad"
+
+# Drift gate (#408): setpoint-correctness check, NOT proof of balancing.
+cmp_expr "a <= b" "$NORM_DRIFT" "$DRIFT_GATE_MAX"
+if [ "$CMP" -ne 1 ]; then
+    echo "FAIL: drift gate: normal-run wheel drift ${NORM_DRIFT} rad/s > ${DRIFT_GATE_MAX} rad/s (t >= ${DRIFT_FROM_T}s, PID_SETPOINT_RAD=${PID_SETPOINT_RAD_TEST})."
+    echo "      The controller is driving the wheels at a steady rate, so it is not holding the rest-pitch setpoint."
+    echo "      This is a setpoint-correctness gate, NOT proof of balancing."
+    echo "Last 20 lines of log:"
+    tail -n 20 "$CONTROLLER_LOG"
+    exit 1
+fi
+echo "PASS: drift gate: normal-run wheel drift ${NORM_DRIFT} rad/s <= ${DRIFT_GATE_MAX} rad/s"
+echo ""
+
 # ---------------------------------------------------------------------------
 # Control-off pass (#405). Runs after the normal result above is final.
 # ---------------------------------------------------------------------------
@@ -239,7 +291,7 @@ echo ""
 rm -f "$CONTROLLER_LOG"
 echo "Running Webots control-off pass (CONTROLLER_DISABLED=1)..."
 set +e
-(cd "$WEBOTS_DIR" && CONTROLLER_DISABLED=1 timeout "${TIMEOUT_S}s" ./run_batch.sh "$WORLD" > /dev/null 2>&1)
+(cd "$WEBOTS_DIR" && CONTROLLER_DISABLED=1 PID_SETPOINT_RAD="$PID_SETPOINT_RAD_TEST" timeout "${TIMEOUT_S}s" ./run_batch.sh "$WORLD" > /dev/null 2>&1)
 off_rc=$?
 set -e
 sleep 1
@@ -257,28 +309,22 @@ load_stats control-off "$CONTROLLER_LOG"
 OFF_PITCH=$PITCH_MAX
 OFF_T=$LAST_T
 OFF_DRIFT=$DRIFT_MAX
+OFF_EXC=$EXCURSION
 
 echo ""
-echo "Control-off comparison (drift window t >= ${DRIFT_FROM_T}s):"
-echo "  run          max|pitch|(rad)  last_t(s)  drift_max(rad/s)"
-echo "  normal       ${NORM_PITCH}           ${NORM_T}      ${NORM_DRIFT}"
-echo "  control-off  ${OFF_PITCH}           ${OFF_T}      ${OFF_DRIFT}"
+echo "Control-off comparison:"
+echo "  run          max|pitch|(rad)  last_t(s)  drift_max(rad/s, t>=${DRIFT_FROM_T}s)  excursion(rad)"
+echo "  normal       ${NORM_PITCH}           ${NORM_T}      ${NORM_DRIFT}                          ${NORM_EXC}"
+echo "  control-off  ${OFF_PITCH}           ${OFF_T}      ${OFF_DRIFT}                          ${OFF_EXC}"
 echo ""
 
-# Floor and switch checks compare the 5-decimal printed values (up to 5e-6 effective offset).
-cmp_expr "a >= b" "$NORM_DRIFT" "$NORMAL_DRIFT_FLOOR"
+# Switch check: disabled wheels must hold (excursion and drift both below their bounds).
+cmp_expr "a < b && c < d" "$OFF_EXC" "$OFF_EXCURSION_MAX" "$OFF_DRIFT" "$OFF_DRIFT_MAX"
 if [ "$CMP" -ne 1 ]; then
-    echo "FAIL: normal run's wheels did not move (drift ${NORM_DRIFT} rad/s < ${NORMAL_DRIFT_FLOOR}); the switch cannot be tested"
+    echo "FAIL: CONTROLLER_DISABLED=1 switch not effective: control-off excursion ${OFF_EXC} rad (need < ${OFF_EXCURSION_MAX}) and drift ${OFF_DRIFT} rad/s (need < ${OFF_DRIFT_MAX})"
     exit 1
 fi
-
-# Switch check: disabled wheels must hold, i.e. drift < OFF_DRIFT_MAX and < half the normal drift.
-cmp_expr "a < b && a < c / 2" "$OFF_DRIFT" "$OFF_DRIFT_MAX" "$NORM_DRIFT"
-if [ "$CMP" -ne 1 ]; then
-    echo "FAIL: CONTROLLER_DISABLED=1 switch not effective: control-off drift ${OFF_DRIFT} rad/s (need < ${OFF_DRIFT_MAX} and < half of normal ${NORM_DRIFT})"
-    exit 1
-fi
-echo "Switch check: control-off drift ${OFF_DRIFT} rad/s < ${OFF_DRIFT_MAX} and < half of normal ${NORM_DRIFT} rad/s (switch works)"
+echo "Switch check: control-off excursion ${OFF_EXC} rad < ${OFF_EXCURSION_MAX} and drift ${OFF_DRIFT} rad/s < ${OFF_DRIFT_MAX} (switch works)"
 
 cmp_expr "a >= b" "$OFF_T" "$MIN_LAST_T_S"
 if [ "$CMP" -ne 1 ]; then
