@@ -183,7 +183,7 @@ The source URDF references meshes via `package://inverted_pendulum_robot/meshes/
 
 ### run_gui.sh / run_batch.sh
 - Validate world file and WEBOTS_BIN.
-- PROTO guard (#398): fail if the PROTO is missing, not a regular file (a symlink to one is fine), or empty; warn if the source URDF is strictly newer (equal mtimes or a missing URDF give no warning); never regenerate unless `REGEN_PROTO=1` is set (only the exact value `1` counts; `true`/`yes` are ignored). With `REGEN_PROTO=1` the script runs `generate_proto.sh`, then re-checks that the PROTO exists and is non-empty.
+- PROTO guard (#398): fail if the PROTO is missing, not a regular file (a symlink to one is fine), unreadable, or empty; warn if the source URDF is strictly newer (equal mtimes or a missing URDF give no warning); never regenerate unless `REGEN_PROTO=1` is set (only the exact value `1` counts; `true`/`yes` are ignored). With `REGEN_PROTO=1` the script runs `generate_proto.sh`, then re-checks that the PROTO exists and is non-empty; the guard re-checks only that the PROTO exists and is non-empty after regeneration and cannot tell a no-op generator from a rewrite when an older PROTO is present.
 - Launch Webots (GUI or batch respectively).
 
 ### pendulum_robot.wbt

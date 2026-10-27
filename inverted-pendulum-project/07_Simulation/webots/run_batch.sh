@@ -10,6 +10,9 @@
 #                   the git-tracked protos/InvertedPendulumRobot.proto (the header
 #                   path changes). Only the exact value 1 opts in; true/yes/0 are
 #                   ignored and the guard applies. Default (unset) never regenerates.
+#                   After regeneration the guard re-checks only that the PROTO exists and is
+#                   non-empty; it cannot tell a no-op generator from a rewrite when an older
+#                   PROTO is present.
 #   (The URDF-newer warning fires only when the URDF is strictly newer; equal mtimes
 #    from a fresh clone, or a missing URDF, give no warning by design.)
 #   WEBOTS_BIN      Webots binary (default /usr/local/bin/webots).
@@ -95,8 +98,8 @@ if [ "${REGEN_PROTO:-0}" = "1" ]; then
         echo "FATAL: generate_proto.sh returned success but $PROTO_FILE is missing or empty." >&2
         exit 1
     fi
-elif [ ! -f "$PROTO_FILE" ] || [ ! -s "$PROTO_FILE" ]; then
-    echo "FATAL: PROTO not found, not a regular file, or empty: $PROTO_FILE" >&2
+elif [ ! -f "$PROTO_FILE" ] || [ ! -r "$PROTO_FILE" ] || [ ! -s "$PROTO_FILE" ]; then
+    echo "FATAL: PROTO not found, not a regular file, unreadable, or empty: $PROTO_FILE" >&2
     echo "Generate it first:  $SCRIPT_DIR/generate_proto.sh" >&2
     echo "(or re-run with REGEN_PROTO=1)" >&2
     exit 1
