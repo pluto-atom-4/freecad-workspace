@@ -24,6 +24,13 @@
 #    or empty; warns if the source URDF is newer; never regenerates it silently.
 # 3. Runs Webots in batch mode (--batch --mode=fast --no-rendering --minimize).
 #    Falls back to xvfb-run if DISPLAY-related errors occur.
+#    Process-group cleanup: each launch (main and xvfb-run) runs as `setsid timeout ...`
+#    in its own process group. That group is swept (TERM, sleep 1, KILL) on abort (EXIT,
+#    INT or TERM), and after a timeout or a normal exit if any member survives the leader.
+#    Only that pgid is signalled; processes are never matched by name.
+#    Requires util-linux `setsid` and GNU coreutils `timeout`. Assumes setsid does not fork when
+#    backgrounded from this non-interactive script, so $! equals the pgid. A signal arriving
+#    in the instant between fork and WPID assignment is not swept.
 #
 # NOTE: This is a STRUCTURAL SMOKE TEST only. It validates:
 #   - The world file is valid and loads.
@@ -108,8 +115,41 @@ elif [ "$URDF_SOURCE" -nt "$PROTO_FILE" ]; then
     echo "Continuing with the existing PROTO. To regenerate: REGEN_PROTO=1 (or ./generate_proto.sh)." >&2
 fi
 
-run_webots() {
-    timeout "${TIMEOUT_S}s" "$WEBOTS_BIN" --batch --mode=fast --no-rendering --minimize --stdout "$WORLD"
+# Process-group supervision. WPID is the pgid of the current launch (setsid makes the
+# launch a session/group leader, so its pid equals its pgid). cleanup() signals that group
+# only, by pid/pgid, idempotently.
+WPID=""
+cleanup() {
+    if [ -n "${WPID:-}" ]; then
+        kill -TERM -- "-$WPID" 2>/dev/null || true
+        sleep 1
+        kill -KILL -- "-$WPID" 2>/dev/null || true
+        WPID=""
+    fi
+    return 0
+}
+trap cleanup EXIT
+trap 'cleanup; exit 143' TERM
+trap 'cleanup; exit 130' INT
+
+# run_group OUT_FILE CMD [ARGS...]: run CMD under `timeout ${TIMEOUT_S}s` inside its own
+# session/process group, stdout+stderr to OUT_FILE. Returns the command's exit code
+# (124 = timeout). Callers keep `set +e` around it.
+run_group() {
+    local out="$1"
+    shift
+    local rc=0
+    setsid timeout "${TIMEOUT_S}s" "$@" > "$out" 2>&1 &
+    WPID=$!
+    wait "$WPID" || rc=$?
+    # The leader (timeout) can exit while group members survive: a member left the group,
+    # or the wrapper exited while webots-bin lives on. Sweep the group before clearing WPID.
+    # kill -0 may also match a zombie member; the sweep then costs the 1 s sleep, harmlessly.
+    if kill -0 -- "-$WPID" 2>/dev/null; then
+        cleanup
+    fi
+    WPID=""
+    return "$rc"
 }
 
 echo "Running Webots (batch, headless, smoke test) on: $WORLD"
@@ -117,7 +157,7 @@ echo "Log: $LOG_FILE"
 echo ""
 
 set +e
-run_webots > "$LOG_FILE" 2>&1
+run_group "$LOG_FILE" "$WEBOTS_BIN" --batch --mode=fast --no-rendering --minimize --stdout "$WORLD"
 rc=$?
 set -e
 
@@ -146,7 +186,7 @@ if grep -qiE "display|xcb|cannot open|EGL" "$LOG_FILE"; then
     echo "Detected a display-related failure — retrying with xvfb-run..."
     if command -v xvfb-run >/dev/null 2>&1; then
         set +e
-        timeout "${TIMEOUT_S}s" xvfb-run -a "$WEBOTS_BIN" --batch --mode=fast --no-rendering --minimize --stdout "$WORLD" > "$LOG_FILE.xvfb" 2>&1
+        run_group "$LOG_FILE.xvfb" xvfb-run -a "$WEBOTS_BIN" --batch --mode=fast --no-rendering --minimize --stdout "$WORLD"
         rc=$?
         set -e
         if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ]; then
