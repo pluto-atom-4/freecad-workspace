@@ -11,6 +11,11 @@ Gains are placeholders pending real tuning. PID stability is untested. Webots be
 is unverified.
 
 Loop runs through hal.webots_hal.WebotsHal and hal.control_core.PidBalance.
+
+CONTROLLER_DISABLED=1 (exact value "1" only; any other value, including unset, leaves the
+controller on) sends 0.0/0.0 rad/s to the wheels instead of the PID output. The PID core
+still runs and its output is logged, so while the switch is on the PID_Cmd column is the
+core output, NOT the applied wheel command. Used by tests/test_stage_d_balance.sh (#405).
 """
 
 import sys
@@ -61,6 +66,10 @@ SENSOR_LOG_THROTTLE = int(os.environ.get("SENSOR_LOG_THROTTLE", "50"))
 # Simulation time limit for automated testing (0 = disabled)
 TEST_MAX_SIM_TIME_S = float(os.environ.get("TEST_MAX_SIM_TIME_S", "0"))
 
+# Control-off switch for informational test runs (#405). CONTROLLER_DISABLED=1 sends
+# 0.0 rad/s to both wheels instead of the PID output; the PID still runs and is logged.
+CONTROLLER_DISABLED = os.environ.get("CONTROLLER_DISABLED", "0") == "1"
+
 # Log file path
 LOG_PATH = Path(__file__).parent / "controller.log"
 
@@ -92,6 +101,8 @@ def main():
         wheel_right_max_torque = float(hal.robot.getDevice(MOTOR_NAMES["wheel_right"]).getMaxTorque())
         log_msg(format_wheel_motors_line(wheel_left_max_vel, wheel_left_max_torque, wheel_right_max_vel, wheel_right_max_torque), always_flush=True)
         log_msg("NOTE: Pivot servo motors (pendulum_pivot_joint/pendulum_pivot_right_joint) intentionally left at Webots default position-hold this stage.", always_flush=True)
+        if CONTROLLER_DISABLED:
+            log_msg("CONTROLLER_DISABLED=1: control-off run, wheel commands forced to 0.0 rad/s. PID_Cmd column is the PID core output, NOT the applied wheel command.", always_flush=True)
 
         control_step_count = 0
         control_fire_times = []
@@ -126,7 +137,10 @@ def main():
                 if is_saturated(out.cmd_rad_s):
                     saturation_count += 1
 
-                hal.write_wheel_velocity(out.cmd_rad_s, out.cmd_rad_s)
+                if CONTROLLER_DISABLED:
+                    hal.write_wheel_velocity(0.0, 0.0)
+                else:
+                    hal.write_wheel_velocity(out.cmd_rad_s, out.cmd_rad_s)
 
                 sensor_log_count += 1
                 if should_log_row(sensor_log_count, SENSOR_LOG_THROTTLE):
