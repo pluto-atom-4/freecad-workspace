@@ -554,7 +554,7 @@ lines. By default the bridge ignores the firmware's text lines. `--text-log PATH
 timestamps (a fresh file per run) and `--echo-text` prints them to stderr with a `[fw] ` prefix; both
 are off by default. Escaping: a literal backslash and any non-printable character are written as
 fixed-width escapes (`\xNN`, `\uNNNN`, `\UNNNNNNNN`); a line over 512 chars is cut and ends with
-`[truncated]`. The file and the echo are disabled independently: a failed echo (for example `| head`)
+`[truncated]`. The file and the echo are disabled independently: a failed echo (for example `2>&1 | head`)
 keeps the file, and a file error keeps the echo. This is unit-tested against a fake serial source
 ONLY, not run on hardware. The two-run flow above stays valid; a single run with `--text-log` is an
 option that has not been tried. BRC balancing-robot-controller#159 has the matching capture steps.

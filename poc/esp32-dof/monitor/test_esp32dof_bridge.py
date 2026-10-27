@@ -16,6 +16,7 @@ import io
 import itertools
 import json
 import math
+import os
 import socket
 import subprocess
 import sys
@@ -1310,15 +1311,16 @@ class _CollectSink:
 
 
 class _FailFh:
-    """File stand-in whose write always fails with an ENOSPC-like OSError."""
+    """File stand-in whose write always raises exc (default: an ENOSPC-like OSError)."""
 
-    def __init__(self):
+    def __init__(self, exc=None):
+        self.exc = exc if exc is not None else OSError(28, "No space left on device")
         self.writes = 0
         self.closed = False
 
     def write(self, s):
         self.writes += 1
-        raise OSError(28, "No space left on device")
+        raise self.exc
 
     def flush(self):
         pass
@@ -1340,27 +1342,18 @@ class _RecordingStderr:
         pass
 
 
-class _ClosedStderr:
-    """Stands in for a closed stderr: every call raises ValueError."""
-
-    def write(self, s):
-        raise ValueError("I/O operation on closed file")
-
-    def flush(self):
-        raise ValueError("I/O operation on closed file")
-
-
 class _FlakyStderr:
-    """The first write() raises (broken pipe, e.g. `| head`); later calls are recorded."""
+    """The first write() raises exc (e.g. a broken pipe from `| head`); later calls are recorded."""
 
-    def __init__(self):
+    def __init__(self, exc):
+        self.exc = exc
         self.calls = []
         self._failed = False
 
     def write(self, s):
         if not self._failed:
             self._failed = True
-            raise OSError(32, "Broken pipe")
+            raise self.exc
         self.calls.append(s)
 
     def flush(self):
@@ -1406,6 +1399,23 @@ class _CloseDuringWriteFh:
         self.closed = True
 
 
+class _ClockThatBreaks:
+    """Works for the constructor's clock() call, then raises on every later call."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        if self.calls > 1:
+            raise RuntimeError("clock broke")
+        return 0.0
+
+
+ECHO_FAILURES = [OSError(32, "Broken pipe"), ValueError("I/O operation on closed file")]
+FILE_FAILURES = [OSError(28, "No space left on device"), ValueError("I/O operation on closed file")]
+
+
 def _fake_serial(monkeypatch, lines):
     """serial_lines() returns iter(lines): an iterator passed in comes back as the same object."""
     fake = types.ModuleType("dof_serial")
@@ -1426,7 +1436,7 @@ def _capture_polled(monkeypatch):
 
 def _fw_lines():
     """Armed still stream with text lines interleaved, plus control chars. The real dof_serial
-    drops empty lines, so no empty-line fixture here (the tee unit test covers ''). """
+    drops empty lines, so no empty-line fixture here (the tee unit test covers '')."""
     out = []
     for i, ln in enumerate(still_lines(60)):
         out.append(ln)
@@ -1530,8 +1540,9 @@ def test_echo_is_one_stderr_write_per_line(monkeypatch):
     assert err.calls == ["[fw] boot\\x1b\n"]
 
 
-def test_closed_stderr_echo_disables_echo_only_and_file_keeps_rows(tmp_path, monkeypatch):
-    err = _FlakyStderr()
+@pytest.mark.parametrize("exc", ECHO_FAILURES, ids=["oserror", "valueerror"])
+def test_echo_failure_disables_echo_only_and_file_keeps_rows(tmp_path, monkeypatch, exc):
+    err = _FlakyStderr(exc)
     monkeypatch.setattr(sys, "stderr", err)
     path = tmp_path / "fw.txt"
     sink = b.TextSink(path, echo=True, clock=FakeClock(), wall_clock=lambda: "W")
@@ -1543,11 +1554,12 @@ def test_closed_stderr_echo_disables_echo_only_and_file_keeps_rows(tmp_path, mon
     assert path.read_text(encoding="utf-8") == "0.000\tW\ta\n0.000\tW\tb\n"
 
 
-def test_file_error_disables_file_only_and_echo_keeps_going(monkeypatch):
+@pytest.mark.parametrize("exc", FILE_FAILURES, ids=["oserror", "valueerror"])
+def test_file_failure_disables_file_only_and_echo_keeps_going(monkeypatch, exc):
     err = _RecordingStderr()
     monkeypatch.setattr(sys, "stderr", err)
     sink = b.TextSink(None, echo=True, clock=FakeClock())
-    fail = _FailFh()
+    fail = _FailFh(exc)
     sink._fh = fail
     sink.write("a")
     sink.write("b")
@@ -1568,6 +1580,51 @@ def test_file_write_error_warns_once(capsys):
     assert capsys.readouterr().err.count("firmware text file disabled") == 1
     sink.close()
     assert fail.closed
+
+
+def test_arbitrary_exception_from_clock_does_not_escape_and_disables_file_only(tmp_path, monkeypatch):
+    err = _RecordingStderr()
+    monkeypatch.setattr(sys, "stderr", err)
+    path = tmp_path / "fw.txt"
+    sink = b.TextSink(path, echo=True, clock=_ClockThatBreaks())   # clock() breaks after the ctor
+    sink.write("a")                                    # RuntimeError inside the file path only
+    sink.write("b")
+    sink.close()
+    assert err.calls[0].startswith("dof_wheel_bridge: warning: firmware text file disabled")
+    assert "clock broke" in err.calls[0]
+    assert err.calls[1:] == ["[fw] a\n", "[fw] b\n"]   # echo still works
+    assert path.read_text(encoding="utf-8") == ""      # no rows: the file path was disabled
+
+
+def test_arbitrary_exception_from_stderr_disables_echo_only(tmp_path, monkeypatch):
+    err = _FlakyStderr(TypeError("boom"))
+    monkeypatch.setattr(sys, "stderr", err)
+    path = tmp_path / "fw.txt"
+    sink = b.TextSink(path, echo=True, clock=FakeClock(), wall_clock=lambda: "W")
+    sink.write("a")
+    sink.write("b")
+    sink.close()
+    assert len(err.calls) == 1 and "firmware text echo disabled" in err.calls[0]
+    assert path.read_text(encoding="utf-8") == "0.000\tW\ta\n0.000\tW\tb\n"
+
+
+def test_sanitize_failure_never_escapes_write(tmp_path, monkeypatch):
+    err = _RecordingStderr()
+    monkeypatch.setattr(sys, "stderr", err)
+
+    def boom(_line):
+        raise RuntimeError("sanitize broke")
+
+    monkeypatch.setattr(b, "sanitize_text", boom)
+    path = tmp_path / "fw.txt"
+    sink = b.TextSink(path, echo=True, clock=FakeClock())
+    sink.write("a")                                    # must not raise
+    sink.write("b")
+    sink.close()
+    assert path.read_text(encoding="utf-8") == ""
+    assert len(err.calls) == 2                         # one warning per path, then both are off
+    assert all(c.startswith("dof_wheel_bridge: warning: firmware text") for c in err.calls)
+    assert not any(c.startswith("[fw]") for c in err.calls)
 
 
 def test_stderr_none_never_raises_and_file_keeps_rows(tmp_path, monkeypatch):
@@ -1649,17 +1706,17 @@ def test_sanitize_exact_cap_is_not_truncated():
     assert b.sanitize_text("x" * 513) == "x" * 501 + "[truncated]"
 
 
-def test_sanitize_truncation_marker_counts_inside_cap_and_is_bounded():
-    assert len(b.sanitize_text("x" * 600)) == b.TEXT_LINE_MAX
-    assert b.sanitize_text("x" * 600).endswith("[truncated]")
+def test_truncation_budget_is_501_chars_plus_marker():
+    assert b.sanitize_text("x" * 600) == "x" * 501 + "[truncated]"
+    assert len(b.sanitize_text("x" * 600)) == b.TEXT_LINE_MAX    # 501 + 11 = 512
     assert b.sanitize_text("\x1b" * 300) == "\\x1b" * 125 + "[truncated]"
     assert b.sanitize_text("x" * 511 + "\x1b") == "x" * 501 + "[truncated]"
     assert b.sanitize_text("​" * 200) == "\\u200b" * 83 + "[truncated]"
     assert b.sanitize_text("\\" * 600) == "\\\\" * 250 + "[truncated]"
 
 
-def test_sanitize_does_not_split_a_u_escape_at_the_cap():
-    # "\U000e0001" is 10 chars and would straddle position 512 if it were kept whole.
+def test_cap_straddle_drops_the_u_escape_whole():
+    # "\U000e0001" is 10 chars; after 509 x's it would cross the 512 cap. It is dropped whole.
     out = b.sanitize_text("x" * 509 + "\U000e0001")
     assert out == "x" * 501 + "[truncated]"
     assert "\\U" not in out
@@ -1751,10 +1808,17 @@ def test_same_file_helper_distinguishes_different_files(tmp_path):
     assert b._same_file("\0bad", str(tmp_path / "a.csv")) is False   # bad path: not same, no raise
 
 
+def test_same_file_helper_symlink_loop_does_not_raise(tmp_path):
+    loop1, loop2 = tmp_path / "loop1", tmp_path / "loop2"
+    loop1.symlink_to(loop2)
+    loop2.symlink_to(loop1)
+    assert b._same_file(str(loop1), str(tmp_path / "a.csv")) is False
+
+
 @pytest.mark.parametrize("spelling", ["identical", "relative_vs_absolute", "symlink"])
 def test_text_log_same_file_as_record_is_rejected(tmp_path, monkeypatch, capsys, spelling):
     record = tmp_path / "same.csv"
-    record.write_text("", encoding="utf-8")
+    record.write_text("KEEP", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     if spelling == "identical":
         text_log = "same.csv"
@@ -1768,7 +1832,20 @@ def test_text_log_same_file_as_record_is_rejected(tmp_path, monkeypatch, capsys,
         b.main(["--port", "/dev/fake", "--text-log", text_log, "--record", "same.csv"])
     assert ei.value.code == 2
     assert "must not be the same file" in capsys.readouterr().err
-    assert record.read_text(encoding="utf-8") == ""     # not truncated by the rejected run
+    assert record.read_text(encoding="utf-8") == "KEEP"   # rejected before any open or truncate
+
+
+def test_text_log_hard_link_to_record_is_rejected(tmp_path, monkeypatch, capsys):
+    record = tmp_path / "rec.csv"
+    record.write_text("KEEP", encoding="utf-8")
+    hard = tmp_path / "hard.csv"
+    os.link(record, hard)                              # same inode, different name
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as ei:
+        b.main(["--port", "/dev/fake", "--text-log", "hard.csv", "--record", "rec.csv"])
+    assert ei.value.code == 2
+    assert "must not be the same file" in capsys.readouterr().err
+    assert record.read_text(encoding="utf-8") == "KEEP"
 
 
 @pytest.mark.parametrize("bad_path, reason", [
@@ -1785,3 +1862,29 @@ def test_unopenable_text_log_returns_2_with_one_named_error_line(
     assert err_lines[0].startswith("dof_wheel_bridge: error: --text-log: cannot open ")
     assert repr(bad_path) in err_lines[0]
     assert reason in err_lines[0]
+
+
+def test_unopenable_text_log_leaves_existing_record_untouched(tmp_path, monkeypatch, capsys):
+    record = tmp_path / "rec.csv"
+    record.write_text("KEEP", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    rc = b.main(["--port", "/dev/fake", "--text-log", "no/such/fw.txt", "--record", "rec.csv",
+                 "--udp-port", str(free_udp_port())])
+    assert rc == 2
+    assert "--text-log: cannot open" in capsys.readouterr().err
+    assert record.read_text(encoding="utf-8") == "KEEP"   # record opened only after the sink
+
+
+def test_symlink_loop_text_log_exits_2_without_traceback(tmp_path, monkeypatch, capsys):
+    record = tmp_path / "rec.csv"
+    record.write_text("KEEP", encoding="utf-8")
+    loop1, loop2 = tmp_path / "loop1", tmp_path / "loop2"
+    loop1.symlink_to(loop2)
+    loop2.symlink_to(loop1)
+    monkeypatch.chdir(tmp_path)
+    rc = b.main(["--port", "/dev/fake", "--text-log", str(loop1), "--record", "rec.csv",
+                 "--udp-port", str(free_udp_port())])  # must return, not raise
+    assert rc == 2
+    err_lines = [ln for ln in capsys.readouterr().err.splitlines() if ln]
+    assert len(err_lines) == 1 and err_lines[0].startswith("dof_wheel_bridge: error: --text-log:")
+    assert record.read_text(encoding="utf-8") == "KEEP"

@@ -52,6 +52,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import queue
 import socket
 import sys
@@ -372,14 +373,17 @@ def _wall_iso() -> str:
 class TextSink:
     """Firmware text lines -> optional file (path) and/or stderr (echo). Thread-safe.
 
-    write() runs on the serial reader thread and never raises. The file gets one row per write and
-    is flushed after each row. The board prints about 10 Hz [imu] lines plus 1 Hz stats, so this is
-    about 11 lines/s, and a per-write flush is cheap at that rate; a tail line is never left in the
-    buffer. The file is opened with mode "w", so it is fresh per run.
+    write() runs on the serial reader thread and never raises, for any exception. The file gets one
+    row per write and is flushed after each row. Per-write flush is cheap at the rates seen on the
+    board: the BRC tilt_servo build (README Step D) prints about 10 Hz [imu] lines plus 1 Hz stats,
+    and a tail line is never left in the buffer. The file is opened with mode "w", so it is fresh
+    per run.
 
-    The file and the echo are disabled independently. The first OSError or ValueError on the file
-    disables only the file capture. The first failed echo (closed or broken stderr, or no stderr at
-    all) disables only the echo. Each one prints at most one warning, best-effort.
+    The file and the echo are disabled independently. The first exception on the file path (open
+    row write, flush, or the clock/timestamp calls) disables only the file capture. The first
+    exception on the echo path (closed or broken stderr, or no stderr at all) disables only the
+    echo. Each one prints at most one warning, best-effort. A sanitize_text() failure affects both
+    paths, since neither can produce a line.
 
     Timestamps are clock() minus _t0, the clock() value taken at construction. main() builds the sink
     before WheelPublisher and SerialImuHal, and so before serial_lines() opens the port.
@@ -408,14 +412,14 @@ class TextSink:
             sys.stderr.write(f"dof_wheel_bridge: warning: firmware text {kind} disabled after "
                              f"error: {exc}\n")
             sys.stderr.flush()
-        except (OSError, ValueError, AttributeError):
+        except Exception:
             pass
 
     def _echo_line(self, clean: str) -> None:
         try:
             sys.stderr.write(f"{TEXT_ECHO_PREFIX}{clean}\n")   # one write: no mid-line interleave
             sys.stderr.flush()
-        except (OSError, ValueError, AttributeError) as exc:
+        except Exception as exc:
             with self._lock:
                 first = not self._echo_disabled
                 self._echo_disabled = True
@@ -424,22 +428,34 @@ class TextSink:
 
     def write(self, line: str) -> None:
         file_warn = None
+        echo_warn = None
         echo_text = None
         with self._lock:
             if self._closed:
                 return
-            clean = sanitize_text(line)
-            if self._fh is not None and not self._file_disabled:
+            file_wanted = self._fh is not None and not self._file_disabled
+            echo_wanted = self._echo and not self._echo_disabled
+            clean = None
+            if file_wanted:
                 try:
+                    clean = sanitize_text(line)
                     self._fh.write(f"{self._clock() - self._t0:.3f}\t{self._wall()}\t{clean}\n")
                     self._fh.flush()
-                except (OSError, ValueError) as exc:
+                except Exception as exc:
                     self._file_disabled = True
                     file_warn = exc
-            if self._echo and not self._echo_disabled:
-                echo_text = clean
+            if echo_wanted:
+                try:
+                    if clean is None:
+                        clean = sanitize_text(line)
+                    echo_text = clean
+                except Exception as exc:
+                    self._echo_disabled = True
+                    echo_warn = exc
         if file_warn is not None:
             self._warn("file", file_warn)
+        if echo_warn is not None:
+            self._warn("echo", echo_warn)
         if echo_text is not None:
             self._echo_line(echo_text)
 
@@ -453,7 +469,7 @@ class TextSink:
             if fh is not None:
                 try:
                     fh.close()
-                except (OSError, ValueError) as exc:
+                except Exception as exc:
                     if not self._file_disabled:
                         self._file_disabled = True
                         file_warn = exc
@@ -473,10 +489,18 @@ def _tee_text(lines, sink):
 
 
 def _same_file(first: str, second: str) -> bool:
-    """True when both spellings resolve to the same path (symlinks followed). Bad paths: False."""
+    """True when both names are the same file: equal realpaths (symlinks followed), or, when both
+    exist, the same inode (hard links). os.path.realpath does not raise on a symlink loop, unlike
+    Path.resolve() on Python 3.11. Any error (bad path, loop, permission) gives False, and the
+    later open reports the real problem.
+    """
     try:
-        return Path(first).resolve() == Path(second).resolve()
-    except (OSError, ValueError):
+        if os.path.realpath(first) == os.path.realpath(second):
+            return True
+        if os.path.exists(first) and os.path.exists(second):
+            return os.path.samefile(first, second)
+        return False
+    except Exception:
         return False
 
 
@@ -706,8 +730,6 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
     hal = pub = record_fh = text_sink = None
     progress = {"ever_armed": False}
     try:
-        if args.record is not None:
-            record_fh = open(args.record, "w", newline="", encoding="utf-8")
         if want_text:
             try:
                 text_sink = TextSink(args.text_log, echo=args.echo_text, clock=clock)
@@ -715,6 +737,9 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
                 print(f"dof_wheel_bridge: error: --text-log: cannot open {args.text_log!r}: "
                       f"{getattr(exc, 'strerror', None) or exc}", file=sys.stderr, flush=True)
                 return 2
+        if args.record is not None:
+            # After the text sink: a bad --text-log path exits 2 and leaves an existing record intact.
+            record_fh = open(args.record, "w", newline="", encoding="utf-8")
         pub = WheelPublisher(port=args.udp_port)
         hal = SerialImuHal(_make_source(args, text_sink=text_sink), reference_pitch_rad=ref,
                            alpha=args.alpha, clock=clock)
