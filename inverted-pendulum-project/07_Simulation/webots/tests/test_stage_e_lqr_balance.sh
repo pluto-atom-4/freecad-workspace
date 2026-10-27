@@ -19,7 +19,8 @@
 # Runs the same world again with CONTROLLER_DISABLED=1 (the LQR core still runs
 # and logs, but both wheel commands are forced to 0.0 rad/s). The switch check
 # asserts that it works: the normal run's wheels must move (max wheel drift over
-# both wheels >= 0.002 rad/s for t >= 10 s, else the switch cannot be tested), and
+# both wheels >= 0.002 rad/s for t >= 10 s, AND the weaker wheel's whole-run excursion
+# >= 0.01 rad (#424, so one-wheel control fails), else the switch cannot be tested), and
 # the control-off drift must be < 0.001 rad/s (and under half the normal drift), and
 # the run must reach LAST_TIME_MIN_S of simulated time before the wall-clock
 # timeout. If the control-off run also passes the pitch check, a NOTE says the
@@ -73,6 +74,11 @@ DRIFT_MAX_RAD_S=0.001        # bounds the CONTROL-OFF run's drift (upper bound)
 # PR #419: 0.99998). It is a setpoint-correctness gate, NOT proof of balancing.
 DRIFT_NORMAL_MIN_RAD_S=0.002 # bounds the NORMAL run's drift (lower bound)
 DRIFT_NORMAL_MAX_RAD_S=0.05  # bounds the NORMAL run's drift (upper bound, setpoint gate)
+# Per-wheel movement floor (#424). The max-over-wheels drift floor above passes a controller that
+# drives only one wheel, so the normal run also needs the WEAKER wheel's whole-run excursion (largest
+# minus smallest angle) >= this. Measured headless, PR #424 (normal run, 30 s, both wheels equal):
+# excursion 0.1217 rad per wheel, about 12x this floor, so 0.01 is a comfortable margin.
+MOVE_EXCURSION_MIN=0.01      # rad, weaker-wheel excursion floor (normal run only)
 
 echo "========================================"
 echo "Stage E: LQR Balance + Compatibility Harness"
@@ -172,6 +178,9 @@ run_webots_pass() {
 #   last  = time of the last accepted row (the largest, since times must increase)
 #   good / bad / rerr = accepted rows / malformed rows / READING_ERROR rows
 #   line numbers are 0 when there is none
+#   minexc = the smaller of the WheelL and WheelR whole-run excursions (max-min over ALL
+#           accepted rows; "NONE" if none); weak = which wheel that is ("WheelL", "WheelR", or
+#           "NONE"; WheelL on a tie). Output is 10 fields in total.
 log_stats() {
     awk -v W="$DRIFT_WINDOW_START_S" '
       function num(x)      { return (x ~ /^[-+]?[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?$/) }
@@ -191,6 +200,11 @@ log_stats() {
         p = absf($3 + 0)
         if (good == 1 || p > maxp) maxp = p
         last = t
+        vl = $8 + 0; vr = $9 + 0
+        if (good == 1 || vl < minl) minl = vl
+        if (good == 1 || vl > maxl) maxl = vl
+        if (good == 1 || vr < minr) minr = vr
+        if (good == 1 || vr > maxr) maxr = vr
         if (t >= W) {
           k++; st += t; stt += t * t
           sl += $8; stl += t * $8
@@ -198,7 +212,7 @@ log_stats() {
         }
       }
       END {
-        if (good == 0) { printf "NONE NONE NONE 0 %d %d %d %d\n", bad+0, rerr+0, fb+0, fr+0; exit }
+        if (good == 0) { printf "NONE NONE NONE 0 %d %d %d %d NONE NONE\n", bad+0, rerr+0, fb+0, fr+0; exit }
         printf "%.4f ", maxp
         den = k * stt - st * st
         if (k >= 2 && den != 0) {
@@ -208,19 +222,23 @@ log_stats() {
         } else {
           printf "NONE "
         }
-        printf "%.3f %d %d %d %d %d\n", last, good, bad+0, rerr+0, fb+0, fr+0
+        exl = maxl - minl
+        exr = maxr - minr
+        printf "%.3f %d %d %d %d %d ", last, good, bad+0, rerr+0, fb+0, fr+0
+        printf "%.5f %s\n", (exl < exr) ? exl : exr, (exl <= exr) ? "WheelL" : "WheelR"
       }
     ' "$CONTROLLER_LOG"
 }
 
 # Parse the current log into STAT_* variables.
-# Returns 1 if awk fails (e.g. unreadable log) or the output is not 8 fields.
+# Returns 1 if awk fails (e.g. unreadable log) or the output is not 10 fields.
 parse_log() {
     local out
     out=$(log_stats) || return 1
-    read -r STAT_MAX STAT_DRIFT STAT_LAST STAT_GOOD STAT_BAD STAT_RERR STAT_FB STAT_FR <<< "$out" || return 1
+    read -r STAT_MAX STAT_DRIFT STAT_LAST STAT_GOOD STAT_BAD STAT_RERR STAT_FB STAT_FR STAT_MINEXC STAT_WEAK <<< "$out" || return 1
     if [ -z "$STAT_MAX" ] || [ -z "$STAT_DRIFT" ] || [ -z "$STAT_LAST" ] || [ -z "$STAT_GOOD" ] \
-        || [ -z "$STAT_BAD" ] || [ -z "$STAT_RERR" ] || [ -z "$STAT_FB" ] || [ -z "$STAT_FR" ]; then
+        || [ -z "$STAT_BAD" ] || [ -z "$STAT_RERR" ] || [ -z "$STAT_FB" ] || [ -z "$STAT_FR" ] \
+        || [ -z "$STAT_MINEXC" ] || [ -z "$STAT_WEAK" ]; then
         return 1
     fi
     return 0
@@ -286,6 +304,8 @@ normal_bad=$STAT_BAD
 normal_rerr=$STAT_RERR
 normal_fb=$STAT_FB
 normal_fr=$STAT_FR
+normal_minexc=$STAT_MINEXC
+normal_weak=$STAT_WEAK
 
 BALANCE_OK=1
 if [ "$normal_bad" -gt 0 ] || [ "$normal_rerr" -gt 0 ]; then
@@ -323,6 +343,15 @@ if [ "$normal_drift" = "NONE" ] || ! num_test "$normal_drift" ">=" "$DRIFT_NORMA
     echo "FAIL: normal run's wheels did not move; the switch cannot be tested"
     echo "  normal drift ${normal_drift} rad/s, floor ${DRIFT_NORMAL_MIN_RAD_S} rad/s"
     WHEELS_MOVED=0
+fi
+
+# Per-wheel movement floor (#424): the max-over-wheels drift floor above passes a controller that
+# drives only one wheel, so the WEAKER wheel's whole-run excursion must also clear the floor.
+if [ "$normal_minexc" = "NONE" ] || ! num_test "$normal_minexc" ">=" "$MOVE_EXCURSION_MIN"; then
+    echo "FAIL: normal run's weaker wheel ${normal_weak} did not move: excursion $(show "$normal_minexc" rad) < ${MOVE_EXCURSION_MIN}rad (per-wheel movement floor); the switch cannot be tested"
+    WHEELS_MOVED=0
+elif [ "$WHEELS_MOVED" -eq 1 ]; then
+    echo "PASS: per-wheel movement floor: weaker wheel (${normal_weak}) excursion ${normal_minexc}rad >= ${MOVE_EXCURSION_MIN}rad"
 fi
 
 # Normal-run drift gate (setpoint correctness, NOT proof of balancing). A NONE drift is

@@ -21,9 +21,11 @@
 # logs are accepted (CR stripped).
 #
 # Thresholds (constants below; the reasons are given once, here):
-#   MOVE_EXCURSION_MIN   movement floor, normal run. Wheel excursion (largest minus
-#                        smallest wheel angle over the whole run, either wheel) must be
-#                        >= this. It only checks that the wheels moved at all, so a
+#   MOVE_EXCURSION_MIN   movement floor, normal run. Per-wheel excursion (largest minus
+#                        smallest wheel angle over the whole run) is computed for WheelL
+#                        and WheelR; the WEAKER (smaller) of the two must be >= this, so a
+#                        controller that drives only one wheel fails and the failure names
+#                        that wheel. It only checks that the wheels moved at all, so a
 #                        controller that holds still later still passes.
 #   DRIFT_GATE_MAX       setpoint-correctness gate, normal run. Wheel drift (t >= 10 s)
 #                        must be <= this. Without the setpoint the PID drives the wheels
@@ -78,7 +80,7 @@ DRIFT_FROM_T=10       # drift window starts at first row with t >= this
 echo "========================================"
 echo "Stage D: Balance Validation Harness"
 echo "========================================"
-echo "Test: max |tilt| <= ${THRESHOLD_RAD}rad; normal-run wheel excursion >= ${MOVE_EXCURSION_MIN}rad; normal-run drift <= ${DRIFT_GATE_MAX}rad/s (setpoint gate, see DRIFT_GATE_MAX); control-off switch (#405)"
+echo "Test: max |tilt| <= ${THRESHOLD_RAD}rad; normal-run weaker-wheel excursion >= ${MOVE_EXCURSION_MIN}rad; normal-run drift <= ${DRIFT_GATE_MAX}rad/s (setpoint gate, see DRIFT_GATE_MAX); control-off switch (#405)"
 echo "Sim time: ${SIM_TIME_S}s (TEST_MAX_SIM_TIME_S); wall-clock cap: ${TIMEOUT_S}s"
 echo "World: $WORLD"
 echo "Controller log: $CONTROLLER_LOG"
@@ -138,9 +140,11 @@ fi
 #   non-plain number in time/pitch/WheelL/WheelR, time not strictly increasing).
 #   Used rows feed: max |pitch|, last time (the largest), drift_max (larger absolute
 #   WheelL/WheelR rate over rows with t >= DRIFT_FROM_T), excursion (over ALL used rows:
-#   larger of the WheelL and WheelR max-minus-min angle).
-# Output: "STATUS max_pitch last_t drift_max bad rerr rows first_line_no excursion"
-#   STATUS is OK or NONE (no usable rows for the drift window).
+#   larger of the WheelL and WheelR max-minus-min angle), min_excursion (the smaller of
+#   the two per-wheel excursions) and weak_wheel (WheelL or WheelR, whichever has the
+#   smaller excursion; WheelL on a tie).
+# Output: "STATUS max_pitch last_t drift_max bad rerr rows first_line_no excursion min_excursion weak_wheel"
+#   STATUS is OK or NONE (no usable rows for the drift window; the NONE line uses 0 and "none").
 run_metrics() {
     awk -v from_t="$DRIFT_FROM_T" '
       function isnum(s)   { return s ~ /^[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?$/ }
@@ -169,14 +173,16 @@ run_metrics() {
         ex_l = max_l - min_l
         ex_r = max_r - min_r
         exc = (ex_l > ex_r) ? ex_l : ex_r
+        mexc = (ex_l < ex_r) ? ex_l : ex_r
+        weak = (ex_l <= ex_r) ? "WheelL" : "WheelR"
         if (n == 0 || !have_w || last_t == w_t) {
-          printf "NONE 0 0 0 %d %d %d %d 0\n", bad, rerr, n, first_no; exit
+          printf "NONE 0 0 0 %d %d %d %d 0 0 none\n", bad, rerr, n, first_no; exit
         }
         dl = (last_l - w_l) / (last_t - w_t)
         dr = (last_r - w_r) / (last_t - w_t)
         dm = (dl < 0 ? -dl : dl)
         if ((dr < 0 ? -dr : dr) > dm) dm = (dr < 0 ? -dr : dr)
-        printf "OK %.4f %.3f %.5f %d %d %d %d %.5f\n", max_p, last_t, dm, bad, rerr, n, first_no, exc
+        printf "OK %.4f %.3f %.5f %d %d %d %d %.5f %.5f %s\n", max_p, last_t, dm, bad, rerr, n, first_no, exc, mexc, weak
       }
     ' "$1"
 }
@@ -205,8 +211,8 @@ cmp_expr() {
 load_stats() {
     local label="$1" file="$2" out
     out=$(run_metrics "$file") || { echo "FAIL: ${label} controller log unreadable: $file"; exit 1; }
-    read -r STATUS PITCH_MAX LAST_T DRIFT_MAX BAD_ROWS RERR_ROWS N_ROWS FIRST_NO EXCURSION <<< "$out" || true
-    if [ -z "$STATUS" ] || [ -z "$PITCH_MAX" ] || [ -z "$LAST_T" ] || [ -z "$DRIFT_MAX" ] || [ -z "$BAD_ROWS" ] || [ -z "$RERR_ROWS" ] || [ -z "$N_ROWS" ] || [ -z "$FIRST_NO" ] || [ -z "$EXCURSION" ]; then
+    read -r STATUS PITCH_MAX LAST_T DRIFT_MAX BAD_ROWS RERR_ROWS N_ROWS FIRST_NO EXCURSION MIN_EXCURSION WEAK_WHEEL <<< "$out" || true
+    if [ -z "$STATUS" ] || [ -z "$PITCH_MAX" ] || [ -z "$LAST_T" ] || [ -z "$DRIFT_MAX" ] || [ -z "$BAD_ROWS" ] || [ -z "$RERR_ROWS" ] || [ -z "$N_ROWS" ] || [ -z "$FIRST_NO" ] || [ -z "$EXCURSION" ] || [ -z "$MIN_EXCURSION" ] || [ -z "$WEAK_WHEEL" ]; then
         echo "FAIL: ${label} controller log: could not parse metrics"
         exit 1
     fi
@@ -232,11 +238,14 @@ NORM_PITCH=$PITCH_MAX
 NORM_T=$LAST_T
 NORM_DRIFT=$DRIFT_MAX
 NORM_EXC=$EXCURSION
+NORM_MIN_EXC=$MIN_EXCURSION
+NORM_WEAK=$WEAK_WHEEL
 
 echo "IMU data parsed from controller.log"
 echo "Max |IMU_Pitch|: ${NORM_PITCH}rad"
 echo "Last logged time: ${NORM_T}s"
-echo "Wheel excursion (whole run): ${NORM_EXC}rad"
+echo "Wheel excursion (whole run, larger wheel): ${NORM_EXC}rad"
+echo "Wheel excursion (whole run, weaker wheel ${NORM_WEAK}): ${NORM_MIN_EXC}rad"
 echo "Threshold: ${THRESHOLD_RAD}rad"
 echo ""
 
@@ -263,14 +272,16 @@ echo ""
 echo "Robot remained balanced through t=${NORM_T}s (measured last logged time)."
 echo ""
 
-# Movement floor (#405/#408): the normal run's wheels must have moved at all. Uses excursion
-# over the whole run, so a correct controller that settles to zero drift still passes.
-cmp_expr "a >= b" "$NORM_EXC" "$MOVE_EXCURSION_MIN"
+# Movement floor (#405/#408, per-wheel #424): EACH wheel must have moved. The floor is applied
+# to the weaker wheel (smallest whole-run excursion), so a controller that drives only one
+# wheel fails. Uses excursion over the whole run, so a correct controller that settles to zero
+# drift still passes.
+cmp_expr "a >= b" "$NORM_MIN_EXC" "$MOVE_EXCURSION_MIN"
 if [ "$CMP" -ne 1 ]; then
-    echo "FAIL: normal run's wheels did not move: wheel excursion ${NORM_EXC}rad < ${MOVE_EXCURSION_MIN}rad (movement floor); the switch cannot be tested"
+    echo "FAIL: normal run's wheels did not move: weaker wheel ${NORM_WEAK} excursion ${NORM_MIN_EXC}rad < ${MOVE_EXCURSION_MIN}rad (movement floor, per-wheel); the switch cannot be tested"
     exit 1
 fi
-echo "PASS: movement floor: normal-run wheel excursion ${NORM_EXC}rad >= ${MOVE_EXCURSION_MIN}rad"
+echo "PASS: movement floor: normal-run weaker wheel (${NORM_WEAK}) excursion ${NORM_MIN_EXC}rad >= ${MOVE_EXCURSION_MIN}rad"
 
 # Drift gate (#408): setpoint-correctness check, NOT proof of balancing.
 cmp_expr "a <= b" "$NORM_DRIFT" "$DRIFT_GATE_MAX"
@@ -311,12 +322,13 @@ OFF_PITCH=$PITCH_MAX
 OFF_T=$LAST_T
 OFF_DRIFT=$DRIFT_MAX
 OFF_EXC=$EXCURSION
+OFF_MIN_EXC=$MIN_EXCURSION
 
 echo ""
 echo "Control-off comparison:"
-echo "  run          max|pitch|(rad)  last_t(s)  drift_max(rad/s, t>=${DRIFT_FROM_T}s)  excursion(rad)"
-echo "  normal       ${NORM_PITCH}           ${NORM_T}      ${NORM_DRIFT}                          ${NORM_EXC}"
-echo "  control-off  ${OFF_PITCH}           ${OFF_T}      ${OFF_DRIFT}                          ${OFF_EXC}"
+echo "  run          max|pitch|(rad)  last_t(s)  drift_max(rad/s, t>=${DRIFT_FROM_T}s)  excursion(rad)  min-wheel exc(rad)"
+echo "  normal       ${NORM_PITCH}           ${NORM_T}      ${NORM_DRIFT}                          ${NORM_EXC}  ${NORM_MIN_EXC} (${NORM_WEAK})"
+echo "  control-off  ${OFF_PITCH}           ${OFF_T}      ${OFF_DRIFT}                          ${OFF_EXC}  ${OFF_MIN_EXC} (${WEAK_WHEEL})"
 echo ""
 
 # Switch check: disabled wheels must hold (excursion and drift both below their bounds).
