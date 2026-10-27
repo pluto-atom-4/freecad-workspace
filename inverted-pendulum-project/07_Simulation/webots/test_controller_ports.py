@@ -1099,7 +1099,21 @@ class TestPidSetpoint:
         assert float(row[2]) == pytest.approx(-0.1086, abs=1e-4)  # IMU_Pitch is the REAL pitch
         assert float(row[11]) == pytest.approx(0.0, abs=1e-4)      # error = -(pitch - setpoint) = 0
 
-    @pytest.mark.parametrize("bad", ["abc", "", "nan", "inf", "-inf", "1e999", "1_0"])
+    @pytest.mark.parametrize("good, value", [
+        ("-0.1086", -0.1086), ("-.5", -0.5), ("1e-1", 0.1), ("+0.1", 0.1),
+        ("  -0.1086 ", -0.1086), ("0", 0.0), ("1e-400", 0.0),
+    ])
+    def test_plain_decimals_accepted(self, monkeypatch, tmp_path, good, value):
+        mod = load_controller(monkeypatch, tmp_path, StubRobot({}), path=PID_FILE)
+        assert mod.parse_pid_setpoint(good) == pytest.approx(value, abs=1e-12)
+
+    def test_unicode_digit_rejected(self, monkeypatch, tmp_path):
+        """W3: Arabic-Indic digits must not parse (regex uses [0-9], not \\d)."""
+        mod = load_controller(monkeypatch, tmp_path, StubRobot({}), path=PID_FILE)
+        with pytest.raises(ValueError):
+            mod.parse_pid_setpoint("١.٥")  # the digits one and five with a dot
+
+    @pytest.mark.parametrize("bad", ["", "nan", "1e999", "1_0", "١.٥"])
     def test_invalid_setpoint_exits_1_at_startup(self, monkeypatch, tmp_path, bad):
         monkeypatch.setenv("PID_SETPOINT_RAD", bad)
         devices = make_devices(pitch=0.0, gyro_y=0.0)

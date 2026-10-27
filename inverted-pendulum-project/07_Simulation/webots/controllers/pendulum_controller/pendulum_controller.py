@@ -4,12 +4,13 @@
 Error = -(pitch - setpoint). Sign UNVERIFIED (#359) — requires manual GUI test:
 tilt robot and confirm wheels drive to correct not amplify the fall.
 
-PID_SETPOINT_RAD (#408) sets the pitch setpoint in rad. Default "0" (unset): error = -pitch,
+PID_SETPOINT_RAD (#408) sets the pitch setpoint in rad. Default: unset (= 0), error = -pitch,
 behaviour unchanged. The value -0.1086 is the robot's rest pitch, which is the LQR design
 reference (lqr.theta_ref_rad in hal/parity_vectors.json); with it the PID error is ~0 at rest.
 Implemented as a controller-local shift of the IMU sample before PidBalance.step, so the
-core and its PID_Error sign are untouched. Value must be a plain finite decimal; anything else
-(invalid, empty, nan, inf) exits 1 at startup with a message in controller.log and stderr.
+core and its PID_Error sign are untouched. Non-numeric, empty, nan, inf, underscore and Unicode
+digit text exits 1 at startup, with the message in controller.log and stderr. "1e-400" parses
+to 0.0 and behaves as unset (accepted).
 Logging: IMU_Pitch is the REAL measured pitch; PID_Error is the core's error (shifted by the
 setpoint). The sign (#359) is still unresolved, so the setpoint sign is not verified either.
 
@@ -85,14 +86,14 @@ CONTROLLER_DISABLED = os.environ.get("CONTROLLER_DISABLED", "0") == "1"
 # Log file path
 LOG_PATH = Path(__file__).parent / "controller.log"
 
-# PID_SETPOINT_RAD (#408): plain decimal only (no nan, inf, underscores, or empty text).
-_PLAIN_DECIMAL = re.compile(r"^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$")
+# PID_SETPOINT_RAD (#408): plain ASCII decimal only (no nan, inf, underscores, Unicode digits, or empty text).
+_PLAIN_DECIMAL = re.compile(r"[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?")
 
 
 def parse_pid_setpoint(text):
     """Return the PID setpoint in rad from PID_SETPOINT_RAD text; raise ValueError if invalid."""
     s = text.strip()
-    if not _PLAIN_DECIMAL.match(s):
+    if not _PLAIN_DECIMAL.fullmatch(s):
         raise ValueError(f"PID_SETPOINT_RAD={text!r} is not a plain decimal number (e.g. -0.1086)")
     value = float(s)
     if not math.isfinite(value):
