@@ -547,11 +547,13 @@ Before tilting, note cmd and wheel at the start pose (expect about zero cmd; see
 pyserial without `exclusive=True`. By reading `dof_serial.py`, a second reader (e.g. a serial monitor)
 opened while the bridge runs would silently take part of the IMU byte stream (not observed). So only one
 reader can safely own the port, which is why this step is a separate run. `--record` keeps no raw serial
-lines. The bridge does not echo the firmware's text lines; that optional option is tracked as
-freecad-workspace#387 (OPEN, not implemented). BRC balancing-robot-controller#159 has the matching capture
+lines. By default the bridge ignores the firmware's text lines. `--text-log PATH` saves them with timestamps
+(a fresh file per run) and `--echo-text` prints them to stderr with a `[fw] ` prefix; both are off by default.
+This is unit-tested against a fake serial source ONLY, not run on hardware. The two-run flow above stays
+valid; a single run with `--text-log` is an option that has not been tried. BRC balancing-robot-controller#159 has the matching capture
 steps. Stop the bridge first, then make a separate run with the same kind of motion and capture the
 board's `[imu] ... fused=` lines with a serial monitor. The BRC `tilt_servo` frames build also prints `[imu] accel=... fused=... goal=... torque=...` every 100 ms (10 Hz) on the same port, interleaved
-with the `IMU,` frames; the bridge ignores those lines. The `fused=` value is degrees from BRC's own
+with the `IMU,` frames; the bridge ignores those lines by default. The `fused=` value is degrees from BRC's own
 filter on the board: absolute, not host-fused, not tared. The bridge's `pitch` is tared and
 sign-adjusted (see Behaviour and Arming), so only the shape of the two can be compared. No numeric
 agreement is claimed and there is no pass criterion. Record by eye: lag (board motion to display);
@@ -569,6 +571,8 @@ Expected stderr (lines `dof_wheel_bridge.py` prints, read from the code; none se
 - Armed, about once per second: `dof_wheel_bridge: t=<s>s armed ticks=<n> faults=<n> cmd=<+x.xxxx> wheel=<+x.xxxx>`.
   A hold appends ` note=hold: ...`.
 - At exit, `dof_wheel_bridge: udp published=<n> errors=<n> skipped=<n>`, only when errors or skipped is non-zero.
+- With `--echo-text` (off by default): `[fw] <line>` for each firmware text line, sanitized and capped at 512 chars.
+  With `--text-log` only, these lines go to the file, not stderr.
 - Exit after an earlier arm, with the device reset mid re-arm (exit 0):
   `dof_wheel_bridge: note: <input|duration> ended during a re-arm (<arm_error>); the bridge had armed earlier and published <n> ticks`,
   or `dof_wheel_bridge: note: interrupted during a re-arm; the bridge had armed earlier` for Ctrl-C.

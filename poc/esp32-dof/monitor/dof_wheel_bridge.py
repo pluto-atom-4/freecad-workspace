@@ -32,10 +32,15 @@ Poll ticks: a source that yields None (serial stall) returns NOMINAL_DT_S withou
 The bridge paces non-frame ticks to NOMINAL_DT_S of wall time, and --port polls at that same
 cadence. The stall and hold contract is in README "Behaviour".
 
+Firmware text lines (issue #387): every serial line not starting with "IMU," is a text line. By
+default the bridge ignores them. --text-log PATH saves them (timestamped, fresh file per run) and
+--echo-text prints them to stderr with a "[fw] " prefix; both are off by default and need --port.
+
 Usage:
     mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --mock --duration 5
     mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --port /dev/ttyACM0 --core pid
     mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --replay raw.csv --record out.csv
+    mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --port /dev/ttyACM0 --text-log fw.txt --echo-text
 
 Exit codes: 0 for input end, duration end, or Ctrl-C once the bridge has armed at least once
 (including one that ends mid re-arm after a device reset; that case prints a "note:" line on
@@ -53,6 +58,7 @@ import sys
 import threading
 import time
 from collections import namedtuple
+from datetime import datetime
 from pathlib import Path
 
 _SIM_DIR = Path(__file__).resolve().parents[3] / "inverted-pendulum-project" / "07_Simulation"
@@ -76,6 +82,10 @@ CORES = ("lqr", "pid", "none")
 RECORD_COLUMNS = ("seq", "t_us", "roll", "pitch", "yaw", "wheel_angle", "cmd_rad_s")
 STATUS_PERIOD_S = 1.0
 RECORD_FLUSH_EVERY = 50
+IMU_LINE_PREFIX = "IMU,"          # serial lines with this prefix are frames, every other line is text
+TEXT_LINE_MAX = 512               # sanitized output chars per text line
+TEXT_FLUSH_PERIOD_S = 1.0
+TEXT_ECHO_PREFIX = "[fw] "
 _END = "end"
 _ITEM = "item"
 _ERR = "error"
@@ -308,6 +318,114 @@ def _still_gen(still_frames, rate_hz, realtime, duration_s):
         i += 1
 
 
+# ----- firmware text capture (#387) -----------------------------------------------------------
+
+def sanitize_text(s: str) -> str:
+    """Escape non-printable chars as \\xNN (U+FFFD too) and cap the output at TEXT_LINE_MAX chars.
+
+    Escapes are never split by the cap: output stops before an escape that would not fit.
+    """
+    out = []
+    n = 0
+    for c in s:
+        piece = c if (c.isprintable() and c != "\ufffd") else f"\\x{ord(c):02x}"
+        if n + len(piece) > TEXT_LINE_MAX:
+            break
+        out.append(piece)
+        n += len(piece)
+    return "".join(out)
+
+
+def _wall_iso() -> str:
+    return datetime.now().astimezone().isoformat(timespec="milliseconds")
+
+
+class TextSink:
+    """Firmware text lines -> optional file (text_log path) and/or stderr (echo).
+
+    write() runs on the serial reader thread and never raises: the first OSError or ValueError
+    disables the sink and prints one warning, and the bridge keeps running. close() is
+    idempotent; writes after close change nothing. A lock makes write and close mutually exclusive.
+    The file is opened with mode "w" (fresh per run). Timestamps are clock() minus the clock()
+    value taken at construction (the bridge start).
+    """
+
+    def __init__(self, path=None, *, echo=False, clock=time.monotonic, wall_clock=None, err=None):
+        self._clock = clock
+        self._wall = _wall_iso if wall_clock is None else wall_clock
+        self._echo = echo
+        self._err = err
+        self._lock = threading.Lock()
+        self._closed = False
+        self._disabled = False
+        self._t0 = clock()
+        self._last_flush = self._t0
+        self._fh = None
+        self.written = 0
+        if path is not None:
+            self._fh = open(path, "w", newline="", encoding="utf-8", errors="replace")
+
+    def _err_stream(self):
+        return sys.stderr if self._err is None else self._err
+
+    def _disable(self, exc) -> None:
+        if self._disabled:
+            return
+        self._disabled = True
+        try:
+            print(f"dof_wheel_bridge: warning: firmware text capture disabled after write error: "
+                  f"{exc}", file=self._err_stream(), flush=True)
+        except OSError:
+            pass
+
+    def write(self, line: str) -> None:
+        with self._lock:
+            if self._closed or self._disabled:
+                return
+            now = self._clock()
+            clean = sanitize_text(line)
+            try:
+                if self._fh is not None:
+                    self._fh.write(f"{now - self._t0:.3f}\t{self._wall()}\t{clean}\n")
+                    if now - self._last_flush >= TEXT_FLUSH_PERIOD_S:
+                        self._fh.flush()
+                        self._last_flush = now
+                if self._echo:
+                    print(f"{TEXT_ECHO_PREFIX}{clean}", file=self._err_stream(), flush=True)
+            except (OSError, ValueError) as exc:
+                self._disable(exc)
+                return
+            self.written += 1
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            fh, self._fh = self._fh, None
+            if fh is None:
+                return
+            try:
+                fh.flush()
+            except (OSError, ValueError) as exc:
+                self._disable(exc)
+            try:
+                fh.close()
+            except (OSError, ValueError) as exc:
+                self._disable(exc)
+
+
+def _tee_text(lines, sink):
+    """Yield every line unchanged and in order; pass non-IMU lines to sink.write first.
+
+    Runs on the reader thread. Only used when --text-log or --echo-text is given.
+    """
+    for line in lines:
+        if not line.startswith(IMU_LINE_PREFIX):
+            sink.write(line)
+        yield line
+
+
 # ----- bridge loop ----------------------------------------------------------------------------
 
 def run_bridge(hal, core, pub, *, duration_s=None, record=None,
@@ -490,10 +608,16 @@ def build_parser() -> argparse.ArgumentParser:
                         "(default: until Ctrl-C / end of input)")
     p.add_argument("--alpha", type=_unit_float, default=DEFAULT_ALPHA, metavar="A",
                    help="complementary filter gyro weight 0..1 (default 0.98)")
+    p.add_argument("--text-log", metavar="PATH", default=None,
+                   help="save firmware text lines (lines not starting with 'IMU,') with timestamps "
+                        "to PATH, a fresh file per run (needs --port; default off)")
+    p.add_argument("--echo-text", action="store_true",
+                   help="print firmware text lines to stderr with a '[fw] ' prefix "
+                        "(needs --port; default off)")
     return p
 
 
-def _make_source(args):
+def _make_source(args, text_sink=None):
     if args.mock:
         return still_then_mock_lines(realtime=True)   # --duration is enforced by run_bridge
     if args.replay is not None:
@@ -502,12 +626,18 @@ def _make_source(args):
         from dof_serial import serial_lines  # lazy: pyserial only for --port
     except ImportError as exc:
         raise ImportError(f"--port needs pyserial in this environment: {exc}") from None
-    return PolledSource(serial_lines(args.port, args.baud), poll_s=NOMINAL_DT_S)
+    lines = serial_lines(args.port, args.baud)
+    if text_sink is not None:                # no flags: the iterator is passed through unwrapped
+        lines = _tee_text(lines, text_sink)
+    return PolledSource(lines, poll_s=NOMINAL_DT_S)
 
 
 def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    want_text = args.text_log is not None or args.echo_text
+    if want_text and args.port is None:
+        parser.error("--text-log and --echo-text need --port (not --mock or --replay)")
     try:
         gains = load_gains() if args.core != "none" else None
         core, ref = build_core(args.core, gains)
@@ -515,14 +645,17 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
         print(f"dof_wheel_bridge: error: {exc}", file=sys.stderr, flush=True)
         return 2
 
-    hal = pub = record_fh = None
+    hal = pub = record_fh = text_sink = None
     progress = {"ever_armed": False}
     try:
         if args.record is not None:
             record_fh = open(args.record, "w", newline="", encoding="utf-8")
+        if want_text:
+            text_sink = TextSink(args.text_log, echo=args.echo_text, clock=clock)
         pub = WheelPublisher(port=args.udp_port)
-        hal = SerialImuHal(_make_source(args), reference_pitch_rad=ref, alpha=args.alpha,
-                           clock=clock)
+        source_kwargs = {} if text_sink is None else {"text_sink": text_sink}
+        hal = SerialImuHal(_make_source(args, **source_kwargs), reference_pitch_rad=ref,
+                           alpha=args.alpha, clock=clock)
         result = run_bridge(hal, core, pub, duration_s=args.duration, record=record_fh,
                             clock=clock, sleep=sleep, progress=progress)
         if pub.errors or pub.skipped:
@@ -569,6 +702,8 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
             pub.close()
         if record_fh is not None:
             record_fh.close()
+        if text_sink is not None:
+            text_sink.close()
 
 
 if __name__ == "__main__":

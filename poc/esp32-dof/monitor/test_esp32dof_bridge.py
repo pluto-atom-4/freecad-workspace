@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 import types
+from datetime import datetime
 from itertools import islice
 from pathlib import Path
 
@@ -1294,3 +1295,256 @@ def test_duration_expires_mid_rearm_returns_0_with_note(monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "duration ended during a re-arm" in err
     assert "never armed" not in err
+
+
+# ----- 20. firmware text capture (#387) -------------------------------------------------------
+# Fake serial source only. No hardware, no real thread timing claims beyond the reader thread.
+
+class _CollectSink:
+    def __init__(self):
+        self.got = []
+
+    def write(self, line):
+        self.got.append(line)
+
+
+class _FailFh:
+    """File stand-in whose write always fails with ENOSPC-like OSError."""
+
+    def __init__(self):
+        self.writes = 0
+        self.closed = False
+
+    def write(self, s):
+        self.writes += 1
+        raise OSError(28, "No space left on device")
+
+    def flush(self):
+        pass
+
+    def close(self):
+        self.closed = True
+
+
+def _fake_serial(monkeypatch, lines):
+    fake = types.ModuleType("dof_serial")
+    fake.serial_lines = lambda port, baud=115200, **kw: iter(lines)
+    monkeypatch.setitem(sys.modules, "dof_serial", fake)
+
+
+def _fw_lines():
+    """Armed still stream with text lines interleaved, plus empty and control-char text."""
+    out = []
+    for i, ln in enumerate(still_lines(60)):
+        out.append(ln)
+        if i % 20 == 0:
+            out.append(f"[imu] accel=0.0 fused={i}.0")
+    out += ["", "\x1b[0mboot\x00"]
+    return out
+
+
+def _spy_text_sink(monkeypatch):
+    made = []
+
+    class Spy(b.TextSink):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.fh_seen = self._fh
+            made.append(self)
+
+    monkeypatch.setattr(b, "TextSink", Spy)
+    return made
+
+
+def test_tee_yields_every_line_unchanged_and_in_order():
+    lines = ["IMU,1,2", "", "boot", "\x1b", "IMU,bad", "  IMU,x", "imu,y", "tail"]
+    sink = _CollectSink()
+    assert list(b._tee_text(iter(lines), sink)) == lines
+
+
+def test_only_non_imu_lines_reach_sink():
+    lines = ["IMU,1,2", "", "boot", "IMU,bad", "  IMU,x", "imu,y", "tail"]
+    sink = _CollectSink()
+    list(b._tee_text(iter(lines), sink))
+    assert sink.got == ["", "boot", "  IMU,x", "imu,y", "tail"]
+
+
+def test_text_sink_timestamps_come_from_injected_clock(tmp_path):
+    clock = FakeClock()
+    clock.t = 10.0
+    path = tmp_path / "fw.txt"
+    sink = b.TextSink(path, clock=clock, wall_clock=lambda: "WALL")
+    clock.t = 12.5
+    sink.write("first")
+    clock.t = 15.125
+    sink.write("second")
+    sink.close()
+    rows = [r.split("\t") for r in path.read_text(encoding="utf-8").splitlines()]
+    assert rows == [["2.500", "WALL", "first"], ["5.125", "WALL", "second"]]
+
+
+def test_text_log_is_truncated_each_run(tmp_path):
+    path = tmp_path / "fw.txt"
+    path.write_text("OLD LINE\n", encoding="utf-8")
+    sink = b.TextSink(path, clock=FakeClock())
+    sink.write("new")
+    sink.close()
+    content = path.read_text(encoding="utf-8")
+    assert "OLD" not in content
+    assert content.splitlines()[0].endswith("\tnew")
+
+
+def test_closed_sink_ignores_writes_and_close_is_idempotent(tmp_path):
+    path = tmp_path / "fw.txt"
+    sink = b.TextSink(path, clock=FakeClock())
+    sink.write("a")
+    sink.close()
+    sink.close()
+    sink.write("b")
+    content = path.read_text(encoding="utf-8")
+    assert content.endswith("\ta\n")
+    assert "\tb" not in content
+
+
+def test_sanitize_escapes_controls_and_fffd():
+    assert b.sanitize_text("a\x1b[0m\x00b\rc\ufffdd\t") == "a\\x1b[0m\\x00b\\x0dc\\xfffdd\\x09"
+
+
+def test_sanitize_caps_at_text_line_max_without_splitting_escapes():
+    assert len(b.sanitize_text("x" * 600)) == b.TEXT_LINE_MAX
+    assert b.sanitize_text("\x1b" * 300) == "\\x1b" * (b.TEXT_LINE_MAX // 4)
+    assert b.sanitize_text("x" * 511 + "\x1b") == "x" * 511
+
+
+def test_text_sink_write_error_disables_once_and_never_raises(capsys):
+    sink = b.TextSink(None, clock=FakeClock())
+    sink._fh = _FailFh()
+    sink.write("a")
+    sink.write("b")
+    sink.write("c")
+    assert sink._fh.writes == 1
+    assert capsys.readouterr().err.count("text capture disabled") == 1
+    sink.close()
+    assert sink._fh is None
+
+
+def test_echo_text_prints_prefixed_sanitized_line_to_stderr_only(capsys):
+    sink = b.TextSink(None, echo=True, clock=FakeClock())
+    sink.write("boot\x1b")
+    sink.close()
+    cap = capsys.readouterr()
+    assert cap.err == "[fw] boot\\x1b\n"
+    assert cap.out == ""
+
+
+def test_make_source_without_flags_passes_original_iterator(monkeypatch):
+    sentinel = iter(["IMU,a", "boot"])
+    fake = types.ModuleType("dof_serial")
+    fake.serial_lines = lambda port, baud=115200, **kw: sentinel
+    monkeypatch.setitem(sys.modules, "dof_serial", fake)
+    seen = []
+
+    class SpyPoll:
+        def __init__(self, it, **kw):
+            seen.append(it)
+
+    monkeypatch.setattr(b, "PolledSource", SpyPoll)
+    b._make_source(b.build_parser().parse_args(["--port", "/dev/fake"]))
+    assert seen[0] is sentinel
+
+
+def test_make_source_with_sink_wraps_and_passes_all_lines(monkeypatch):
+    lines = ["IMU,a", "boot", "", "IMU,b"]
+    fake = types.ModuleType("dof_serial")
+    fake.serial_lines = lambda port, baud=115200, **kw: iter(lines)
+    monkeypatch.setitem(sys.modules, "dof_serial", fake)
+    seen = []
+
+    class SpyPoll:
+        def __init__(self, it, **kw):
+            seen.append(it)
+
+    monkeypatch.setattr(b, "PolledSource", SpyPoll)
+    sink = _CollectSink()
+    b._make_source(b.build_parser().parse_args(["--port", "/dev/fake"]), text_sink=sink)
+    assert list(seen[0]) == lines
+    assert sink.got == ["boot", ""]
+
+
+def test_main_text_log_writes_file_and_closes_it(monkeypatch, tmp_path):
+    lines = _fw_lines()
+    _fake_serial(monkeypatch, lines)
+    made = _spy_text_sink(monkeypatch)
+    log = tmp_path / "fw.txt"
+    rc = b.main(["--port", "/dev/fake", "--text-log", str(log), "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    rows = [r.split("\t") for r in log.read_text(encoding="utf-8").splitlines()]
+    assert [r[2] for r in rows] == [b.sanitize_text(ln) for ln in lines if not ln.startswith("IMU,")]
+    assert all(len(r) == 3 for r in rows)
+    stamps = [float(r[0]) for r in rows]
+    assert stamps == sorted(stamps)
+    for r in rows:
+        datetime.fromisoformat(r[1])     # wall column is ISO 8601
+    assert made[0].fh_seen.closed
+
+
+def test_main_without_text_flags_creates_no_sink(monkeypatch):
+    _fake_serial(monkeypatch, still_lines(60))
+    made = _spy_text_sink(monkeypatch)
+    assert b.main(["--port", "/dev/fake", "--udp-port", str(free_udp_port())]) == 0
+    assert made == []
+
+
+def test_main_echo_text_prints_fw_prefix_to_stderr(monkeypatch, capsys):
+    lines = _fw_lines()
+    _fake_serial(monkeypatch, lines)
+    rc = b.main(["--port", "/dev/fake", "--echo-text", "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    fw = [ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("[fw] ")]
+    assert fw == ["[fw] " + b.sanitize_text(ln) for ln in lines if not ln.startswith("IMU,")]
+
+
+def test_main_keyboard_interrupt_closes_text_log(monkeypatch, tmp_path):
+    made = _spy_text_sink(monkeypatch)
+    monkeypatch.setattr(b, "_make_source", lambda args, **kw: still_lines(60))
+
+    def interrupt(hal, core, pub, **kw):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(b, "run_bridge", interrupt)
+    log = tmp_path / "fw.txt"
+    rc = b.main(["--port", "/dev/fake", "--text-log", str(log), "--udp-port", str(free_udp_port())])
+    assert rc == 2                       # interrupted before armed
+    assert log.exists()
+    assert made[0].fh_seen.closed
+
+
+def test_main_text_sink_write_error_keeps_bridge_running(monkeypatch, capsys):
+    lines = _fw_lines()
+    _fake_serial(monkeypatch, lines)
+    made = []
+
+    class FailSpy(b.TextSink):
+        def __init__(self, *a, **kw):
+            super().__init__(None, **kw)     # no real file; swap in a failing handle
+            self._fh = _FailFh()
+            made.append(self)
+
+    monkeypatch.setattr(b, "TextSink", FailSpy)
+    rc = b.main(["--port", "/dev/fake", "--text-log", "unused.txt", "--udp-port", str(free_udp_port())])
+    assert rc == 0                       # the bridge still armed and ran to input end
+    assert made[0]._fh is None           # closed at the end of main
+    assert made[0]._disabled
+    assert made[0].written == 0
+    assert capsys.readouterr().err.count("text capture disabled") == 1
+
+
+@pytest.mark.parametrize("extra", [["--mock"], ["--replay", "raw.csv"]])
+@pytest.mark.parametrize("flags", [["--echo-text"], ["--text-log", "fw.txt"]])
+def test_text_flags_need_port(extra, flags, tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as ei:
+        b.main([*extra, *flags, "--udp-port", str(free_udp_port())])
+    assert ei.value.code == 2
+    assert "need --port" in capsys.readouterr().err
+    assert not (tmp_path / "fw.txt").exists()
