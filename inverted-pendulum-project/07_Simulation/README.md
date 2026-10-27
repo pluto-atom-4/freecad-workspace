@@ -21,7 +21,7 @@ Stage A sets up a minimal Webots simulation environment:
 │   ├── generate_proto.sh               # Generate InvertedPendulumRobot.proto via urdf2webots
 │   ├── run_gui.sh                      # Launch Webots GUI (realtime, needs DISPLAY + human visual check)
 │   ├── run_batch.sh                    # Headless smoke test (structural validation only)
-│   ├── protos/                         # Generated PROTO files (gitignored)
+│   ├── protos/                         # Generated PROTO (dir gitignored; the one PROTO is force-tracked)
 │   ├── worlds/
 │   │   └── pendulum_robot.wbt          # Stage A world (plain offline Background/Light/floor)
 │   └── .generated/                     # Temporary generated artifacts (gitignored)
