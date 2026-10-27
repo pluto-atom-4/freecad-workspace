@@ -24,6 +24,10 @@
 #    or empty; warns if the source URDF is newer; never regenerates it silently.
 # 3. Runs Webots in batch mode (--batch --mode=fast --no-rendering --minimize).
 #    Falls back to xvfb-run if DISPLAY-related errors occur.
+#    Each launch (main and xvfb-run) runs under setsid in its own process group. On EXIT,
+#    INT or TERM, this script signals only that group (TERM, then KILL after 1 s), so the
+#    timeout -> webots wrapper -> webots-bin chain is stopped, not left writing the log.
+#    Processes are never matched by name.
 #
 # NOTE: This is a STRUCTURAL SMOKE TEST only. It validates:
 #   - The world file is valid and loads.
@@ -108,8 +112,35 @@ elif [ "$URDF_SOURCE" -nt "$PROTO_FILE" ]; then
     echo "Continuing with the existing PROTO. To regenerate: REGEN_PROTO=1 (or ./generate_proto.sh)." >&2
 fi
 
-run_webots() {
-    timeout "${TIMEOUT_S}s" "$WEBOTS_BIN" --batch --mode=fast --no-rendering --minimize --stdout "$WORLD"
+# Process-group supervision. WPID is the pgid of the current launch (setsid makes the
+# launch a session/group leader, so its pid equals its pgid). cleanup() signals that group
+# only, by pid/pgid, idempotently.
+WPID=""
+cleanup() {
+    if [ -n "${WPID:-}" ]; then
+        kill -TERM -- "-$WPID" 2>/dev/null || true
+        sleep 1
+        kill -KILL -- "-$WPID" 2>/dev/null || true
+        WPID=""
+    fi
+    return 0
+}
+trap cleanup EXIT
+trap 'cleanup; exit 143' TERM
+trap 'cleanup; exit 130' INT
+
+# run_group OUT_FILE CMD [ARGS...]: run CMD under `timeout ${TIMEOUT_S}s` inside its own
+# session/process group, stdout+stderr to OUT_FILE. Returns the command's exit code
+# (124 = timeout). Callers keep `set +e` around it.
+run_group() {
+    local out="$1"
+    shift
+    local rc=0
+    setsid timeout "${TIMEOUT_S}s" "$@" > "$out" 2>&1 &
+    WPID=$!
+    wait "$WPID" || rc=$?
+    WPID=""
+    return "$rc"
 }
 
 echo "Running Webots (batch, headless, smoke test) on: $WORLD"
@@ -117,7 +148,7 @@ echo "Log: $LOG_FILE"
 echo ""
 
 set +e
-run_webots > "$LOG_FILE" 2>&1
+run_group "$LOG_FILE" "$WEBOTS_BIN" --batch --mode=fast --no-rendering --minimize --stdout "$WORLD"
 rc=$?
 set -e
 
@@ -146,7 +177,7 @@ if grep -qiE "display|xcb|cannot open|EGL" "$LOG_FILE"; then
     echo "Detected a display-related failure — retrying with xvfb-run..."
     if command -v xvfb-run >/dev/null 2>&1; then
         set +e
-        timeout "${TIMEOUT_S}s" xvfb-run -a "$WEBOTS_BIN" --batch --mode=fast --no-rendering --minimize --stdout "$WORLD" > "$LOG_FILE.xvfb" 2>&1
+        run_group "$LOG_FILE.xvfb" xvfb-run -a "$WEBOTS_BIN" --batch --mode=fast --no-rendering --minimize --stdout "$WORLD"
         rc=$?
         set -e
         if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ]; then
