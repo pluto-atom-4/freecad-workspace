@@ -15,8 +15,9 @@
 # Runs the same world again with CONTROLLER_DISABLED=1 (the LQR core still runs
 # and logs, but both wheel commands are forced to 0.0 rad/s). Prints max |pitch|,
 # wheel drift rate and last log time for both runs. Asserts only that the switch
-# works: the disabled run must drift < 0.01 rad/s over t >= 10 s and must reach
-# t >= 25 s. If the disabled run also passes the pitch check, the pitch check
+# works: the disabled run must drift < 0.001 rad/s (max over both wheels) over
+# t >= 10 s, and under half the normal run's drift when that is >= 0.002 rad/s, and
+# must reach t >= 25 s. If the disabled run also passes the pitch check, the pitch check
 # cannot tell control from no control; a NOTE line says so.
 #
 # Requirements (from #221):
@@ -55,7 +56,13 @@ THRESHOLD_RAD=0.15
 TIMEOUT_S=20                 # WALL-CLOCK timeout for the Webots process (real seconds)
 SIM_LIMIT_S=30               # SIMULATED-time limit passed to the controller (TEST_MAX_SIM_TIME_S)
 DRIFT_WINDOW_START_S=10      # simulated time from which wheel drift is measured
-DRIFT_MAX_RAD_S=0.01         # control-off run must drift less than this (rad/s)
+# Control-off drift bounds (rad/s, max over BOTH wheels). With the switch on, both
+# wheel commands are exactly 0.0, so the drift is float noise only; 0.001 leaves
+# margin over that. The normal LQR run drifts ~0.0042 rad/s on this world, so a dead
+# switch would sit above 0.001. When the normal drift is >= 0.002 rad/s, the
+# control-off drift must also be under half of it.
+DRIFT_MAX_RAD_S=0.001
+DRIFT_NORMAL_MIN_RAD_S=0.002
 LAST_TIME_MIN_S=25           # control-off run must log up to at least this sim time
 
 echo "========================================"
@@ -147,9 +154,9 @@ run_webots_pass() {
 }
 
 # Print "max_tilt drift_rad_s last_time" for the current controller log.
-# max_tilt is "NONE" if there are no data rows. drift_rad_s is the least-squares
-# slope of mean(WheelL, WheelR) over t >= DRIFT_WINDOW_START_S, absolute value;
-# "NONE" if fewer than 2 rows fall in that window.
+# max_tilt is "NONE" if there are no data rows. drift_rad_s is the larger of the
+# two least-squares wheel-angle slopes (|WheelL| and |WheelR|, rad/s) over
+# t >= DRIFT_WINDOW_START_S; "NONE" if fewer than 2 rows fall in that window.
 log_stats() {
     awk -v W="$DRIFT_WINDOW_START_S" '
       $1 ~ /^[0-9]+\.?[0-9]*$/ {
@@ -160,17 +167,21 @@ log_stats() {
         rows++
         last = t
         if (t >= W) {
-          y = ($8 + $9) / 2
-          k++; st += t; sy += y; stt += t * t; sty += t * y
+          k++; st += t; stt += t * t
+          sl += $8; stl += t * $8
+          sr += $9; str += t * $9
         }
       }
+      function absf(x) { return (x < 0) ? -x : x }
       END {
         if (rows == 0) { printf "NONE NONE NONE\n"; exit }
         printf "%.4f ", max
-        if (k >= 2 && (k * stt - st * st) != 0) {
-          slope = (k * sty - st * sy) / (k * stt - st * st)
-          if (slope < 0) slope = -slope
-          printf "%.5f ", slope
+        den = k * stt - st * st
+        if (k >= 2 && den != 0) {
+          slope_l = (k * stl - st * sl) / den
+          slope_r = (k * str - st * sr) / den
+          drift = (absf(slope_l) > absf(slope_r)) ? absf(slope_l) : absf(slope_r)
+          printf "%.5f ", drift
         } else {
           printf "NONE "
         }
@@ -224,7 +235,10 @@ if [ "$off_drift" = "NONE" ]; then
     echo "FAIL: control-off run has too few rows at t >= ${DRIFT_WINDOW_START_S}s to measure wheel drift"
     SWITCH_OK=0
 elif [ "$(awk -v d="$off_drift" -v m="$DRIFT_MAX_RAD_S" 'BEGIN { print (d < m) ? 1 : 0 }')" -ne 1 ]; then
-    echo "FAIL: control-off run wheel drift ${off_drift} rad/s >= ${DRIFT_MAX_RAD_S} rad/s (CONTROLLER_DISABLED did not stop the wheels)"
+    echo "FAIL: control-off run wheel drift ${off_drift} rad/s >= ${DRIFT_MAX_RAD_S} rad/s (CONTROLLER_DISABLED did not stop both wheels)"
+    SWITCH_OK=0
+elif [ "$normal_drift" != "NONE" ] && [ "$(awk -v n="$normal_drift" -v nmin="$DRIFT_NORMAL_MIN_RAD_S" -v d="$off_drift" 'BEGIN { print (n >= nmin && d >= n / 2) ? 1 : 0 }')" -eq 1 ]; then
+    echo "FAIL: control-off run wheel drift ${off_drift} rad/s is not under half the normal run's ${normal_drift} rad/s (CONTROLLER_DISABLED did not stop the wheels)"
     SWITCH_OK=0
 fi
 if [ "$off_last" = "NONE" ] || [ "$(awk -v t="$off_last" -v m="$LAST_TIME_MIN_S" 'BEGIN { print (t >= m) ? 1 : 0 }')" -ne 1 ]; then
