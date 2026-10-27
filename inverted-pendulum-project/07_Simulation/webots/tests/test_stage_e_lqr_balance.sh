@@ -3,7 +3,8 @@
 #
 # Part 1: Balance validation (mirrors test_stage_d_balance.sh's pattern).
 # Runs the LQR controller against the undisturbed resting state and validates
-# the IMU pitch angle stays within acceptable bounds.
+# the IMU pitch angle stays within acceptable bounds, and that the run reached
+# LAST_TIME_MIN_S of simulated time.
 #
 # Part 2: Compatibility validation. Asserts LQR's controller reads/commands
 # the same core device set as PID's controller (imu, both wheel position
@@ -13,12 +14,18 @@
 #
 # Part 3: Informational control-off run (issue #406, follows #404 S2).
 # Runs the same world again with CONTROLLER_DISABLED=1 (the LQR core still runs
-# and logs, but both wheel commands are forced to 0.0 rad/s). Prints max |pitch|,
-# wheel drift rate and last log time for both runs. Asserts only that the switch
-# works: the disabled run must drift < 0.001 rad/s (max over both wheels) over
-# t >= 10 s, and under half the normal run's drift when that is >= 0.002 rad/s, and
-# must reach t >= 25 s. If the disabled run also passes the pitch check, the pitch check
-# cannot tell control from no control; a NOTE line says so.
+# and logs, but both wheel commands are forced to 0.0 rad/s). The switch check
+# asserts that it works: the max wheel drift over both wheels for t >= 10 s must
+# be < 0.001 rad/s (and under half the normal drift when that is >= 0.002), and
+# the run must reach LAST_TIME_MIN_S of simulated time before the wall-clock
+# timeout. If the control-off run also passes the pitch check, a NOTE says the
+# pitch check cannot tell control from no control.
+#
+# Data-row rule (both runs): a row whose first field is numeric is a data row.
+# It is accepted only if fields 1, 3, 8 and 9 are plain finite-looking numbers
+# and the row has at least 9 fields. Any other data-looking row is counted as
+# malformed and FAILS the run (nan/inf, truncated last row, READING_ERROR lines).
+# Header and info lines (first field non-numeric) are ignored.
 #
 # Requirements (from #221):
 #   - Run LQR controller for 30 s of SIMULATED time on pendulum_robot_lqr.wbt
@@ -53,17 +60,19 @@ LQR_CONTROLLER="$CONTROLLER_DIR/lqr_controller.py"
 
 # Test parameters
 THRESHOLD_RAD=0.15
-TIMEOUT_S=20                 # WALL-CLOCK timeout for the Webots process (real seconds)
+TIMEOUT_S=20                 # WALL-CLOCK timeout (real s). Pre-existing limit: this kills run_batch.sh only; a webots-bin child can outlive it (Stage C too).
 SIM_LIMIT_S=30               # SIMULATED-time limit passed to the controller (TEST_MAX_SIM_TIME_S)
 DRIFT_WINDOW_START_S=10      # simulated time from which wheel drift is measured
+LAST_TIME_MIN_S=25           # both runs must log up to at least this simulated time
 # Control-off drift bounds (rad/s, max over BOTH wheels). With the switch on, both
 # wheel commands are exactly 0.0, so the drift is float noise only; 0.001 leaves
 # margin over that. The normal LQR run drifts ~0.0042 rad/s on this world, so a dead
-# switch would sit above 0.001. When the normal drift is >= 0.002 rad/s, the
-# control-off drift must also be under half of it.
+# switch would sit above 0.001.
+# Defence in depth: when the normal drift is >= 0.002 rad/s, the control-off drift
+# must also be under half of it. At these constants that clause is implied by the
+# absolute 0.001 bound (0.5 x 0.002 = 0.001), so it adds no separate constraint today.
 DRIFT_MAX_RAD_S=0.001
 DRIFT_NORMAL_MIN_RAD_S=0.002
-LAST_TIME_MIN_S=25           # control-off run must log up to at least this sim time
 
 echo "========================================"
 echo "Stage E: LQR Balance + Compatibility Harness"
@@ -153,18 +162,22 @@ run_webots_pass() {
     fi
 }
 
-# Print "max_tilt drift_rad_s last_time" for the current controller log.
-# max_tilt is "NONE" if there are no data rows. drift_rad_s is the larger of the
-# two least-squares wheel-angle slopes (|WheelL| and |WheelR|, rad/s) over
-# t >= DRIFT_WINDOW_START_S; "NONE" if fewer than 2 rows fall in that window.
+# awk over $CONTROLLER_LOG. Prints one line: "max drift last good bad".
+#   max   = max |IMU_Pitch| over good rows ("NONE" if no good rows)
+#   drift = larger |least-squares slope| of WheelL and WheelR over t >= W
+#           ("NONE" if fewer than 2 good rows in that window)
+#   last  = time of the last good row
+#   good  = rows accepted; bad = data-looking rows rejected (see header rule)
 log_stats() {
     awk -v W="$DRIFT_WINDOW_START_S" '
+      function isnum(x) { return (x ~ /^-?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?$/) }
+      function absf(x) { return (x < 0) ? -x : x }
       $1 ~ /^[0-9]+\.?[0-9]*$/ {
+        if (NF < 9 || !isnum($1) || !isnum($3) || !isnum($8) || !isnum($9)) { bad++; next }
+        good++
         t = $1 + 0
-        pitch = $3 + 0
-        abs_pitch = (pitch < 0) ? -pitch : pitch
-        if (rows == 0 || abs_pitch > max) max = abs_pitch
-        rows++
+        p = absf($3 + 0)
+        if (good == 1 || p > maxp) maxp = p
         last = t
         if (t >= W) {
           k++; st += t; stt += t * t
@@ -172,10 +185,9 @@ log_stats() {
           sr += $9; str += t * $9
         }
       }
-      function absf(x) { return (x < 0) ? -x : x }
       END {
-        if (rows == 0) { printf "NONE NONE NONE\n"; exit }
-        printf "%.4f ", max
+        if (good == 0) { printf "NONE NONE NONE 0 %d\n", bad; exit }
+        printf "%.4f ", maxp
         den = k * stt - st * st
         if (k >= 2 && den != 0) {
           slope_l = (k * stl - st * sl) / den
@@ -185,52 +197,98 @@ log_stats() {
         } else {
           printf "NONE "
         }
-        printf "%.3f\n", last
+        printf "%.3f %d %d\n", last, good, bad
       }
     ' "$CONTROLLER_LOG"
 }
 
+# Parse the current log into STAT_MAX STAT_DRIFT STAT_LAST STAT_GOOD STAT_BAD.
+# Returns 1 if awk fails (e.g. unreadable log) or the output is not 5 fields.
+parse_log() {
+    local out
+    out=$(log_stats) || return 1
+    read -r STAT_MAX STAT_DRIFT STAT_LAST STAT_GOOD STAT_BAD <<< "$out" || return 1
+    if [ -z "$STAT_MAX" ] || [ -z "$STAT_DRIFT" ] || [ -z "$STAT_LAST" ] || [ -z "$STAT_GOOD" ] || [ -z "$STAT_BAD" ]; then
+        return 1
+    fi
+    return 0
+}
+
+# Hard failure if the log cannot be parsed (never report PASS on an empty parse).
+parse_or_die() {
+    if ! parse_log; then
+        echo "FAIL: $1: could not parse $CONTROLLER_LOG (log_stats failed or log unreadable)"
+        exit 1
+    fi
+}
+
+# Print a stats value with a unit suffix, or "no data" when it is NONE.
+show() {
+    if [ "$1" = "NONE" ]; then
+        echo "no data"
+    else
+        echo "$1$2"
+    fi
+}
+
 # --- Part 1: Balance validation (normal controller) ---
 run_webots_pass 0
+parse_or_die "normal run"
+normal_max=$STAT_MAX
+normal_drift=$STAT_DRIFT
+normal_last=$STAT_LAST
+normal_good=$STAT_GOOD
+normal_bad=$STAT_BAD
 
-read -r max_tilt _ _ <<< "$(log_stats)"
-BALANCE_OK=0
-if [ "$max_tilt" = "NONE" ]; then
+BALANCE_OK=1
+if [ "$normal_bad" -gt 0 ]; then
+    echo "FAIL: normal run: ${normal_bad} malformed or non-finite data row(s) in controller.log"
+    BALANCE_OK=0
+fi
+if [ "$normal_good" -eq 0 ]; then
     echo "FAIL: No valid IMU data rows found in controller log"
     echo "Last 20 lines of log:"
     tail -n 20 "$CONTROLLER_LOG"
     BALANCE_OK=0
 else
-    echo "IMU data parsed from controller.log"
-    echo "Max |IMU_Pitch|: ${max_tilt}rad"
+    echo "IMU data parsed from controller.log (${normal_good} rows, ${normal_bad} malformed)"
+    echo "Max |IMU_Pitch|: ${normal_max}rad"
     echo "Threshold: ${THRESHOLD_RAD}rad"
     echo ""
-    pass=$(awk -v tilt="$max_tilt" -v threshold="$THRESHOLD_RAD" 'BEGIN { print (tilt <= threshold) ? 1 : 0 }')
+    pass=$(awk -v tilt="$normal_max" -v threshold="$THRESHOLD_RAD" 'BEGIN { print (tilt <= threshold) ? 1 : 0 }')
     if [ "$pass" -eq 1 ]; then
-        echo "PASS: Max |tilt| ${max_tilt}rad <= ${THRESHOLD_RAD}rad threshold"
-        BALANCE_OK=1
+        echo "PASS: Max |tilt| ${normal_max}rad <= ${THRESHOLD_RAD}rad threshold"
     else
-        echo "FAIL: Max |tilt| ${max_tilt}rad exceeds ${THRESHOLD_RAD}rad threshold"
+        echo "FAIL: Max |tilt| ${normal_max}rad exceeds ${THRESHOLD_RAD}rad threshold"
         echo ""
         echo "Last 20 lines of log:"
         tail -n 20 "$CONTROLLER_LOG"
+        BALANCE_OK=0
+    fi
+    if [ "$(awk -v t="$normal_last" -v m="$LAST_TIME_MIN_S" 'BEGIN { print (t >= m) ? 1 : 0 }')" -ne 1 ]; then
+        echo "FAIL: normal run last log time ${normal_last}s < ${LAST_TIME_MIN_S}s (run did not reach the simulated time)"
+        BALANCE_OK=0
     fi
 fi
 echo ""
 
-# Normal run numbers (for the summary table below). Copy before the next run deletes the log.
-read -r normal_max normal_drift normal_last <<< "$(log_stats)"
-normal_rc=$RUN_RC
-
 # --- Part 3: Informational control-off run (CONTROLLER_DISABLED=1) ---
 echo "--- Control-off run: CONTROLLER_DISABLED=1 ---"
 run_webots_pass 1
-
-read -r off_max off_drift off_last <<< "$(log_stats)"
-echo "Control-off run: max |IMU_Pitch| ${off_max}rad, wheel drift ${off_drift} rad/s (t >= ${DRIFT_WINDOW_START_S}s), last log t ${off_last}s"
+parse_or_die "control-off run"
+off_max=$STAT_MAX
+off_drift=$STAT_DRIFT
+off_last=$STAT_LAST
+off_good=$STAT_GOOD
+off_bad=$STAT_BAD
+echo "Control-off run: max |IMU_Pitch| $(show "$off_max" rad), wheel drift $(show "$off_drift" ' rad/s') (t >= ${DRIFT_WINDOW_START_S}s), last log t $(show "$off_last" s)"
 echo ""
 
 SWITCH_OK=1
+if [ "$off_bad" -gt 0 ]; then
+    echo "FAIL: control-off run: ${off_bad} malformed or non-finite data row(s) in controller.log"
+    SWITCH_OK=0
+fi
 if [ "$off_drift" = "NONE" ]; then
     echo "FAIL: control-off run has too few rows at t >= ${DRIFT_WINDOW_START_S}s to measure wheel drift"
     SWITCH_OK=0
@@ -258,8 +316,8 @@ echo ""
 # --- Summary ---
 echo "--- Summary (normal vs control-off, simulated time) ---"
 printf "%-12s %-14s %-22s %-12s\n" "run" "max|pitch|" "drift(t>=${DRIFT_WINDOW_START_S}s)" "last t"
-printf "%-12s %-14s %-22s %-12s\n" "normal" "${normal_max}rad" "${normal_drift} rad/s" "${normal_last}s"
-printf "%-12s %-14s %-22s %-12s\n" "disabled" "${off_max}rad" "${off_drift} rad/s" "${off_last}s"
+printf "%-12s %-14s %-22s %-12s\n" "normal" "$(show "$normal_max" rad)" "$(show "$normal_drift" ' rad/s')" "$(show "$normal_last" s)"
+printf "%-12s %-14s %-22s %-12s\n" "disabled" "$(show "$off_max" rad)" "$(show "$off_drift" ' rad/s')" "$(show "$off_last" s)"
 echo ""
 
 if [ "$BALANCE_OK" -ne 1 ]; then
@@ -278,7 +336,7 @@ if [ "$SWITCH_OK" -ne 1 ]; then
     exit 1
 fi
 
-echo "Robot remained balanced through the ${SIM_LIMIT_S}s simulated run (wall-clock timeout ${TIMEOUT_S}s)."
+echo "Robot remained balanced for the measured ${normal_last}s of simulated time (wall-clock timeout ${TIMEOUT_S}s)."
 echo ""
 echo "========================================"
 echo "ALL CHECKS PASSED (balance + compatibility + control-off switch)"
