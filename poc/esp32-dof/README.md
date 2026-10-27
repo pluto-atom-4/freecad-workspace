@@ -384,7 +384,8 @@ mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --replay raw.csv --re
 
 Exactly one of `--port`, `--mock`, `--replay` is required. Other options: `--core lqr|pid|none`
 (default `lqr`), `--udp-port` (default 5006), `--record CSV`, `--duration S`, `--baud` (115200),
-`--alpha` (0.98). `--duration` counts from start and includes the ~1 s arm window, so a value under
+`--alpha` (0.98), `--text-log PATH` and `--echo-text` (both need `--port`, off by default; see Step D).
+`--duration` counts from start and includes the ~1 s arm window, so a value under
 about 1 s exits 2 (`duration expired before the arm window filled`, or `before the first armed tick`).
 Exit codes: 0 for duration end, input end, or Ctrl-C once the bridge has armed at least once (a run
 that ends mid re-arm after a device reset also exits 0; see the stderr note below); 2 for usage
@@ -547,11 +548,11 @@ Before tilting, note cmd and wheel at the start pose (expect about zero cmd; see
 pyserial without `exclusive=True`. By reading `dof_serial.py`, a second reader (e.g. a serial monitor)
 opened while the bridge runs would silently take part of the IMU byte stream (not observed). So only one
 reader can safely own the port, which is why this step is a separate run. `--record` keeps no raw serial
-lines. By default the bridge ignores the firmware's text lines. `--text-log PATH` saves them with timestamps
-(a fresh file per run) and `--echo-text` prints them to stderr with a `[fw] ` prefix; both are off by default.
-This is unit-tested against a fake serial source ONLY, not run on hardware. The two-run flow above stays
-valid; a single run with `--text-log` is an option that has not been tried. BRC balancing-robot-controller#159 has the matching capture
-steps. Stop the bridge first, then make a separate run with the same kind of motion and capture the
+lines. By default the bridge ignores the firmware's text lines. `--text-log PATH` saves them with
+timestamps (a fresh file per run) and `--echo-text` prints them to stderr with a `[fw] ` prefix; both
+are off by default. This is unit-tested against a fake serial source ONLY, not run on hardware. The
+two-run flow above stays valid; a single run with `--text-log` is an option that has not been tried.
+BRC balancing-robot-controller#159 has the matching capture steps. Stop the bridge first, then make a separate run with the same kind of motion and capture the
 board's `[imu] ... fused=` lines with a serial monitor. The BRC `tilt_servo` frames build also prints `[imu] accel=... fused=... goal=... torque=...` every 100 ms (10 Hz) on the same port, interleaved
 with the `IMU,` frames; the bridge ignores those lines by default. The `fused=` value is degrees from BRC's own
 filter on the board: absolute, not host-fused, not tared. The bridge's `pitch` is tared and
