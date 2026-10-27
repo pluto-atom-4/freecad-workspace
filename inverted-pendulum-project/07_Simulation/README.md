@@ -372,7 +372,7 @@ cd inverted-pendulum-project/07_Simulation/webots
 ./run_batch.sh
 ```
 
-Expected behavior: Webots runs for 30s in batch mode without crashing. Exit code 0 or timeout (exit 124) indicates structural success.
+Expected behavior: Webots runs for 30s in batch mode without crashing. `run_batch.sh` exits 0 on a normal timeout (the inner `timeout`'s 124 is treated as PASS). A child that ignores TERM is KILLed after a 5s grace and reported as exit 137, which is a FAILURE (`run_batch.sh` exits 1).
 
 **If Test Fails:**
 - `ERROR: InertialUnit 'imu' not found via getDevice()` → PROTO is missing the InertialUnit node or it has a different name. Re-check Step 1 above.
@@ -538,7 +538,7 @@ cd inverted-pendulum-project/07_Simulation/webots
 ./run_batch.sh
 ```
 
-Expected: Webots runs 30s in batch mode without crashing. Exit code 0 or timeout (124) indicates structural success.
+Expected: Webots runs 30s in batch mode without crashing. `run_batch.sh` exits 0 on a normal timeout (the inner `timeout`'s 124 is treated as PASS). A child that ignores TERM is KILLed after a 5s grace and reported as exit 137, which is a FAILURE (`run_batch.sh` exits 1).
 
 ### Visual Verification (Interactive/GUI Mode):
 
