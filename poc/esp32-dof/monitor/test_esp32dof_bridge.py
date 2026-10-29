@@ -17,6 +17,7 @@ import itertools
 import json
 import math
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -2042,3 +2043,122 @@ def test_symlink_loop_text_log_exits_2_without_traceback(tmp_path, monkeypatch, 
     err_lines = [ln for ln in capsys.readouterr().err.splitlines() if ln]
     assert len(err_lines) == 1 and err_lines[0].startswith("dof_wheel_bridge: error: --text-log:")
     assert record.read_text(encoding="utf-8") == "KEEP"
+
+
+# ----- wheel command out (#435) ---------------------------------------------------------------
+
+CMD_LINE = r"^CMD -?\d+\.\d{4}$"
+
+
+class _BrokenWriter:
+    """Stands in for a --cmd-out whose reader has gone: the first write raises EPIPE."""
+
+    def __init__(self):
+        self.writes = 0
+
+    def write(self, s):
+        self.writes += 1
+        raise BrokenPipeError(32, "Broken pipe")
+
+    def flush(self):
+        raise BrokenPipeError(32, "Broken pipe")
+
+    def close(self):
+        pass
+
+
+def test_cli_accepts_cmd_out_and_negative_scale(tmp_path):
+    cmd = str(tmp_path / "cmd.txt")
+    args = b.build_parser().parse_args(["--stdin", "--cmd-out", cmd, "--cmd-scale", "-1"])
+    assert args.cmd_out == cmd
+    assert args.cmd_scale == -1.0
+
+
+def test_cli_cmd_out_defaults_off():
+    args = b.build_parser().parse_args(["--stdin"])
+    assert args.cmd_out is None
+    assert args.cmd_scale == 1.0
+
+
+@pytest.mark.parametrize("scale", ["nan", "inf", "-inf", "x"])
+def test_cli_rejects_non_finite_cmd_scale(scale):
+    with pytest.raises(SystemExit) as e:
+        b.build_parser().parse_args(["--stdin", "--cmd-out", "x", "--cmd-scale", scale])
+    assert e.value.code == 2
+
+
+@pytest.mark.parametrize("source", [["--mock"], ["--replay", "{missing}"]])
+def test_cmd_out_without_stdin_is_usage_error(tmp_path, capsys, source):
+    # parser.error runs before any source or output is opened, so this cannot hang
+    cmd = tmp_path / "cmd.txt"
+    source = [s.replace("{missing}", str(tmp_path / "missing.csv")) for s in source]
+    with pytest.raises(SystemExit) as e:
+        b.main([*source, "--cmd-out", str(cmd), "--udp-port", str(free_udp_port())])
+    assert e.value.code == 2
+    assert "--cmd-out needs --stdin" in capsys.readouterr().err
+    assert not cmd.exists()
+
+
+def test_cmd_out_file_gets_one_cmd_line_per_armed_tick(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    cmd = tmp_path / "cmd.txt"
+    rc = b.main(["--stdin", "--cmd-out", str(cmd), "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    assert "error:" not in capsys.readouterr().err
+    out_lines = cmd.read_text(encoding="utf-8").splitlines()
+    assert len(out_lines) >= 11                 # arm tick + the 10 frames after the 50 that arm
+    for ln in out_lines:
+        assert re.match(CMD_LINE, ln), ln
+
+
+def test_cmd_out_dash_writes_standard_output(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    rc = b.main(["--stdin", "--cmd-out", "-", "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    out_lines = capsys.readouterr().out.splitlines()
+    assert len(out_lines) >= 11
+    for ln in out_lines:
+        assert re.match(CMD_LINE, ln), ln
+
+
+def test_cmd_scale_minus_one_flips_sign_line_by_line():
+    outs = {}
+    for scale in (1.0, -1.0):
+        hal = SerialImuHal(still_lines(60), reference_pitch_rad=0.0)
+        sink = io.StringIO()
+        b.run_bridge(hal, StubCore(0.5), Rec(hal), sleep=lambda s: None, out=io.StringIO(),
+                     cmd_out=sink, cmd_scale=scale)
+        outs[scale] = [float(ln.split()[1]) for ln in sink.getvalue().splitlines()]
+    assert len(outs[1.0]) == len(outs[-1.0]) == 11
+    assert outs[1.0][0] == pytest.approx(0.5, abs=1e-4)
+    for pos, neg in zip(outs[1.0], outs[-1.0]):
+        assert neg == pytest.approx(-pos, abs=1e-3)
+
+
+def test_cmd_out_reader_gone_stops_writing_and_run_continues(capsys):
+    hal = SerialImuHal(still_lines(60), reference_pitch_rad=0.0)
+    rec = Rec(hal)
+    dead = _BrokenWriter()
+    res = b.run_bridge(hal, StubCore(0.5), rec, sleep=lambda s: None, out=io.StringIO(),
+                       cmd_out=dead)
+    assert dead.writes == 1                     # no further writes after the first EPIPE
+    assert res.ticks == 11 and rec.sent == 11   # the bridge kept publishing
+    err_lines = capsys.readouterr().err.splitlines()
+    assert err_lines == ["dof_wheel_bridge: cmd-out closed, no longer writing"]
+
+
+def test_main_cmd_out_reader_gone_exits_0(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    cmd = str(tmp_path / "cmd.txt")
+    dead = _BrokenWriter()
+    real_open = open
+
+    def fake_open(path, *a, **kw):
+        return dead if str(path) == cmd else real_open(path, *a, **kw)
+
+    monkeypatch.setattr(b, "open", fake_open, raising=False)
+    rc = b.main(["--stdin", "--cmd-out", cmd, "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert err.count("dof_wheel_bridge: cmd-out closed, no longer writing") == 1
+    assert "Traceback" not in err
