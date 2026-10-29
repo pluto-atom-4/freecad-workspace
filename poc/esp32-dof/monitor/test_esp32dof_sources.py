@@ -374,6 +374,19 @@ class TestStdinLines:
         text = "\n  \n\t\r\nIMU,1*00\n   \nhello\n"
         assert list(stdin_lines(io.StringIO(text))) == ["IMU,1*00", "hello"]
 
+    def test_stdin_keeps_padding_and_skips_lone_cr(self):
+        """Only the trailing CR/LF is removed: padding inside a kept line stays; a lone CR line is skipped."""
+        text = "  IMU,1*00  \r\n\r\n\t[bal] x \n"
+        assert list(stdin_lines(io.StringIO(text))) == ["  IMU,1*00  ", "\t[bal] x "]
+
+    def test_stdin_does_not_sleep(self, monkeypatch):
+        """No sleeping: time.sleep is never called while iterating."""
+        def fail_sleep(delay):
+            raise AssertionError("stdin_lines must not sleep")
+
+        monkeypatch.setattr(dof_sources.time, "sleep", fail_sleep)
+        assert list(stdin_lines(io.StringIO("a\nb\n"))) == ["a", "b"]
+
     def test_stdin_empty_stream_ends_at_eof(self):
         """An empty stream yields nothing; next() raises StopIteration at EOF."""
         assert list(stdin_lines(io.StringIO(""))) == []
