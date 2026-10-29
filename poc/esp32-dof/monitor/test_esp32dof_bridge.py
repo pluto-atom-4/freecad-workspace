@@ -10,6 +10,7 @@ Usage:
 
 import ast
 import csv
+import errno
 import importlib.util
 import inspect
 import io
@@ -2087,9 +2088,12 @@ def test_cli_rejects_non_finite_cmd_scale(scale):
     assert e.value.code == 2
 
 
-@pytest.mark.parametrize("source", [["--mock"], ["--replay", "{missing}"]])
+@pytest.mark.parametrize("source", [["--mock", "--duration", "1"],
+                                    ["--replay", "{missing}", "--duration", "1"]])
 def test_cmd_out_without_stdin_is_usage_error(tmp_path, capsys, source):
-    # parser.error runs before any source or output is opened, so this cannot hang
+    # parser.error runs before any source or output is opened. --duration 1 is a backstop: if the
+    # check ever regressed, the run would end within about 1 s and fail the SystemExit assertion
+    # below, instead of hanging.
     cmd = tmp_path / "cmd.txt"
     source = [s.replace("{missing}", str(tmp_path / "missing.csv")) for s in source]
     with pytest.raises(SystemExit) as e:
@@ -2106,7 +2110,7 @@ def test_cmd_out_file_gets_one_cmd_line_per_armed_tick(tmp_path, monkeypatch, ca
     assert rc == 0
     assert "error:" not in capsys.readouterr().err
     out_lines = cmd.read_text(encoding="utf-8").splitlines()
-    assert len(out_lines) >= 11                 # arm tick + the 10 frames after the 50 that arm
+    assert 11 <= len(out_lines) <= 16           # arm tick + the 10 frames after the 50 that arm; a late reader thread can add a few poll ticks
     for ln in out_lines:
         assert re.match(CMD_LINE, ln), ln
 
@@ -2116,7 +2120,7 @@ def test_cmd_out_dash_writes_standard_output(monkeypatch, capsys):
     rc = b.main(["--stdin", "--cmd-out", "-", "--udp-port", str(free_udp_port())])
     assert rc == 0
     out_lines = capsys.readouterr().out.splitlines()
-    assert len(out_lines) >= 11
+    assert 11 <= len(out_lines) <= 16     # real clock: a late reader thread can add a few poll ticks
     for ln in out_lines:
         assert re.match(CMD_LINE, ln), ln
 
@@ -2162,3 +2166,141 @@ def test_main_cmd_out_reader_gone_exits_0(monkeypatch, tmp_path, capsys):
     err = capsys.readouterr().err
     assert err.count("dof_wheel_bridge: cmd-out closed, no longer writing") == 1
     assert "Traceback" not in err
+
+
+class _EioWriter:
+    """A --cmd-out whose write fails with an OS error other than EPIPE."""
+
+    def write(self, s):
+        raise OSError(errno.EIO, "x")
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class _PipeSink(io.StringIO):
+    """Keeps pending data after a failed flush, like a pipe buffer: the write succeeds, the first
+    flush raises EPIPE, and the first close() raises EPIPE. Later calls behave normally."""
+
+    def __init__(self):
+        super().__init__()
+        self.flushes = 0
+        self._close_failed = False
+
+    def flush(self):
+        self.flushes += 1
+        if self.flushes == 1:
+            raise BrokenPipeError(errno.EPIPE, "Broken pipe")
+        super().flush()
+
+    def close(self):
+        if not self._close_failed:
+            self._close_failed = True
+            raise BrokenPipeError(errno.EPIPE, "Broken pipe")
+        super().close()
+
+
+def test_cmd_out_fault_tick_writes_zero_line():
+    hal = SerialImuHal(_stale_tilt_lines(), reference_pitch_rad=0.0)
+    sink = io.StringIO()
+    res = b.run_bridge(hal, StubCore(0.5), Rec(hal), sleep=lambda s: None, out=io.StringIO(),
+                       cmd_out=sink)
+    assert res.faults == 1
+    assert sink.getvalue().splitlines() == [
+        "CMD 0.5000", "CMD 0.5000", "CMD 0.0000", "CMD 0.5000", "CMD 0.5000"]   # index 2 is the hold
+
+
+def test_cmd_out_flushes_every_line():
+    hal = SerialImuHal(still_lines(60), reference_pitch_rad=0.0)
+    sink = _TrackFile()
+    b.run_bridge(hal, StubCore(0.5), Rec(hal), sleep=lambda s: None, out=io.StringIO(),
+                 cmd_out=sink)
+    assert sink.flush_calls == 11                # one flush per armed tick, none extra
+    assert len(sink.getvalue().splitlines()) == 11
+
+
+@pytest.mark.parametrize("core_cmd, scale", [(float("nan"), 1.0), (float("inf"), 1.0),
+                                             (10.0, 1e308)])
+def test_cmd_out_non_finite_value_writes_zero(core_cmd, scale):
+    hal = SerialImuHal(still_lines(60), reference_pitch_rad=0.0)
+    sink = io.StringIO()
+    b.run_bridge(hal, StubCore(core_cmd), Rec(hal), sleep=lambda s: None, out=io.StringIO(),
+                 cmd_out=sink, cmd_scale=scale)
+    lines = sink.getvalue().splitlines()
+    assert len(lines) == 11
+    assert set(lines) == {"CMD 0.0000"}          # never 'nan', 'inf' or '-0.0000' on the wire
+
+
+def test_cmd_out_other_oserror_propagates_from_run_bridge():
+    hal = SerialImuHal(still_lines(60), reference_pitch_rad=0.0)
+    with pytest.raises(OSError) as e:
+        b.run_bridge(hal, StubCore(0.5), Rec(hal), sleep=lambda s: None, out=io.StringIO(),
+                     cmd_out=_EioWriter())
+    assert e.value.errno == errno.EIO
+
+
+def test_main_cmd_out_other_oserror_exits_2(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    cmd = str(tmp_path / "cmd.txt")
+    eio = _EioWriter()
+    real_open = open
+
+    def fake_open(path, *a, **kw):
+        return eio if str(path) == cmd else real_open(path, *a, **kw)
+
+    monkeypatch.setattr(b, "open", fake_open, raising=False)
+    rc = b.main(["--stdin", "--cmd-out", cmd, "--udp-port", str(free_udp_port())])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "dof_wheel_bridge: error:" in err
+    assert "Traceback" not in err
+
+
+def test_cmd_out_and_record_to_different_files_both_written(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    cmd = tmp_path / "cmd.txt"
+    rec_path = tmp_path / "rec.csv"
+    rc = b.main(["--stdin", "--cmd-out", str(cmd), "--record", str(rec_path),
+                 "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    assert "error:" not in capsys.readouterr().err
+    cmd_lines = cmd.read_text(encoding="utf-8").splitlines()
+    rec_rows = list(csv.reader(io.StringIO(rec_path.read_text(encoding="utf-8"))))
+    assert tuple(rec_rows[0]) == b.RECORD_COLUMNS
+    assert 11 <= len(cmd_lines) <= 16 and len(rec_rows) - 1 == len(cmd_lines)   # one CMD line per recorded armed tick
+    for ln in cmd_lines:
+        assert re.match(CMD_LINE, ln), ln
+
+
+@pytest.mark.parametrize("other", ["--record", "--text-log"])
+def test_cmd_out_same_file_as_other_output_is_usage_error(tmp_path, capsys, other):
+    same = tmp_path / "same.txt"
+    with pytest.raises(SystemExit) as e:
+        b.main(["--stdin", "--cmd-out", str(same), other, str(same),
+                "--udp-port", str(free_udp_port())])
+    assert e.value.code == 2
+    assert f"--cmd-out and {other} must not be the same file" in capsys.readouterr().err
+    assert not same.exists()                     # rejected before any output was opened
+
+
+def test_main_cmd_out_pending_data_after_failed_flush_is_one_quiet_line(monkeypatch, tmp_path,
+                                                                        capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    cmd = str(tmp_path / "cmd.txt")
+    sink = _PipeSink()
+    real_open = open
+
+    def fake_open(path, *a, **kw):
+        return sink if str(path) == cmd else real_open(path, *a, **kw)
+
+    monkeypatch.setattr(b, "open", fake_open, raising=False)
+    rc = b.main(["--stdin", "--cmd-out", cmd, "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert len([ln for ln in err.splitlines() if "cmd-out closed" in ln]) == 1
+    assert "closing --cmd-out failed" not in err   # the EPIPE from close() is silent
+    assert "Traceback" not in err
+    assert sink.flushes == 1 and sink.getvalue().count("CMD ") == 1   # the pending line was kept
