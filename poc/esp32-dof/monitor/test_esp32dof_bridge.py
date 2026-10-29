@@ -2083,8 +2083,10 @@ def test_cli_cmd_out_defaults_off():
 
 @pytest.mark.parametrize("scale", ["nan", "inf", "-inf", "x"])
 def test_cli_rejects_non_finite_cmd_scale(scale):
+    # Attached form (--cmd-scale=VALUE): a bare "-inf" would be read by argparse as an option flag and
+    # rejected before _finite_float runs, so every value goes through the attached form.
     with pytest.raises(SystemExit) as e:
-        b.build_parser().parse_args(["--stdin", "--cmd-out", "x", "--cmd-scale", scale])
+        b.build_parser().parse_args(["--stdin", "--cmd-out", "x", f"--cmd-scale={scale}"])
     assert e.value.code == 2
 
 
@@ -2374,3 +2376,51 @@ def test_main_cmd_out_missing_dir_exits_2_and_keeps_existing_record(monkeypatch,
     assert rc == 2
     assert "error" in capsys.readouterr().err
     assert rec_path.read_text(encoding="utf-8") == "KEEP"
+
+
+class _CloseCountingFile:
+    """Proxy for a real --cmd-out file: counts close() calls and forwards write/flush/close."""
+
+    def __init__(self, fh):
+        self._fh = fh
+        self.close_calls = 0
+
+    def write(self, s):
+        return self._fh.write(s)
+
+    def flush(self):
+        return self._fh.flush()
+
+    def close(self):
+        self.close_calls += 1
+        self._fh.close()
+
+
+def test_main_record_open_failure_after_cmd_out_closes_cmd_sink(monkeypatch, tmp_path, capsys):
+    # --cmd-out opens first and succeeds; the --record path (its directory does not exist) then raises
+    # OSError inside main's try. The OSError handler returns 2 and the finally must close the cmd file
+    # exactly once. The cmd file is real; open is wrapped only to count close() on that handle.
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    cmd = tmp_path / "cmd.txt"
+    record = tmp_path / "no" / "such" / "rec.csv"
+    made = []
+    real_open = open
+
+    def fake_open(path, *a, **kw):
+        if str(path) == str(cmd):
+            proxy = _CloseCountingFile(real_open(path, *a, **kw))
+            made.append(proxy)
+            return proxy
+        return real_open(path, *a, **kw)
+
+    monkeypatch.setattr(b, "open", fake_open, raising=False)
+    rc = b.main(["--stdin", "--cmd-out", str(cmd), "--record", str(record),
+                 "--udp-port", str(free_udp_port())])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "error" in err
+    assert "Traceback" not in err
+    assert cmd.exists()
+    assert len(made) == 1
+    assert made[0].close_calls == 1
+    assert made[0]._fh.closed
