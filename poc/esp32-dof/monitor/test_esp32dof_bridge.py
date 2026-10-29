@@ -731,7 +731,7 @@ def test_stdin_bare_cr_stays_inside_one_text_line(tmp_path, monkeypatch, capsys)
     rc = b.main(["--stdin", "--text-log", str(log), "--udp-port", str(free_udp_port())])
     assert rc == 0
     rows = [r for r in log.read_text(encoding="utf-8").splitlines() if r]
-    assert len(rows) == 1 and "[bal] a" in rows[0] and "b" in rows[0].split("a", 1)[1]
+    assert len(rows) == 1 and "[bal] a\\x0db" in rows[0]   # the CR is kept, written as the escape \x0d
 
 
 def test_stdin_silent_open_pipe_ends_at_duration():
@@ -749,6 +749,7 @@ def test_stdin_silent_open_pipe_ends_at_duration():
     finally:
         if p.poll() is None:
             p.kill()
+            p.wait(timeout=5)
         p.stdin.close()
         p.stdout.close()
         p.stderr.close()
