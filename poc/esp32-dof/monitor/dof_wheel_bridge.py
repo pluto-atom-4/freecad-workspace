@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """IMU frames -> SerialImuHal -> Stage F control core -> UDP wheel display (issue #375).
 
-Chain: ESP32 frame lines (serial, --port) or synthetic/CSV frames (--mock, --replay)
+Chain: ESP32 frame lines (serial, --port; piped lines, --stdin) or synthetic/CSV frames (--mock, --replay)
 -> dof_hal.SerialImuHal (arming, tare, complementary filter) -> hal.control_core
 LqrBalance / PidBalance (or none) -> wheel command -> HAL wheel_angle integral -> one UDP JSON
 datagram per armed tick to the servo-wheel-dof Webots display (127.0.0.1:5006 by default).
@@ -34,7 +34,7 @@ cadence. The stall and hold contract is in README "Behaviour".
 
 Firmware text lines (issue #387): every serial line not starting with "IMU," is a text line. By
 default the bridge ignores them. --text-log PATH saves them (timestamped, fresh file per run) and
---echo-text prints them to stderr with a "[fw] " prefix; both are off by default and need --port.
+--echo-text prints them to stderr with a "[fw] " prefix; both are off by default and need --port or --stdin.
 
 Usage:
     mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --mock --duration 5
@@ -71,7 +71,7 @@ from hal.control_core import LqrBalance, PidBalance  # noqa: E402
 
 from dof_frame import PREFIX, Frame, format_frame  # noqa: E402
 from dof_hal import NOMINAL_DT_S, SerialImuHal  # noqa: E402
-from dof_sources import csv_replay_lines, mock_frame  # noqa: E402
+from dof_sources import csv_replay_lines, mock_frame, stdin_lines  # noqa: E402
 
 GAINS_PATH = _SIM_DIR / "hal" / "parity_vectors.json"
 HOST = "127.0.0.1"
@@ -673,6 +673,8 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--port", metavar="PATH", help="serial device, e.g. /dev/ttyACM0 (needs pyserial)")
     src.add_argument("--mock", action="store_true", help="synthetic 50 Hz frames with a still lead-in")
     src.add_argument("--replay", metavar="CSV", help="raw-frame CSV (seq,t_us,ax,ay,az,gx,gy,gz)")
+    src.add_argument("--stdin", action="store_true",
+                     help="read frame lines from standard input, for example piped from wokwi-cli")
     p.add_argument("--baud", type=_positive_int, default=115200, help="serial baud (default 115200)")
     p.add_argument("--core", default="lqr", choices=CORES,
                    help="control core: lqr (default), pid, or none (display mirror of pitch)")
@@ -688,11 +690,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="complementary filter gyro weight 0..1 (default 0.98)")
     p.add_argument("--text-log", metavar="PATH", default=None,
                    help="save firmware text lines (lines not starting with 'IMU,') with timestamps "
-                        "to PATH, a fresh file per run (needs --port; default off; escaping and "
+                        "to PATH, a fresh file per run (needs --port or --stdin; default off; escaping and "
                         "[truncated] are in README Step D)")
     p.add_argument("--echo-text", action="store_true",
                    help="print firmware text lines to stderr with a '[fw] ' prefix "
-                        "(needs --port; default off; escaping and [truncated] are in README Step D)")
+                        "(needs --port or --stdin; default off; escaping and [truncated] are in README Step D)")
     return p
 
 
@@ -701,6 +703,11 @@ def _make_source(args, text_sink=None):
         return still_then_mock_lines(realtime=True)   # --duration is enforced by run_bridge
     if args.replay is not None:
         return csv_replay_lines(args.replay, realtime=True)
+    if args.stdin:                           # no pyserial, baud or reconnect: plain text lines
+        lines = stdin_lines(sys.stdin)
+        if text_sink is not None:
+            lines = _tee_text(lines, text_sink)
+        return PolledSource(lines, poll_s=NOMINAL_DT_S)
     try:
         from dof_serial import serial_lines  # lazy: pyserial only for --port
     except ImportError as exc:
@@ -715,8 +722,8 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     want_text = args.text_log is not None or args.echo_text
-    if want_text and args.port is None:
-        parser.error("--text-log and --echo-text need --port (not --mock or --replay)")
+    if want_text and args.port is None and not args.stdin:
+        parser.error("--text-log and --echo-text need --port or --stdin (not --mock or --replay)")
     if args.text_log is not None and args.record is not None \
             and _same_file(args.text_log, args.record):
         parser.error("--text-log and --record must not be the same file")

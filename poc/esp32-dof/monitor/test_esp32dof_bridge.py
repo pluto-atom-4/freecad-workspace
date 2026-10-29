@@ -650,6 +650,50 @@ def test_cli_rejects_no_source():
     assert e.value.code == 2
 
 
+# ----- stdin live source (#432) ---------------------------------------------------------------
+
+def _stdin_text(extra_text=True):
+    """60 still frames as a stdin stream; one firmware text line at index 10 (HAL skips it)."""
+    lines = still_lines(60)
+    if extra_text:
+        lines.insert(10, "[bal] boot LQR")
+    return io.StringIO("\n".join(lines) + "\n")
+
+
+def test_cli_accepts_stdin():
+    assert b.build_parser().parse_args(["--stdin"]).stdin is True
+
+
+def test_cli_rejects_stdin_with_mock():
+    with pytest.raises(SystemExit) as e:
+        b.main(["--stdin", "--mock"])
+    assert e.value.code == 2
+
+
+def test_stdin_run_arms_after_50_frames(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    rec_path = tmp_path / "rec.csv"
+    rc = b.main(["--stdin", "--record", str(rec_path), "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "never armed" not in err and "error:" not in err
+    rows = list(csv.reader(io.StringIO(rec_path.read_text(encoding="utf-8"))))
+    assert tuple(rows[0]) == b.RECORD_COLUMNS
+    body = rows[1:]
+    assert len(body) >= 11                      # arm tick + the 10 frames after the 50 that arm
+    assert int(body[0][1]) == 0                 # arm tick sits at HAL t=0
+
+
+def test_text_log_accepted_with_stdin(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    log = tmp_path / "fw.txt"
+    rc = b.main(["--stdin", "--text-log", str(log), "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    assert "error:" not in capsys.readouterr().err
+    rows = [r.split("\t") for r in log.read_text(encoding="utf-8").splitlines()]
+    assert [r[2] for r in rows] == ["[bal] boot LQR"]
+
+
 def test_cli_defaults_and_port_range():
     args = b.build_parser().parse_args(["--mock"])
     assert args.core == "lqr"
