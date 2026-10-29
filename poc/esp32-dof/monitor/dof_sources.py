@@ -5,6 +5,7 @@ mock motion is fusion-model-consistent: gx=d(roll)/dt, gy=d(pitch)/dt (deg/s), g
 import csv
 import math
 import os
+import sys
 import time
 from typing import Iterator
 
@@ -205,3 +206,25 @@ def _csv_gen(path, realtime):
                     time.sleep(min(dt, _MAX_REPLAY_SLEEP_S))
             prev_t = frame.t_us
             yield line
+
+
+def stdin_lines(stream=None) -> Iterator[str]:
+    """Yield raw frame lines from a text stream (default sys.stdin).
+
+    Each line is stripped of the trailing \\r\\n. Empty and whitespace-only lines are
+    skipped; every other line is yielded unchanged, IMU frames and text lines alike
+    (the bridge splits them later). No sleeping: the iterator blocks in the stream read.
+    EOF ends the iteration.
+
+    Args:
+        stream: Text stream to read (any iterable of str lines); None means sys.stdin.
+
+    Returns:
+        Iterator[str]: Non-blank lines from the stream, in order.
+    """
+    src = sys.stdin if stream is None else stream
+    for raw in src:
+        line = raw.rstrip("\r\n")
+        if not line.strip():
+            continue
+        yield line
