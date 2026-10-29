@@ -10,6 +10,7 @@ Usage:
 
 import ast
 import csv
+import errno
 import importlib.util
 import inspect
 import io
@@ -17,6 +18,7 @@ import itertools
 import json
 import math
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -2042,3 +2044,383 @@ def test_symlink_loop_text_log_exits_2_without_traceback(tmp_path, monkeypatch, 
     err_lines = [ln for ln in capsys.readouterr().err.splitlines() if ln]
     assert len(err_lines) == 1 and err_lines[0].startswith("dof_wheel_bridge: error: --text-log:")
     assert record.read_text(encoding="utf-8") == "KEEP"
+
+
+# ----- wheel command out (#435) ---------------------------------------------------------------
+
+CMD_LINE = r"^CMD -?\d+\.\d{4}$"
+
+
+class _BrokenWriter:
+    """Stands in for a --cmd-out whose reader has gone: the first write raises EPIPE."""
+
+    def __init__(self):
+        self.writes = 0
+
+    def write(self, s):
+        self.writes += 1
+        raise BrokenPipeError(32, "Broken pipe")
+
+    def flush(self):
+        raise BrokenPipeError(32, "Broken pipe")
+
+    def close(self):
+        pass
+
+
+def test_cli_accepts_cmd_out_and_negative_scale(tmp_path):
+    cmd = str(tmp_path / "cmd.txt")
+    args = b.build_parser().parse_args(["--stdin", "--cmd-out", cmd, "--cmd-scale", "-1"])
+    assert args.cmd_out == cmd
+    assert args.cmd_scale == -1.0
+
+
+def test_cli_cmd_out_defaults_off():
+    args = b.build_parser().parse_args(["--stdin"])
+    assert args.cmd_out is None
+    assert args.cmd_scale == 1.0
+
+
+@pytest.mark.parametrize("scale", ["nan", "inf", "-inf", "x"])
+def test_cli_rejects_non_finite_cmd_scale(scale):
+    # Attached form (--cmd-scale=VALUE): a bare "-inf" would be read by argparse as an option flag and
+    # rejected before _finite_float runs, so every value goes through the attached form.
+    with pytest.raises(SystemExit) as e:
+        b.build_parser().parse_args(["--stdin", "--cmd-out", "x", f"--cmd-scale={scale}"])
+    assert e.value.code == 2
+
+
+@pytest.mark.parametrize("source", [["--mock", "--duration", "1"],
+                                    ["--replay", "{missing}", "--duration", "1"]])
+def test_cmd_out_without_stdin_is_usage_error(tmp_path, capsys, source):
+    # parser.error runs before any source or output is opened. --duration 1 is a backstop: if the
+    # check ever regressed, the run would end within about 1 s and fail the SystemExit assertion
+    # below, instead of hanging.
+    cmd = tmp_path / "cmd.txt"
+    source = [s.replace("{missing}", str(tmp_path / "missing.csv")) for s in source]
+    with pytest.raises(SystemExit) as e:
+        b.main([*source, "--cmd-out", str(cmd), "--udp-port", str(free_udp_port())])
+    assert e.value.code == 2
+    assert "--cmd-out needs --stdin" in capsys.readouterr().err
+    assert not cmd.exists()
+
+
+def test_cmd_out_file_gets_one_cmd_line_per_armed_tick(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    cmd = tmp_path / "cmd.txt"
+    rc = b.main(["--stdin", "--cmd-out", str(cmd), "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    assert "error:" not in capsys.readouterr().err
+    out_lines = cmd.read_text(encoding="utf-8").splitlines()
+    assert 11 <= len(out_lines) <= 16           # arm tick + the 10 frames after the 50 that arm; a late reader thread can add a few poll ticks
+    for ln in out_lines:
+        assert re.match(CMD_LINE, ln), ln
+
+
+def test_cmd_out_dash_writes_standard_output(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    rc = b.main(["--stdin", "--cmd-out", "-", "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    out_lines = capsys.readouterr().out.splitlines()
+    assert 11 <= len(out_lines) <= 16     # real clock: a late reader thread can add a few poll ticks
+    for ln in out_lines:
+        assert re.match(CMD_LINE, ln), ln
+
+
+def test_cmd_scale_minus_one_flips_sign_line_by_line():
+    outs = {}
+    for scale in (1.0, -1.0):
+        hal = SerialImuHal(still_lines(60), reference_pitch_rad=0.0)
+        sink = io.StringIO()
+        b.run_bridge(hal, StubCore(0.5), Rec(hal), sleep=lambda s: None, out=io.StringIO(),
+                     cmd_out=sink, cmd_scale=scale)
+        outs[scale] = [float(ln.split()[1]) for ln in sink.getvalue().splitlines()]
+    assert len(outs[1.0]) == len(outs[-1.0]) == 11
+    assert outs[1.0][0] == pytest.approx(0.5, abs=1e-4)
+    for pos, neg in zip(outs[1.0], outs[-1.0]):
+        assert neg == pytest.approx(-pos, abs=1e-3)
+
+
+def test_cmd_out_reader_gone_stops_writing_and_run_continues(capsys):
+    hal = SerialImuHal(still_lines(60), reference_pitch_rad=0.0)
+    rec = Rec(hal)
+    dead = _BrokenWriter()
+    res = b.run_bridge(hal, StubCore(0.5), rec, sleep=lambda s: None, out=io.StringIO(),
+                       cmd_out=dead)
+    assert dead.writes == 1                     # no further writes after the first EPIPE
+    assert res.ticks == 11 and rec.sent == 11   # the bridge kept publishing
+    err_lines = capsys.readouterr().err.splitlines()
+    assert err_lines == ["dof_wheel_bridge: cmd-out closed, no longer writing"]
+
+
+def test_main_cmd_out_reader_gone_exits_0(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    cmd = str(tmp_path / "cmd.txt")
+    dead = _BrokenWriter()
+    real_open = open
+
+    def fake_open(path, *a, **kw):
+        return dead if str(path) == cmd else real_open(path, *a, **kw)
+
+    monkeypatch.setattr(b, "open", fake_open, raising=False)
+    rc = b.main(["--stdin", "--cmd-out", cmd, "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert err.count("dof_wheel_bridge: cmd-out closed, no longer writing") == 1
+    assert "Traceback" not in err
+
+
+class _EioWriter:
+    """A --cmd-out whose write fails with an OS error other than EPIPE."""
+
+    def write(self, s):
+        raise OSError(errno.EIO, "x")
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class _PipeSink(io.StringIO):
+    """Keeps pending data after a failed flush, like a pipe buffer: the write succeeds, the first
+    flush raises EPIPE, and the first close() raises EPIPE. Later calls behave normally.
+    close_calls counts every close() call, including the failing one."""
+
+    def __init__(self):
+        super().__init__()
+        self.flushes = 0
+        self.close_calls = 0
+        self._close_failed = False
+
+    def flush(self):
+        self.flushes += 1
+        if self.flushes == 1:
+            raise BrokenPipeError(errno.EPIPE, "Broken pipe")
+        super().flush()
+
+    def close(self):
+        self.close_calls += 1
+        if not self._close_failed:
+            self._close_failed = True
+            raise BrokenPipeError(errno.EPIPE, "Broken pipe")
+        super().close()
+
+
+def test_cmd_out_fault_tick_writes_zero_line():
+    hal = SerialImuHal(_stale_tilt_lines(), reference_pitch_rad=0.0)
+    sink = io.StringIO()
+    res = b.run_bridge(hal, StubCore(0.5), Rec(hal), sleep=lambda s: None, out=io.StringIO(),
+                       cmd_out=sink)
+    assert res.faults == 1
+    assert sink.getvalue().splitlines() == [
+        "CMD 0.5000", "CMD 0.5000", "CMD 0.0000", "CMD 0.5000", "CMD 0.5000"]   # index 2 is the hold
+
+
+def test_cmd_out_flushes_every_line():
+    hal = SerialImuHal(still_lines(60), reference_pitch_rad=0.0)
+    sink = _TrackFile()
+    b.run_bridge(hal, StubCore(0.5), Rec(hal), sleep=lambda s: None, out=io.StringIO(),
+                 cmd_out=sink)
+    assert sink.flush_calls == 11                # one flush per armed tick, none extra
+    assert len(sink.getvalue().splitlines()) == 11
+
+
+@pytest.mark.parametrize("core_cmd, scale", [(float("nan"), 1.0), (float("inf"), 1.0),
+                                             (10.0, 1e308)])
+def test_cmd_out_non_finite_value_writes_zero(core_cmd, scale):
+    hal = SerialImuHal(still_lines(60), reference_pitch_rad=0.0)
+    sink = io.StringIO()
+    b.run_bridge(hal, StubCore(core_cmd), Rec(hal), sleep=lambda s: None, out=io.StringIO(),
+                 cmd_out=sink, cmd_scale=scale)
+    lines = sink.getvalue().splitlines()
+    assert len(lines) == 11
+    assert set(lines) == {"CMD 0.0000"}          # a non-finite value goes out as 0.0, never 'nan' or 'inf'
+
+
+def test_cmd_out_fault_tick_with_negative_scale_writes_plus_zero():
+    # The fault tick has cmd 0.0, so 0.0 * -1.0 is -0.0; the round(...) + 0.0 step keeps it off the wire.
+    hal = SerialImuHal(_stale_tilt_lines(), reference_pitch_rad=0.0)
+    sink = io.StringIO()
+    res = b.run_bridge(hal, StubCore(0.5), Rec(hal), sleep=lambda s: None, out=io.StringIO(),
+                       cmd_out=sink, cmd_scale=-1.0)
+    assert res.faults == 1
+    assert sink.getvalue().splitlines() == [
+        "CMD -0.5000", "CMD -0.5000", "CMD 0.0000", "CMD -0.5000", "CMD -0.5000"]   # index 2 is the hold
+    assert "-0.0000" not in sink.getvalue()
+
+
+def test_cmd_out_tiny_negative_command_writes_plus_zero():
+    # round(-1e-5, 4) is -0.0; the + 0.0 step turns it into +0.0, so the wire carries 0.0000.
+    hal = SerialImuHal(still_lines(60), reference_pitch_rad=0.0)
+    sink = io.StringIO()
+    b.run_bridge(hal, StubCore(-1e-5), Rec(hal), sleep=lambda s: None, out=io.StringIO(),
+                 cmd_out=sink, cmd_scale=1.0)
+    lines = sink.getvalue().splitlines()
+    assert len(lines) == 11
+    assert set(lines) == {"CMD 0.0000"}
+    assert "-0.0000" not in sink.getvalue()
+
+
+def test_cmd_out_other_oserror_propagates_from_run_bridge():
+    hal = SerialImuHal(still_lines(60), reference_pitch_rad=0.0)
+    with pytest.raises(OSError) as e:
+        b.run_bridge(hal, StubCore(0.5), Rec(hal), sleep=lambda s: None, out=io.StringIO(),
+                     cmd_out=_EioWriter())
+    assert e.value.errno == errno.EIO
+
+
+def test_main_cmd_out_other_oserror_exits_2(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    cmd = str(tmp_path / "cmd.txt")
+    eio = _EioWriter()
+    real_open = open
+
+    def fake_open(path, *a, **kw):
+        return eio if str(path) == cmd else real_open(path, *a, **kw)
+
+    monkeypatch.setattr(b, "open", fake_open, raising=False)
+    rc = b.main(["--stdin", "--cmd-out", cmd, "--udp-port", str(free_udp_port())])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "dof_wheel_bridge: error:" in err
+    assert "Traceback" not in err
+
+
+def test_cmd_out_and_record_to_different_files_both_written(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    cmd = tmp_path / "cmd.txt"
+    rec_path = tmp_path / "rec.csv"
+    rc = b.main(["--stdin", "--cmd-out", str(cmd), "--record", str(rec_path),
+                 "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    assert "error:" not in capsys.readouterr().err
+    cmd_lines = cmd.read_text(encoding="utf-8").splitlines()
+    rec_rows = list(csv.reader(io.StringIO(rec_path.read_text(encoding="utf-8"))))
+    assert tuple(rec_rows[0]) == b.RECORD_COLUMNS
+    assert 11 <= len(cmd_lines) <= 16 and len(rec_rows) - 1 == len(cmd_lines)   # one CMD line per recorded armed tick
+    for ln in cmd_lines:
+        assert re.match(CMD_LINE, ln), ln
+
+
+@pytest.mark.parametrize("other", ["--record", "--text-log"])
+def test_cmd_out_same_file_as_other_output_is_usage_error(tmp_path, capsys, other):
+    same = tmp_path / "same.txt"
+    with pytest.raises(SystemExit) as e:
+        b.main(["--stdin", "--cmd-out", str(same), other, str(same),
+                "--udp-port", str(free_udp_port())])
+    assert e.value.code == 2
+    assert f"--cmd-out and {other} must not be the same file" in capsys.readouterr().err
+    assert not same.exists()                     # rejected before any output was opened
+
+
+def test_main_cmd_out_pending_data_after_failed_flush_is_one_quiet_line(monkeypatch, tmp_path,
+                                                                        capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    cmd = str(tmp_path / "cmd.txt")
+    sink = _PipeSink()
+    real_open = open
+
+    def fake_open(path, *a, **kw):
+        return sink if str(path) == cmd else real_open(path, *a, **kw)
+
+    monkeypatch.setattr(b, "open", fake_open, raising=False)
+    rc = b.main(["--stdin", "--cmd-out", cmd, "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert len([ln for ln in err.splitlines() if "cmd-out closed" in ln]) == 1
+    assert "closing --cmd-out failed" not in err   # the EPIPE from close() is silent
+    assert "Traceback" not in err
+    assert sink.flushes == 1 and sink.getvalue().count("CMD ") == 1   # the pending line was kept
+    assert sink.close_calls >= 1                 # main did reach close() on the --cmd-out handle
+
+
+def test_main_cmd_out_real_pipe_closed_reader_is_one_quiet_line(monkeypatch, tmp_path, capsys):
+    # A real OS pipe with no reader: the first flush gets EPIPE (Python ignores SIGPIPE), the
+    # bridge reports it once, and the close() in main's finally fails silently.
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    cmd = str(tmp_path / "cmd.txt")
+    r, w = os.pipe()
+    os.close(r)
+    fh = os.fdopen(w, "w", encoding="utf-8")
+    real_open = open
+
+    def fake_open(path, *a, **kw):
+        return fh if str(path) == cmd else real_open(path, *a, **kw)
+
+    monkeypatch.setattr(b, "open", fake_open, raising=False)
+    try:
+        rc = b.main(["--stdin", "--cmd-out", cmd, "--udp-port", str(free_udp_port())])
+        err = capsys.readouterr().err
+    finally:
+        try:                                     # the code under test already closed fh; guard a retry
+            fh.close()
+        except OSError:
+            pass
+    assert rc == 0
+    assert len([ln for ln in err.splitlines() if "cmd-out closed" in ln]) == 1
+    assert "closing --cmd-out failed" not in err
+    assert "Traceback" not in err
+    assert fh.closed                             # the descriptor was released by main's finally
+
+
+def test_main_cmd_out_missing_dir_exits_2_and_keeps_existing_record(monkeypatch, tmp_path, capsys):
+    # --cmd-out is opened before --record, so the bad cmd path fails before the record is truncated.
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    rec_path = tmp_path / "rec.csv"
+    rec_path.write_text("KEEP", encoding="utf-8")
+    cmd = tmp_path / "no" / "such" / "cmd.txt"
+    rc = b.main(["--stdin", "--record", str(rec_path), "--cmd-out", str(cmd),
+                 "--udp-port", str(free_udp_port())])
+    assert rc == 2
+    assert "error" in capsys.readouterr().err
+    assert rec_path.read_text(encoding="utf-8") == "KEEP"
+
+
+class _CloseCountingFile:
+    """Proxy for a real --cmd-out file: counts close() calls and forwards write/flush/close."""
+
+    def __init__(self, fh):
+        self._fh = fh
+        self.close_calls = 0
+
+    def write(self, s):
+        return self._fh.write(s)
+
+    def flush(self):
+        return self._fh.flush()
+
+    def close(self):
+        self.close_calls += 1
+        self._fh.close()
+
+
+def test_main_record_open_failure_after_cmd_out_closes_cmd_sink(monkeypatch, tmp_path, capsys):
+    # --cmd-out opens first and succeeds; the --record path (its directory does not exist) then raises
+    # OSError inside main's try. The OSError handler returns 2 and the finally must close the cmd file
+    # exactly once. The cmd file is real; open is wrapped only to count close() on that handle.
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    cmd = tmp_path / "cmd.txt"
+    record = tmp_path / "no" / "such" / "rec.csv"
+    made = []
+    real_open = open
+
+    def fake_open(path, *a, **kw):
+        if str(path) == str(cmd):
+            proxy = _CloseCountingFile(real_open(path, *a, **kw))
+            made.append(proxy)
+            return proxy
+        return real_open(path, *a, **kw)
+
+    monkeypatch.setattr(b, "open", fake_open, raising=False)
+    rc = b.main(["--stdin", "--cmd-out", str(cmd), "--record", str(record),
+                 "--udp-port", str(free_udp_port())])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "error" in err
+    assert "Traceback" not in err
+    assert cmd.exists()
+    assert len(made) == 1
+    assert made[0].close_calls == 1
+    assert made[0]._fh.closed

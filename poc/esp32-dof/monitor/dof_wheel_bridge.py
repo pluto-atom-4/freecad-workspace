@@ -36,6 +36,20 @@ Firmware text lines (issue #387): every serial line not starting with "IMU," is 
 default the bridge ignores them. --text-log PATH saves them (timestamped, fresh file per run) and
 --echo-text prints them to stderr with a "[fw] " prefix; both are off by default and need --port or --stdin.
 
+Wheel command out (issue #435): --cmd-out PATH (needs --stdin) writes one 'CMD <rad_s>' line per
+armed tick, scaled by --cmd-scale (use -1 to flip the sign); off by default. A fault tick writes
+0. The value is the controller output BEFORE the HAL clamp, so the receiver must clamp it. A
+non-finite value (including an overflowing product) is written as 0.0. Every line is flushed. A
+FIFO open blocks until a reader opens it, and --duration does not bound that wait. A reader that
+stops reading eventually blocks the tick loop (the UDP publish and the record stop too). With '-',
+standard output carries only CMD lines; all status goes to stderr. '-' is meant for debugging; if
+the reader of standard output goes away early, the interpreter may print an 'Exception ignored ...
+BrokenPipeError' line at exit and the process exit status can be 120; use a FIFO or a file for
+pipes that may close early. After a vanished reader (EPIPE) writing stops with one stderr line
+and the run continues; any other OS error ends the run with exit 2. No final zero line is written
+on end of input, duration or Ctrl-C, so the receiver must treat silence (a stale command) as stop.
+SIM-ONLY plumbing: the firmware reader is a separate change.
+
 Usage:
     mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --mock --duration 5
     mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --port /dev/ttyACM0 --core pid
@@ -45,11 +59,13 @@ Usage:
 Exit codes: 0 for input end, duration end, or Ctrl-C once the bridge has armed at least once
 (including one that ends mid re-arm after a device reset; that case prints a "note:" line on
 stderr); 2 for usage error, source error, never armed (not even once), or Ctrl-C before the
-first arm. An unopenable --text-log path also exits 2 (one "--text-log:" error line).
+first arm. An unopenable --text-log path also exits 2 (one "--text-log:" error line). An OS error
+writing --cmd-out other than EPIPE also exits 2.
 """
 
 import argparse
 import csv
+import errno
 import json
 import math
 import os
@@ -506,8 +522,26 @@ def _same_file(first: str, second: str) -> bool:
 
 # ----- bridge loop ----------------------------------------------------------------------------
 
+def _write_cmd(fh, value) -> bool:
+    """Write one 'CMD <rad_s>' line and flush. False when the reader is gone (EPIPE).
+
+    Any other OSError propagates; main reports it and exits 2.
+    """
+    try:
+        fh.write(f"CMD {value:.4f}\n")
+        fh.flush()
+    except BrokenPipeError:
+        return False
+    except OSError as exc:
+        if exc.errno == errno.EPIPE:
+            return False
+        raise
+    return True
+
+
 def run_bridge(hal, core, pub, *, duration_s=None, record=None,
-               clock=time.monotonic, out=None, sleep=time.sleep, progress=None) -> BridgeResult:
+               clock=time.monotonic, out=None, sleep=time.sleep, progress=None,
+               cmd_out=None, cmd_scale=1.0) -> BridgeResult:
     """Run the tick loop until the HAL reports end of input (-1) or duration_s elapses.
 
     ticks counts every loop tick (armed or not). Unarmed ticks are not published, not recorded
@@ -517,8 +551,12 @@ def run_bridge(hal, core, pub, *, duration_s=None, record=None,
     ever_armed becomes True on the first armed tick and is never cleared. progress, if given, is
     a dict that gets progress["ever_armed"] = True at the same moment, so a caller can still read
     it after KeyboardInterrupt (which skips the return value).
+    cmd_out, if given, gets one 'CMD <rad_s>' line per armed tick: cmd * cmd_scale, flushed (cmd is
+    0.0 on a fault tick). After the reader is gone (EPIPE) writing stops for the rest of the run
+    with one stderr line; the run itself continues.
     """
     out = sys.stderr if out is None else out
+    cmd_fh = cmd_out
     writer = None
     if record is not None:
         writer = csv.writer(record)
@@ -601,6 +639,15 @@ def run_bridge(hal, core, pub, *, duration_s=None, record=None,
             pub.send(seq, roll, pitch, 0.0, wheel, cmd_rad_s=cmd)
             if pub.sent > sent_before:
                 published += 1
+            if cmd_fh is not None:
+                v = cmd * cmd_scale
+                if not math.isfinite(v):     # NaN, inf or an overflowing product never reaches the wire
+                    v = 0.0
+                v = round(v, 4) + 0.0        # -0.0 and tiny negatives (-1e-5) go out as 0.0000, not -0.0000
+                if not _write_cmd(cmd_fh, v):
+                    cmd_fh = None
+                    print("dof_wheel_bridge: cmd-out closed, no longer writing", file=sys.stderr,
+                          flush=True)
             if writer is not None:
                 writer.writerow([seq, int(hal.now_s() * 1e6), roll, pitch, 0.0, wheel, cmd])
                 rows += 1
@@ -656,6 +703,16 @@ def _unit_float(text: str) -> float:
     return v
 
 
+def _finite_float(text: str) -> float:
+    try:
+        v = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {text!r}")
+    if not math.isfinite(v):
+        raise argparse.ArgumentTypeError(f"must be finite, got {text!r}")
+    return v
+
+
 def _port(text: str) -> int:
     try:
         v = int(text)
@@ -695,6 +752,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--echo-text", action="store_true",
                    help="print firmware text lines to stderr with a '[fw] ' prefix "
                         "(needs --port or --stdin; default off; escaping and [truncated] are in README Step D)")
+    p.add_argument("--cmd-out", metavar="PATH", default=None,
+                   help="write the wheel command as 'CMD <rad_s>' lines to PATH (a FIFO or a file; '-' is "
+                        "standard output, which then carries only CMD lines); needs --stdin. Opening a "
+                        "FIFO waits for a reader, and --duration does not bound that wait. Every line is "
+                        "flushed; a reader that stops reading blocks the loop. The value is before the HAL "
+                        "clamp, so the receiver must clamp it; no final zero is written, so silence means "
+                        "stop. SIM-ONLY (the firmware reader is a separate change). '-' is meant for "
+                        "debugging; if the reader of standard output goes away early, the interpreter may "
+                        "print an 'Exception ignored ... BrokenPipeError' line at exit and the process exit "
+                        "status can be 120; use a FIFO or a file for pipes that may close early")
+    p.add_argument("--cmd-scale", type=_finite_float, default=1.0, metavar="X",
+                   help="factor applied to the command before writing it (use -1 to flip the sign; "
+                        "a non-finite result is written as 0.0; the PD versus LQR sign is UNVERIFIED, "
+                        "freecad-workspace#359)")
     return p
 
 
@@ -731,6 +802,13 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
     if args.text_log is not None and args.record is not None \
             and _same_file(args.text_log, args.record):
         parser.error("--text-log and --record must not be the same file")
+    if args.cmd_out not in (None, "-"):      # "-" is standard output, not a file
+        if args.record is not None and _same_file(args.cmd_out, args.record):
+            parser.error("--cmd-out and --record must not be the same file")
+        if args.text_log is not None and _same_file(args.cmd_out, args.text_log):
+            parser.error("--cmd-out and --text-log must not be the same file")
+    if args.cmd_out is not None and not args.stdin:
+        parser.error("--cmd-out needs --stdin")
     try:
         gains = load_gains() if args.core != "none" else None
         core, ref = build_core(args.core, gains)
@@ -738,7 +816,7 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
         print(f"dof_wheel_bridge: error: {exc}", file=sys.stderr, flush=True)
         return 2
 
-    hal = pub = record_fh = text_sink = None
+    hal = pub = record_fh = text_sink = cmd_fh = None
     progress = {"ever_armed": False}
     try:
         if want_text:
@@ -748,14 +826,20 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
                 print(f"dof_wheel_bridge: error: --text-log: cannot open {args.text_log!r}: "
                       f"{getattr(exc, 'strerror', None) or exc}", file=sys.stderr, flush=True)
                 return 2
+        # Open order: text sink, then --cmd-out, then --record. A bad --text-log or --cmd-out path
+        # exits 2 before an existing --record file is truncated. A bad --record path comes after
+        # --cmd-out, so the cmd file has already been created or truncated when it exits 2.
+        if args.cmd_out is not None:
+            # "-" is standard output: main never closes it (see finally).
+            cmd_fh = sys.stdout if args.cmd_out == "-" else open(args.cmd_out, "w", encoding="utf-8")
         if args.record is not None:
-            # After the text sink: a bad --text-log path exits 2 and leaves an existing record intact.
             record_fh = open(args.record, "w", newline="", encoding="utf-8")
         pub = WheelPublisher(port=args.udp_port)
         hal = SerialImuHal(_make_source(args, text_sink=text_sink), reference_pitch_rad=ref,
                            alpha=args.alpha, clock=clock)
         result = run_bridge(hal, core, pub, duration_s=args.duration, record=record_fh,
-                            clock=clock, sleep=sleep, progress=progress)
+                            clock=clock, sleep=sleep, progress=progress,
+                            cmd_out=cmd_fh, cmd_scale=args.cmd_scale)
         if pub.errors or pub.skipped:
             print(f"dof_wheel_bridge: udp published={result.published} errors={pub.errors} "
                   f"skipped={pub.skipped}", file=sys.stderr, flush=True)
@@ -805,8 +889,18 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
             print(f"dof_wheel_bridge: warning: closing --record failed: {exc}",
                   file=sys.stderr, flush=True)
         finally:
-            if text_sink is not None:          # always closed, even if the record close failed
-                text_sink.close()
+            try:
+                if cmd_fh is not None and cmd_fh is not sys.stdout:   # never close standard output
+                    cmd_fh.close()
+            except OSError as exc:
+                # EPIPE: the reader already went and was reported by run_bridge. The close re-flushes
+                # the pending buffer, so it fails again here; stay silent so the user sees one line.
+                if not isinstance(exc, BrokenPipeError) and exc.errno != errno.EPIPE:
+                    print(f"dof_wheel_bridge: warning: closing --cmd-out failed: {exc}",
+                          file=sys.stderr, flush=True)
+            finally:
+                if text_sink is not None:      # always closed, even if the record close failed
+                    text_sink.close()
 
 
 if __name__ == "__main__":
