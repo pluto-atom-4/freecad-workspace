@@ -9,6 +9,7 @@ Usage:
     mamba run -n esp32-dof python3 -m pytest monitor/test_esp32dof_sources.py -v
 """
 
+import io
 import sys
 from pathlib import Path
 from itertools import islice
@@ -20,7 +21,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dof_frame import parse_line, format_frame
-from dof_sources import mock_lines, mock_frame, mock_angles, csv_replay_lines
+from dof_sources import mock_lines, mock_frame, mock_angles, csv_replay_lines, stdin_lines
 import dof_sources
 
 
@@ -347,6 +348,43 @@ class TestCSVRealtimeNaps:
         assert len(sleeps) == 2
         assert sleeps[0] == pytest.approx(0.02, abs=1e-6)
         assert sleeps[1] == pytest.approx(1.0, abs=1e-6)
+
+
+class TestStdinLines:
+    """Test stdin_lines() live line source."""
+
+    def test_stdin_mix_of_imu_and_text_in_order(self):
+        """IMU lines and text lines come back in order, unchanged."""
+        text = ("IMU,1,0,0.0,0.0,1.0,0.0,0.0,0.0*00\n"
+                "boot ok\n"
+                "IMU,2,20000,0.0,0.0,1.0,0.0,0.0,0.0*00\n")
+        assert list(stdin_lines(io.StringIO(text))) == [
+            "IMU,1,0,0.0,0.0,1.0,0.0,0.0,0.0*00",
+            "boot ok",
+            "IMU,2,20000,0.0,0.0,1.0,0.0,0.0,0.0*00",
+        ]
+
+    def test_stdin_strips_crlf(self):
+        """CRLF line endings are stripped; the content is kept."""
+        text = "IMU,1*00\r\nhello\r\n"
+        assert list(stdin_lines(io.StringIO(text))) == ["IMU,1*00", "hello"]
+
+    def test_stdin_skips_blank_and_whitespace_lines(self):
+        """Empty and whitespace-only lines are skipped; other lines kept as-is."""
+        text = "\n  \n\t\r\nIMU,1*00\n   \nhello\n"
+        assert list(stdin_lines(io.StringIO(text))) == ["IMU,1*00", "hello"]
+
+    def test_stdin_empty_stream_ends_at_eof(self):
+        """An empty stream yields nothing; next() raises StopIteration at EOF."""
+        assert list(stdin_lines(io.StringIO(""))) == []
+        it = stdin_lines(io.StringIO(""))
+        with pytest.raises(StopIteration):
+            next(it)
+
+    def test_stdin_none_reads_sys_stdin(self, monkeypatch):
+        """stream=None reads sys.stdin (patched here with a StringIO)."""
+        monkeypatch.setattr(sys, "stdin", io.StringIO("IMU,1*00\r\n\nhello\n"))
+        assert list(stdin_lines()) == ["IMU,1*00", "hello"]
 
 
 if __name__ == "__main__":
