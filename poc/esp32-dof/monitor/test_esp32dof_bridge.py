@@ -650,6 +650,115 @@ def test_cli_rejects_no_source():
     assert e.value.code == 2
 
 
+# ----- stdin live source (#432) ---------------------------------------------------------------
+
+def _stdin_text(extra_text=True):
+    """60 still frames as a stdin stream; one firmware text line at index 10 (HAL skips it)."""
+    lines = still_lines(60)
+    if extra_text:
+        lines.insert(10, "[bal] boot LQR")
+    return io.StringIO("\n".join(lines) + "\n")
+
+
+def test_cli_accepts_stdin():
+    assert b.build_parser().parse_args(["--stdin"]).stdin is True
+
+
+def test_cli_rejects_stdin_with_mock():
+    # parse only: a real run would never end if --stdin dropped out of the exclusive group
+    with pytest.raises(SystemExit) as e:
+        b.build_parser().parse_args(["--stdin", "--mock"])
+    assert e.value.code == 2
+
+
+def test_stdin_run_arms_after_50_frames(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    rec_path = tmp_path / "rec.csv"
+    rc = b.main(["--stdin", "--record", str(rec_path), "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "never armed" not in err and "error:" not in err
+    rows = list(csv.reader(io.StringIO(rec_path.read_text(encoding="utf-8"))))
+    assert tuple(rows[0]) == b.RECORD_COLUMNS
+    body = rows[1:]
+    assert len(body) >= 11                      # arm tick + the 10 frames after the 50 that arm
+    assert int(body[0][1]) == 0                 # arm tick sits at HAL t=0
+
+
+def test_text_log_accepted_with_stdin(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    log = tmp_path / "fw.txt"
+    rc = b.main(["--stdin", "--text-log", str(log), "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    assert "error:" not in capsys.readouterr().err
+    rows = [r.split("\t") for r in log.read_text(encoding="utf-8").splitlines()]
+    assert [r[2] for r in rows] == ["[bal] boot LQR"]
+
+
+def test_echo_text_accepted_with_stdin(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    rc = b.main(["--stdin", "--echo-text", "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "error:" not in err
+    assert "[fw] [bal] boot LQR" in err
+
+
+def test_stdin_undecodable_byte_does_not_kill_the_run(tmp_path, monkeypatch, capsys):
+    # an ascii-strict stdin would raise UnicodeDecodeError on 0xff; the bridge re-decodes as utf-8/replace
+    raw = ("\n".join(still_lines(60)) + "\n").encode("ascii") + b"[bal] bad \xff byte\n"
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(raw), encoding="ascii"))
+    log = tmp_path / "fw.txt"
+    rc = b.main(["--stdin", "--text-log", str(log), "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    assert "error:" not in capsys.readouterr().err
+    assert "[bal] bad" in log.read_text(encoding="utf-8")
+
+
+def test_stdin_closed_is_reported_not_a_traceback(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", None)
+    rc = b.main(["--stdin", "--udp-port", str(free_udp_port())])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "stdin is closed" in err and "Traceback" not in err
+
+
+def test_stdin_bare_cr_stays_inside_one_text_line(tmp_path, monkeypatch, capsys):
+    # universal newlines would split "a\rb" into two lines; the serial path only strips a trailing CR/LF
+    raw = ("\n".join(still_lines(60)) + "\n").encode("ascii") + b"[bal] a\rb\n"
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(raw), encoding="ascii"))
+    log = tmp_path / "fw.txt"
+    rc = b.main(["--stdin", "--text-log", str(log), "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    rows = [r for r in log.read_text(encoding="utf-8").splitlines() if r]
+    assert len(rows) == 1 and "[bal] a\\x0db" in rows[0]   # the CR is kept, written as the escape \x0d
+
+
+def test_stdin_silent_open_pipe_ends_at_duration():
+    """A silent open pipe must not keep the process alive past --duration (daemon reader thread)."""
+    import subprocess
+    import time
+    t0 = time.monotonic()
+    p = subprocess.Popen([sys.executable, b.__file__, "--stdin", "--duration", "2",
+                          "--udp-port", str(free_udp_port())],
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        p.wait(timeout=20)                      # stdin stays open and silent: do NOT use communicate()
+        elapsed = time.monotonic() - t0
+        err = p.stderr.read()
+    finally:
+        if p.poll() is None:
+            p.kill()
+            p.wait(timeout=5)
+        p.stdin.close()
+        p.stdout.close()
+        p.stderr.close()
+    assert 1.5 <= elapsed < 15                  # ended by --duration, not by EOF
+    assert p.returncode == 2                    # never armed: no frames arrived
+    assert b"never armed" in err or b"duration expired" in err
+    assert b"Fatal Python error" not in err
+
+
 def test_cli_defaults_and_port_range():
     args = b.build_parser().parse_args(["--mock"])
     assert args.core == "lqr"
