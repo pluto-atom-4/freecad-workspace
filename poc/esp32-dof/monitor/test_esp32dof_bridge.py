@@ -715,6 +715,49 @@ def test_stdin_undecodable_byte_does_not_kill_the_run(tmp_path, monkeypatch, cap
     assert "[bal] bad" in log.read_text(encoding="utf-8")
 
 
+def test_stdin_closed_is_reported_not_a_traceback(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", None)
+    rc = b.main(["--stdin", "--udp-port", str(free_udp_port())])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "stdin is closed" in err and "Traceback" not in err
+
+
+def test_stdin_bare_cr_stays_inside_one_text_line(tmp_path, monkeypatch, capsys):
+    # universal newlines would split "a\rb" into two lines; the serial path only strips a trailing CR/LF
+    raw = ("\n".join(still_lines(60)) + "\n").encode("ascii") + b"[bal] a\rb\n"
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(raw), encoding="ascii"))
+    log = tmp_path / "fw.txt"
+    rc = b.main(["--stdin", "--text-log", str(log), "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    rows = [r for r in log.read_text(encoding="utf-8").splitlines() if r]
+    assert len(rows) == 1 and "[bal] a" in rows[0] and "b" in rows[0].split("a", 1)[1]
+
+
+def test_stdin_silent_open_pipe_ends_at_duration():
+    """A silent open pipe must not keep the process alive past --duration (daemon reader thread)."""
+    import subprocess
+    import time
+    t0 = time.monotonic()
+    p = subprocess.Popen([sys.executable, b.__file__, "--stdin", "--duration", "2",
+                          "--udp-port", str(free_udp_port())],
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        p.wait(timeout=20)                      # stdin stays open and silent: do NOT use communicate()
+        elapsed = time.monotonic() - t0
+        err = p.stderr.read()
+    finally:
+        if p.poll() is None:
+            p.kill()
+        p.stdin.close()
+        p.stdout.close()
+        p.stderr.close()
+    assert 1.5 <= elapsed < 15                  # ended by --duration, not by EOF
+    assert p.returncode == 2                    # never armed: no frames arrived
+    assert b"never armed" in err or b"duration expired" in err
+    assert b"Fatal Python error" not in err
+
+
 def test_cli_defaults_and_port_range():
     args = b.build_parser().parse_args(["--mock"])
     assert args.core == "lqr"
