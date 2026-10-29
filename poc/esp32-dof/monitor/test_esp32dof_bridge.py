@@ -2183,11 +2183,13 @@ class _EioWriter:
 
 class _PipeSink(io.StringIO):
     """Keeps pending data after a failed flush, like a pipe buffer: the write succeeds, the first
-    flush raises EPIPE, and the first close() raises EPIPE. Later calls behave normally."""
+    flush raises EPIPE, and the first close() raises EPIPE. Later calls behave normally.
+    close_calls counts every close() call, including the failing one."""
 
     def __init__(self):
         super().__init__()
         self.flushes = 0
+        self.close_calls = 0
         self._close_failed = False
 
     def flush(self):
@@ -2197,6 +2199,7 @@ class _PipeSink(io.StringIO):
         super().flush()
 
     def close(self):
+        self.close_calls += 1
         if not self._close_failed:
             self._close_failed = True
             raise BrokenPipeError(errno.EPIPE, "Broken pipe")
@@ -2231,7 +2234,31 @@ def test_cmd_out_non_finite_value_writes_zero(core_cmd, scale):
                  cmd_out=sink, cmd_scale=scale)
     lines = sink.getvalue().splitlines()
     assert len(lines) == 11
-    assert set(lines) == {"CMD 0.0000"}          # never 'nan', 'inf' or '-0.0000' on the wire
+    assert set(lines) == {"CMD 0.0000"}          # a non-finite value goes out as 0.0, never 'nan' or 'inf'
+
+
+def test_cmd_out_fault_tick_with_negative_scale_writes_plus_zero():
+    # The fault tick has cmd 0.0, so 0.0 * -1.0 is -0.0; the round(...) + 0.0 step keeps it off the wire.
+    hal = SerialImuHal(_stale_tilt_lines(), reference_pitch_rad=0.0)
+    sink = io.StringIO()
+    res = b.run_bridge(hal, StubCore(0.5), Rec(hal), sleep=lambda s: None, out=io.StringIO(),
+                       cmd_out=sink, cmd_scale=-1.0)
+    assert res.faults == 1
+    assert sink.getvalue().splitlines() == [
+        "CMD -0.5000", "CMD -0.5000", "CMD 0.0000", "CMD -0.5000", "CMD -0.5000"]   # index 2 is the hold
+    assert "-0.0000" not in sink.getvalue()
+
+
+def test_cmd_out_tiny_negative_command_writes_plus_zero():
+    # round(-1e-5, 4) is -0.0; the + 0.0 step turns it into +0.0, so the wire carries 0.0000.
+    hal = SerialImuHal(still_lines(60), reference_pitch_rad=0.0)
+    sink = io.StringIO()
+    b.run_bridge(hal, StubCore(-1e-5), Rec(hal), sleep=lambda s: None, out=io.StringIO(),
+                 cmd_out=sink, cmd_scale=1.0)
+    lines = sink.getvalue().splitlines()
+    assert len(lines) == 11
+    assert set(lines) == {"CMD 0.0000"}
+    assert "-0.0000" not in sink.getvalue()
 
 
 def test_cmd_out_other_oserror_propagates_from_run_bridge():
@@ -2304,3 +2331,46 @@ def test_main_cmd_out_pending_data_after_failed_flush_is_one_quiet_line(monkeypa
     assert "closing --cmd-out failed" not in err   # the EPIPE from close() is silent
     assert "Traceback" not in err
     assert sink.flushes == 1 and sink.getvalue().count("CMD ") == 1   # the pending line was kept
+    assert sink.close_calls >= 1                 # main did reach close() on the --cmd-out handle
+
+
+def test_main_cmd_out_real_pipe_closed_reader_is_one_quiet_line(monkeypatch, tmp_path, capsys):
+    # A real OS pipe with no reader: the first flush gets EPIPE (Python ignores SIGPIPE), the
+    # bridge reports it once, and the close() in main's finally fails silently.
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    cmd = str(tmp_path / "cmd.txt")
+    r, w = os.pipe()
+    os.close(r)
+    fh = os.fdopen(w, "w", encoding="utf-8")
+    real_open = open
+
+    def fake_open(path, *a, **kw):
+        return fh if str(path) == cmd else real_open(path, *a, **kw)
+
+    monkeypatch.setattr(b, "open", fake_open, raising=False)
+    try:
+        rc = b.main(["--stdin", "--cmd-out", cmd, "--udp-port", str(free_udp_port())])
+        err = capsys.readouterr().err
+    finally:
+        try:                                     # the code under test already closed fh; guard a retry
+            fh.close()
+        except OSError:
+            pass
+    assert rc == 0
+    assert len([ln for ln in err.splitlines() if "cmd-out closed" in ln]) == 1
+    assert "closing --cmd-out failed" not in err
+    assert "Traceback" not in err
+    assert fh.closed                             # the descriptor was released by main's finally
+
+
+def test_main_cmd_out_missing_dir_exits_2_and_keeps_existing_record(monkeypatch, tmp_path, capsys):
+    # --cmd-out is opened before --record, so the bad cmd path fails before the record is truncated.
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    rec_path = tmp_path / "rec.csv"
+    rec_path.write_text("KEEP", encoding="utf-8")
+    cmd = tmp_path / "no" / "such" / "cmd.txt"
+    rc = b.main(["--stdin", "--record", str(rec_path), "--cmd-out", str(cmd),
+                 "--udp-port", str(free_udp_port())])
+    assert rc == 2
+    assert "error" in capsys.readouterr().err
+    assert rec_path.read_text(encoding="utf-8") == "KEEP"

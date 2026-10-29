@@ -42,10 +42,13 @@ armed tick, scaled by --cmd-scale (use -1 to flip the sign); off by default. A f
 non-finite value (including an overflowing product) is written as 0.0. Every line is flushed. A
 FIFO open blocks until a reader opens it, and --duration does not bound that wait. A reader that
 stops reading eventually blocks the tick loop (the UDP publish and the record stop too). With '-',
-standard output carries only CMD lines; all status goes to stderr. After a vanished reader (EPIPE)
-writing stops with one stderr line and the run continues; any other OS error ends the run with
-exit 2. No final zero line is written on end of input, duration or Ctrl-C, so the receiver must
-treat silence (a stale command) as stop. SIM-ONLY plumbing: the firmware reader is a separate change.
+standard output carries only CMD lines; all status goes to stderr. '-' is meant for debugging; if
+the reader of standard output goes away early, the interpreter may print an 'Exception ignored ...
+BrokenPipeError' line at exit and the process exit status can be 120; use a FIFO or a file for
+pipes that may close early. After a vanished reader (EPIPE) writing stops with one stderr line
+and the run continues; any other OS error ends the run with exit 2. No final zero line is written
+on end of input, duration or Ctrl-C, so the receiver must treat silence (a stale command) as stop.
+SIM-ONLY plumbing: the firmware reader is a separate change.
 
 Usage:
     mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --mock --duration 5
@@ -640,6 +643,7 @@ def run_bridge(hal, core, pub, *, duration_s=None, record=None,
                 v = cmd * cmd_scale
                 if not math.isfinite(v):     # NaN, inf or an overflowing product never reaches the wire
                     v = 0.0
+                v = round(v, 4) + 0.0        # -0.0 and tiny negatives (-1e-5) go out as 0.0000, not -0.0000
                 if not _write_cmd(cmd_fh, v):
                     cmd_fh = None
                     print("dof_wheel_bridge: cmd-out closed, no longer writing", file=sys.stderr,
@@ -754,7 +758,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "FIFO waits for a reader, and --duration does not bound that wait. Every line is "
                         "flushed; a reader that stops reading blocks the loop. The value is before the HAL "
                         "clamp, so the receiver must clamp it; no final zero is written, so silence means "
-                        "stop. SIM-ONLY (the firmware reader is a separate change)")
+                        "stop. SIM-ONLY (the firmware reader is a separate change). '-' is meant for "
+                        "debugging; if the reader of standard output goes away early, the interpreter may "
+                        "print an 'Exception ignored ... BrokenPipeError' line at exit and the process exit "
+                        "status can be 120; use a FIFO or a file for pipes that may close early")
     p.add_argument("--cmd-scale", type=_finite_float, default=1.0, metavar="X",
                    help="factor applied to the command before writing it (use -1 to flip the sign; "
                         "a non-finite result is written as 0.0; the PD versus LQR sign is UNVERIFIED, "
@@ -819,12 +826,14 @@ def main(argv=None, clock=time.monotonic, sleep=time.sleep) -> int:
                 print(f"dof_wheel_bridge: error: --text-log: cannot open {args.text_log!r}: "
                       f"{getattr(exc, 'strerror', None) or exc}", file=sys.stderr, flush=True)
                 return 2
-        if args.record is not None:
-            # After the text sink: a bad --text-log path exits 2 and leaves an existing record intact.
-            record_fh = open(args.record, "w", newline="", encoding="utf-8")
+        # Open order: text sink, then --cmd-out, then --record. A bad --text-log or --cmd-out path
+        # exits 2 before an existing --record file is truncated. A bad --record path comes after
+        # --cmd-out, so the cmd file has already been created or truncated when it exits 2.
         if args.cmd_out is not None:
             # "-" is standard output: main never closes it (see finally).
             cmd_fh = sys.stdout if args.cmd_out == "-" else open(args.cmd_out, "w", encoding="utf-8")
+        if args.record is not None:
+            record_fh = open(args.record, "w", newline="", encoding="utf-8")
         pub = WheelPublisher(port=args.udp_port)
         hal = SerialImuHal(_make_source(args, text_sink=text_sink), reference_pitch_rad=ref,
                            alpha=args.alpha, clock=clock)
