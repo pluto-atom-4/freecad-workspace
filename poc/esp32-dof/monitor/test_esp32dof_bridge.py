@@ -665,8 +665,9 @@ def test_cli_accepts_stdin():
 
 
 def test_cli_rejects_stdin_with_mock():
+    # parse only: a real run would never end if --stdin dropped out of the exclusive group
     with pytest.raises(SystemExit) as e:
-        b.main(["--stdin", "--mock"])
+        b.build_parser().parse_args(["--stdin", "--mock"])
     assert e.value.code == 2
 
 
@@ -692,6 +693,26 @@ def test_text_log_accepted_with_stdin(tmp_path, monkeypatch, capsys):
     assert "error:" not in capsys.readouterr().err
     rows = [r.split("\t") for r in log.read_text(encoding="utf-8").splitlines()]
     assert [r[2] for r in rows] == ["[bal] boot LQR"]
+
+
+def test_echo_text_accepted_with_stdin(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin_text())
+    rc = b.main(["--stdin", "--echo-text", "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "error:" not in err
+    assert "[fw] [bal] boot LQR" in err
+
+
+def test_stdin_undecodable_byte_does_not_kill_the_run(tmp_path, monkeypatch, capsys):
+    # an ascii-strict stdin would raise UnicodeDecodeError on 0xff; the bridge re-decodes as utf-8/replace
+    raw = ("\n".join(still_lines(60)) + "\n").encode("ascii") + b"[bal] bad \xff byte\n"
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(raw), encoding="ascii"))
+    log = tmp_path / "fw.txt"
+    rc = b.main(["--stdin", "--text-log", str(log), "--udp-port", str(free_udp_port())])
+    assert rc == 0
+    assert "error:" not in capsys.readouterr().err
+    assert "[bal] bad" in log.read_text(encoding="utf-8")
 
 
 def test_cli_defaults_and_port_range():

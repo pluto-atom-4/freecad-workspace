@@ -704,6 +704,8 @@ def _make_source(args, text_sink=None):
     if args.replay is not None:
         return csv_replay_lines(args.replay, realtime=True)
     if args.stdin:                           # no pyserial, baud or reconnect: plain text lines
+        if hasattr(sys.stdin, "reconfigure"):  # match the serial path: utf-8, undecodable bytes replaced
+            sys.stdin.reconfigure(encoding="utf-8", errors="replace")
         lines = stdin_lines(sys.stdin)
         if text_sink is not None:
             lines = _tee_text(lines, text_sink)
