@@ -378,5 +378,91 @@ class TestRealLoopURL:
         assert lines == ["IMU,1*00", "IMU,2*00"]
 
 
+class TestURLFirstOpenWait:
+    """Test first-open wait for URL ports (device paths keep the immediate error)."""
+
+    def test_url_first_open_retries_until_open(self, monkeypatch, delays, capsys):
+        """Test: refused URL opens are retried every 1 s until one succeeds."""
+        monkeypatch.setattr(dof_serial, "monotonic", lambda: 0.0)
+        p = FakePort([b"frag\n", b"A\n"])
+        opened, calls = install(monkeypatch, serial.SerialException("refused"),
+                                serial.SerialException("refused"), p)
+        g = serial_lines("rfc2217://localhost:4000")
+        assert next(g) == "A"
+        assert len(calls) == 3
+        assert delays == [1.0, 1.0]
+        err = capsys.readouterr().err
+        waits = [ln for ln in err.splitlines() if "waiting for rfc2217://localhost:4000" in ln]
+        assert len(waits) == 1
+        assert "attempt 1" in waits[0]
+        g.close()
+
+    def test_url_never_opens_ends_at_duration_deadline(self, monkeypatch):
+        """Test: a URL that never opens ends cleanly when max_duration_s expires."""
+        now = [0.0]
+        monkeypatch.setattr(dof_serial, "monotonic", lambda: now[0])
+        slept = []
+        def fake_sleep(s):
+            slept.append(s)
+            now[0] += s
+        monkeypatch.setattr(dof_serial, "sleep", fake_sleep)
+        opened, calls = install(monkeypatch, serial.SerialException("refused"),
+                                serial.SerialException("refused"), serial.SerialException("refused"))
+        assert list(serial_lines("rfc2217://localhost:4000", max_duration_s=3.0)) == []
+        assert slept == [1.0, 1.0, 1.0]
+        assert len(calls) == 3
+
+    def test_url_wait_cap_raises(self, monkeypatch):
+        """Test: a URL that never opens raises DofSerialError when the wait cap expires."""
+        now = [0.0]
+        monkeypatch.setattr(dof_serial, "monotonic", lambda: now[0])
+        def fake_sleep(s):
+            now[0] += s
+        monkeypatch.setattr(dof_serial, "sleep", fake_sleep)
+        monkeypatch.setattr(dof_serial, "_URL_WAIT_CAP_S", 3.0)
+        opened, calls = install(monkeypatch, serial.SerialException("refused"),
+                                serial.SerialException("refused"), serial.SerialException("refused"))
+        with pytest.raises(DofSerialError) as ei:
+            list(serial_lines("rfc2217://localhost:4000"))
+        msg = str(ei.value)
+        assert "did not open within 3 s" in msg
+        assert "refused" in msg
+        assert len(calls) == 3
+
+    def test_url_wait_ctrl_c_propagates(self, monkeypatch):
+        """Test: KeyboardInterrupt during the first-open wait is not swallowed."""
+        monkeypatch.setattr(dof_serial, "monotonic", lambda: 0.0)
+        def interrupt(s):
+            raise KeyboardInterrupt()
+        monkeypatch.setattr(dof_serial, "sleep", interrupt)
+        opened, calls = install(monkeypatch, serial.SerialException("refused"))
+        g = serial_lines("rfc2217://localhost:4000")
+        with pytest.raises(KeyboardInterrupt):
+            next(g)
+        assert len(calls) == 1
+
+    def test_url_bad_scheme_not_retried(self, monkeypatch, delays):
+        """Test: ValueError from a bad URL scheme propagates at once, without retry."""
+        opened, calls = install(monkeypatch, ValueError("invalid URL"))
+        g = serial_lines("bogus://localhost:4000")
+        with pytest.raises(ValueError):
+            next(g)
+        assert len(calls) == 1
+        assert delays == []
+
+    def test_url_loop_opens_without_wait(self, monkeypatch, delays, capsys):
+        """Test: a loop:// URL that opens at once logs no wait line and does not sleep."""
+        real = serial.serial_for_url
+        def prefilled(url, *a, **k):
+            p = real(url, *a, **k)
+            p.write(b"frag\nIMU,1*00\n")
+            return p
+        monkeypatch.setattr(serial, "serial_for_url", prefilled)
+        lines = list(serial_lines("loop://", timeout_s=0.05, reconnect=False, max_duration_s=0.3))
+        assert lines == ["IMU,1*00"]
+        assert delays == []
+        assert "waiting for" not in capsys.readouterr().err
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])

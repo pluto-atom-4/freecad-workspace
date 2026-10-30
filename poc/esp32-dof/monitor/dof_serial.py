@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """pyserial frame line source. Yields raw frame lines (Iterator[str]): non-empty, stripped of
 trailing \r\n -- same contract as dof_sources.mock_lines/csv_replay_lines. Does NOT parse frames
-(consumers call dof_frame.parse_line). Works with /dev/ttyACM0 and pyserial URLs (loop://)."""
+(consumers call dof_frame.parse_line). Works with /dev/ttyACM0 and pyserial URLs (loop://).
+URL ports (containing "://") wait for the first open, retrying every 1 s up to 300 s or the
+--duration deadline; device paths fail at once."""
 import math
 import sys
 from time import monotonic, sleep
@@ -13,6 +15,8 @@ from serial.tools import list_ports as _list_ports_mod
 _MAX_BUF_BYTES = 4096       # carry-over cap: noise without "\n" is dropped
 _READ_CHUNK = 4096
 _RECONNECT_DELAY_S = 1.0
+_WAIT_HEARTBEAT_S = 10.0    # URL first-open wait: re-log the same error at least this often
+_URL_WAIT_CAP_S = 300.0     # URL first-open wait: give up after this long
 
 
 class DofSerialError(serial.SerialException):
@@ -56,6 +60,37 @@ def _open_first(port, baud, timeout_s):
             f"sudo usermod -aG dialout $USER (then log out and back in).") from exc
 
 
+def _is_url(port):
+    return "://" in port
+
+
+def _open_url_waiting(port, baud, timeout_s, deadline):
+    # returns an open port, or None when the --duration deadline passes first;
+    # raises DofSerialError when _URL_WAIT_CAP_S passes first
+    cap_deadline = monotonic() + _URL_WAIT_CAP_S
+    attempt = 0
+    last_text = None
+    last_log = None
+    while True:
+        if deadline is not None and monotonic() >= deadline:
+            return None
+        if monotonic() >= cap_deadline:
+            raise DofSerialError(
+                f"{port!r} did not open within {_URL_WAIT_CAP_S:g} s: {last_text}. "
+                f"Start the simulator (or check the URL) and run again.")
+        attempt += 1
+        try:
+            return serial.serial_for_url(port, baud, timeout=timeout_s)
+        except OSError as exc:
+            text = f"{type(exc).__name__}: {exc}"
+            now = monotonic()
+            if text != last_text or last_log is None or now - last_log >= _WAIT_HEARTBEAT_S:
+                _log(f"waiting for {port} (attempt {attempt}): {text}; "
+                     f"retrying every {_RECONNECT_DELAY_S:g}s")
+                last_text, last_log = text, now
+        sleep(_RECONNECT_DELAY_S)
+
+
 def _close_quietly(ser):
     try:
         ser.close()
@@ -69,7 +104,12 @@ def _log(msg):
 
 def _serial_gen(port, baud, timeout_s, reconnect, max_duration_s):
     deadline = None if max_duration_s is None else monotonic() + max_duration_s
-    ser = _open_first(port, baud, timeout_s)        # raises DofSerialError; nothing to close
+    if _is_url(port):
+        ser = _open_url_waiting(port, baud, timeout_s, deadline)   # raises DofSerialError at cap
+        if ser is None:
+            return
+    else:
+        ser = _open_first(port, baud, timeout_s)    # raises DofSerialError; nothing to close
     buf = bytearray()
     synced = False                                   # discard through first "\n" after (re)open
     try:
