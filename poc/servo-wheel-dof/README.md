@@ -346,20 +346,35 @@ poc/servo-wheel-dof/tools/wokwi-stream.sh --host localhost --port 4000 --baud 11
 
 The path is repo-relative; the script works from any cwd. Flags `--host`, `--port`,
 `--baud` (also `--flag=value`) win over env `WOKWI_HOST`, `WOKWI_PORT`, `BAUD`; an empty
-env value counts as unset. A bare IPv6 host such as `--host ::1` is bracketed in the URL
-by the script. stdout carries data lines only, bytes as received; status and errors go
-to stderr. Only complete lines are printed; a partial line waits for its newline or for
-exit. Exit codes: 0 ok, 1 connection, serial or env error, 2 bad arguments, 130 Ctrl+C
+env value counts as unset.
+
+Host: a name or IPv4 address, or IPv6 written bare (`--host ::1`, the script brackets it
+in the URL) or bracketed (`--host [::1]`). A host with a colon that is not IPv6 (for
+example `localhost:4000`) exits 2: the port goes in `--port`.
+
+Output: bytes are copied as received, with two exceptions that each add one newline: a
+partial line still pending at exit gets a newline, and a run of 64 KiB (65536 bytes)
+without a newline is split there with a newline added (one stderr note). Complete lines
+are written whole, whatever their length. A partial line waits for its newline; a read
+timeout does not write it. stdout carries those bytes only; status and errors go to
+stderr.
+
+Exit codes: 0 ok; 1 connection, serial, stdout or env error; 2 bad arguments; 130 Ctrl+C
 (checked with a fake serial object only, not with a real RFC2217 connection). Piping into
 `dof_wheel_bridge --stdin` is intended but not verified.
 
 ### Limits
 
 - No reconnect: if the Wokwi simulation restarts, the script ends with exit 1; re-run it.
-- SIGTERM skips the cleanup (no port close, no pending-line flush); Ctrl+C is the clean stop.
+- Signals: Ctrl+C is the clean stop. Killing only the bash pid (TERM) leaves the `mamba
+  run` and python children running with the RFC2217 connection and stdout pipe open, so
+  downstream gets no EOF. Kill the whole process group instead.
+- Ctrl+C during a read drops the bytes that read had already taken (up to about 1 s of
+  data at the serial timeout); the stream does not replay them.
 - An idle stream ends only on Ctrl+C, or when the next line is written; that is when a
   closed downstream pipe is noticed.
-- Lines longer than 64 KiB are split, with one stderr note.
+- A stdout error other than a closed pipe (for example a full disk) ends the script
+  with exit 1 and a "cannot write to stdout" line.
 - The stream from a real Wokwi session has not been checked here; a human must run it.
 
 ## Run the tests

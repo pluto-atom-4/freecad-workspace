@@ -1,8 +1,10 @@
 #!/bin/bash
 # Stream lines from a running Wokwi simulation's RFC2217 serial port to stdout.
 #
-# stdout: data lines only, bytes copied as received. Intended to be pipeable
-#         (for example into dof_wheel_bridge --stdin); that pipe is not verified.
+# stdout: data lines, bytes copied as received, with two exceptions that each
+#         add one newline: a pending partial line at exit, and a newline-less
+#         run of 64 KiB that is split. Intended to be pipeable (for example
+#         into dof_wheel_bridge --stdin); that pipe is not verified.
 # stderr: status and error lines only.
 # Python runs in the mamba env "esp32-dof" (pyserial 3.5); works from any cwd.
 
@@ -30,7 +32,8 @@ Stream lines from a running Wokwi simulation (RFC2217 serial port) to stdout.
 Status and errors go to stderr. Press Ctrl+C to stop.
 
 Options:
-  --host HOST   RFC2217 host, IPv6 allowed as ::1 (default: localhost)
+  --host HOST   RFC2217 host: a name or IPv4 address, or IPv6 as ::1 or [::1]
+                (default: localhost). Put the port in --port, not in HOST.
   --port PORT   RFC2217 TCP port, 1-65535 (default: 4000)
   --baud BAUD   baud rate, positive integer (default: 115200)
   -h, --help    show this help and exit
@@ -39,9 +42,12 @@ Environment defaults (flags win over these):
   WOKWI_HOST, WOKWI_PORT, BAUD
   An empty value (for example WOKWI_PORT=) counts as unset.
 
+Output: bytes as received, one line per output line. A newline is added to a
+partial line left at exit, and to a run of 64 KiB without a newline (split).
+
 Needs: a running Wokwi simulation exposing an RFC2217 serial port, and the
-mamba env "esp32-dof" (pyserial). Exit codes: 0 ok, 1 connection or serial
-error or missing env, 2 bad arguments, 130 stopped by Ctrl+C.
+mamba env "esp32-dof" (pyserial). Exit codes: 0 ok, 1 connection, serial,
+stdout or env error, 2 bad arguments, 130 stopped by Ctrl+C.
 EOF
 }
 
@@ -86,6 +92,22 @@ if [ -z "$HOST" ]; then
     usage_short
     exit 2
 fi
+bracketed_re='^\[[0-9A-Fa-f:.]+\]$'
+bare_v6_re='^[0-9A-Fa-f:.]+$'
+if [[ "$HOST" == \[* ]]; then
+    if ! [[ "$HOST" =~ $bracketed_re ]]; then
+        echo "wokwi-stream: invalid host '$HOST' (unmatched '[' or not an IPv6 address; write [::1])" >&2
+        usage_short
+        exit 2
+    fi
+elif [[ "$HOST" == *:* ]]; then
+    colons="${HOST//[^:]/}"
+    if ! [[ "$HOST" =~ $bare_v6_re ]] || [ "${#colons}" -lt 2 ]; then
+        echo "wokwi-stream: host '$HOST' has a colon but is not IPv6; use --port for the port; IPv6 as [::1]" >&2
+        usage_short
+        exit 2
+    fi
+fi
 if ! [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || [ "$((10#$PORT))" -lt 1 ] || [ "$((10#$PORT))" -gt 65535 ]; then
     echo "wokwi-stream: invalid port '$PORT' (want an integer 1-65535)" >&2
     usage_short
@@ -113,6 +135,7 @@ fi
 # capture), so lines reach the pipe as they arrive.
 read -r -d '' PY_BODY <<'PYEOF'
 import os
+import signal
 import sys
 import time
 
@@ -121,7 +144,11 @@ out = sys.stdout.buffer
 
 
 class Downstream(Exception):
-    """The reader of stdout closed the pipe."""
+    """The reader of stdout closed the pipe (EPIPE)."""
+
+
+class StdoutFailure(Exception):
+    """Writing stdout failed for another reason (ENOSPC, EIO, ...)."""
 
 
 def status(msg):
@@ -135,27 +162,41 @@ def emit(data):
         out.flush()
     except BrokenPipeError:
         raise Downstream()
+    except OSError as e:
+        raise StdoutFailure(str(e))
+
+
+def emit_consume(pending, length, add_newline):
+    # Write the first `length` bytes of pending (plus a newline if asked), then
+    # drop them from pending. SIGINT is blocked across both steps, so a Ctrl+C
+    # cannot land between them and make the exit flush repeat the bytes.
+    data = bytes(pending[:length]) + (b"\n" if add_newline else b"")
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+    try:
+        emit(data)
+        del pending[:length]
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
 
 
 def drain(pending, state):
-    # Emit complete lines only; a partial line waits for its newline.
+    # Emit complete lines whole, whatever their length. A partial line waits
+    # for its newline. A newline-less run of 64 KiB or more is split.
     while True:
         nl = pending.find(b"\n")
         if nl < 0:
             break
-        emit(bytes(pending[:nl + 1]))
-        del pending[:nl + 1]
-    if len(pending) > MAX_PENDING:
-        emit(bytes(pending) + b"\n")
-        pending[:] = b""
+        emit_consume(pending, nl + 1, False)
+    if len(pending) >= MAX_PENDING:
+        emit_consume(pending, len(pending), True)
         if not state["noted"]:
             state["noted"] = True
-            status("line longer than %d bytes: split into lines" % MAX_PENDING)
+            status("run of %d bytes without a newline: split" % MAX_PENDING)
 
 
 def quiet_stdout():
-    # Python docs recipe: point stdout at devnull so the exit-time flush
-    # cannot print "Exception ignored ... BrokenPipeError".
+    # Python docs recipe: after a stdout error (EPIPE or other), point stdout at
+    # devnull so the exit-time flush cannot print "Exception ignored ...".
     devnull = os.open(os.devnull, os.O_WRONLY)
     os.dup2(devnull, sys.stdout.fileno())
 
@@ -164,7 +205,7 @@ def main():
     host = sys.argv[1]
     port = int(sys.argv[2])
     baud = int(sys.argv[3])
-    # A bare IPv6 literal must be bracketed in a URL.
+    # A bare IPv6 literal must be bracketed in a URL (bash already checked it).
     shown = "[%s]" % host if ":" in host and not host.startswith("[") else host
     where = "%s:%d" % (shown, port)
 
@@ -174,6 +215,7 @@ def main():
     pending = bytearray()
     state = {"noted": False}
     broken = False
+    output_failed = False
     rc = 0
     try:
         try:
@@ -185,7 +227,9 @@ def main():
 
         status("connected to %s at %d baud. Press Ctrl+C to stop." % (where, baud))
         while True:
-            chunk = ser.readline()
+            # read_until returns at a newline, at MAX_PENDING bytes, or with the
+            # partial bytes read so far after a timeout (b"" if none).
+            chunk = ser.read_until(b"\n", MAX_PENDING)
             if chunk:
                 pending += chunk
                 drain(pending, state)
@@ -196,7 +240,13 @@ def main():
         rc = 130
     except Downstream:
         broken = True
+        output_failed = True
         rc = 0
+    except StdoutFailure as e:
+        status("cannot write to stdout: %s" % e)
+        broken = True
+        output_failed = True
+        rc = 1
     except (serial.SerialException, OSError) as e:
         status("serial error on %s (%s)" % (where, e))
         rc = 1
@@ -206,12 +256,16 @@ def main():
                 ser.close()
             except Exception:
                 pass
-        if pending:
+        if pending and not output_failed:
             # Flush a partial line left at exit, with its newline.
             try:
                 emit(bytes(pending) + b"\n")
             except Downstream:
                 broken = True
+            except StdoutFailure as e:
+                status("cannot write to stdout: %s" % e)
+                broken = True
+                rc = 1
         if broken:
             quiet_stdout()
     return rc
