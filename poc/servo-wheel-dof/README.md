@@ -375,7 +375,7 @@ Exit codes: 0 ok; 1 connection, serial, stdout or env error; 2 bad arguments; 13
   data at the serial timeout); the stream does not replay them.
 - Ctrl+C stops the script at once, even while stdout is blocked (a full pipe). A pending
   partial line is not written after Ctrl+C, and a line being written may stay partly
-  written. A second Ctrl+C during the exit flush exits 130 quietly.
+  written. A Ctrl+C during the exit flush exits 130 quietly.
 - An idle stream ends only on Ctrl+C, or when the next line is written; that is when a
   closed downstream pipe is noticed.
 - A stdout error other than a closed pipe (for example a full disk) ends the script

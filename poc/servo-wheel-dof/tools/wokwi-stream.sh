@@ -150,6 +150,7 @@ fi
 # capture), so lines reach the pipe as they arrive.
 read -r -d '' PY_BODY <<'PYEOF'
 import os
+import select
 import sys
 import time
 
@@ -176,7 +177,12 @@ def emit(data):
     view = memoryview(data)
     try:
         while view:
-            view = view[os.write(1, view):]
+            try:
+                view = view[os.write(1, view):]
+            except BlockingIOError:
+                # fd 1 is non-blocking and full: nothing was written, so wait
+                # for room and retry the same view. Ctrl+C raises from here.
+                select.select([], [1], [])
     except BrokenPipeError:
         raise Downstream()
     except OSError as e:
@@ -271,6 +277,8 @@ def main():
         if ser is not None:
             try:
                 ser.close()
+            except KeyboardInterrupt:
+                rc = 130  # Ctrl+C while closing: quiet exit 130
             except Exception:
                 pass
         if pending and not output_failed and not interrupted:

@@ -48,7 +48,8 @@ CAP = 64 * 1024
 #   end:      "idle" (gaps forever), "error" (SerialException once the chunks
 #             are used up), "repeat" (cycle the chunks forever);
 #   pid_file: write os.getpid() here when the port opens;
-#   die_file: once this file exists, the next gap raises SerialException.
+#   die_file: once this file exists, the next gap raises SerialException;
+#   close_sleep: seconds to sleep inside close() after it reports "closed".
 SHIM_SRC = r'''
 import binascii
 import json
@@ -74,6 +75,7 @@ class _Fake(object):
         self._items = list(self._all)
         self._end = cfg.get("end", "error")
         self._die = cfg.get("die_file")
+        self._close_sleep = cfg.get("close_sleep", 0)
         self._buf = b""
         self._pos = 0
         self.is_open = True
@@ -129,6 +131,8 @@ class _Fake(object):
         self.is_open = False
         sys.stderr.write("fake-serial: closed\n")
         sys.stderr.flush()
+        if self._close_sleep:
+            time.sleep(self._close_sleep)
 
 
 def serial_for_url(url, baudrate=9600, timeout=None, **kwargs):
@@ -683,6 +687,76 @@ def test_ctrl_c_on_the_group_exits_130(tmp_path):
         run.kill()
     assert rc == 130, bytes(run.err)
     assert run.err.count(b"stopped by user") == 1
+
+
+def test_ctrl_c_drops_the_pending_partial_line(tmp_path):
+    """A partial line pending at SIGINT on a live stream is not written."""
+    _need_pyserial_env()
+    pid_file = tmp_path / "pid"
+    chunks = [_hex(b"hello\n"), _hex(b"abc")]  # "abc" is pending: no newline
+    env = _shim(tmp_path, chunks=chunks, end="idle", pid_file=str(pid_file))
+    run = _Run([], **env)
+    try:
+        assert run.read_line() == b"hello\n"
+        run.quiet(1.0)  # "abc" has been read by now and is held
+        pid = int(pid_file.read_text(encoding="utf-8"))
+        os.kill(pid, signal.SIGINT)
+        rc = run.finish()
+    finally:
+        run.kill()
+    assert rc == 130, bytes(run.err)
+    assert bytes(run.out) == b"hello\n"
+
+
+def test_ctrl_c_during_close_exits_130_quietly(tmp_path):
+    """Ctrl+C while the port closes must not print a traceback."""
+    _need_pyserial_env()
+    pid_file = tmp_path / "pid"
+    env = _shim(tmp_path, chunks=[], end="error", pid_file=str(pid_file), close_sleep=10)
+    run = _Run([], **env)
+    try:
+        run.wait_err(b"fake-serial: closed")  # close() is now sleeping
+        pid = int(pid_file.read_text(encoding="utf-8"))
+        os.kill(pid, signal.SIGINT)
+        rc = run.finish()
+    finally:
+        run.kill()
+    assert rc == 130, bytes(run.err)
+    assert b"Traceback" not in run.err
+
+
+def test_nonblocking_full_stdout_is_retried_not_an_error(tmp_path):
+    """fd 1 is O_NONBLOCK and the reader is slow: EAGAIN must wait and retry.
+
+    Real pipe, real script: the parent holds the read end unread for a while,
+    so the write end fills and os.write raises BlockingIOError; the data must
+    still arrive whole and the exit must not be a stdout error.
+    """
+    _need_pyserial_env()
+    lines = b"line\n" * 60000  # 300000 bytes: far more than a pipe holds
+    env = _shim(tmp_path, chunks=[_hex(lines)], end="error")
+    r, w = os.pipe()
+    os.set_blocking(w, False)
+    proc = subprocess.Popen(
+        _argv([]),
+        env=_clean_env(**env),
+        stdout=w,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    os.close(w)
+    try:
+        time.sleep(1.5)  # the reader is slow: the pipe fills meanwhile
+        data = _read_to_eof(r, timeout=60)
+        err = _read_to_eof(proc.stderr.fileno(), timeout=60)
+        rc = proc.wait(timeout=60)
+    finally:
+        os.close(r)
+        if proc.poll() is None:
+            proc.kill()
+    assert data == lines, err
+    assert rc == 1, err  # the fake ends with a serial error, not a stdout error
+    assert b"cannot write to stdout" not in err
 
 
 def test_closed_downstream_exits_0_quietly(tmp_path):
