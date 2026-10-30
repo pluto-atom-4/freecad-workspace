@@ -331,6 +331,35 @@ unreadable file, an empty file or a missing required column (`t_s`, `msgs`, `whe
    `age_s`/`msgs` and `wheel_err` at that time to see whether it followed a command.
 4. Attach the CSV and summary to #302 (GUI) or #303 (healthy baseline), per #310.
 
+## Wokwi serial stream: `tools/wokwi-stream.sh`
+
+Prints lines from a running Wokwi simulation's RFC2217 serial port (default
+`localhost:4000`, 115200 baud). Needs:
+
+- a Wokwi simulation running with its RFC2217 serial port open;
+- the mamba env `esp32-dof` (pyserial), created from `poc/esp32-dof/mamba-envs.lock.yml`.
+
+```bash
+poc/servo-wheel-dof/tools/wokwi-stream.sh --help
+poc/servo-wheel-dof/tools/wokwi-stream.sh --host localhost --port 4000 --baud 115200
+```
+
+The path is repo-relative; the script works from any cwd. Flags `--host`, `--port`,
+`--baud` win over env `WOKWI_HOST`, `WOKWI_PORT`, `BAUD`. stdout carries data lines
+only; status and errors go to stderr. Exit codes: 0 ok, 1 connection, serial or env
+error, 2 bad arguments, 130 Ctrl+C. Piping into `dof_wheel_bridge --stdin` is not verified.
+
+Limits: the tests cover argument handling and the refused-port path only. The stream
+from a real Wokwi session has not been checked here; a human must run it.
+
+Tests (not in the main command below, since `tools/` is outside it; they skip without
+mamba or the `esp32-dof` env):
+
+```bash
+cd poc/servo-wheel-dof
+mamba run -n servo-wheel-dof python3 -m pytest -q tools/test_swd_wokwi_stream.py
+```
+
 ## Run the tests
 
 ```bash
