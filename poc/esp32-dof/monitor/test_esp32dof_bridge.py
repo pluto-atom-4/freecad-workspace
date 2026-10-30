@@ -2424,3 +2424,45 @@ def test_main_record_open_failure_after_cmd_out_closes_cmd_sink(monkeypatch, tmp
     assert len(made) == 1
     assert made[0].close_calls == 1
     assert made[0]._fh.closed
+
+
+# ----- 16. --port with the real dof_serial (#439): URL wait bound and device-path fast fail ----
+
+class TestRealDofSerialPort:
+    """Uses the real dof_serial, not the sys.modules fake of the --port tests above. Any entry
+    already in sys.modules is removed for the run and put back afterwards."""
+
+    def _main_with_real_dof_serial(self, argv):
+        saved = sys.modules.pop("dof_serial", None)
+        try:
+            real = importlib.import_module("dof_serial")
+            assert hasattr(real, "_open_url_waiting")          # the real module, not a stub
+            return b.main(argv)
+        finally:
+            sys.modules.pop("dof_serial", None)
+            if saved is not None:
+                sys.modules["dof_serial"] = saved
+
+    def test_url_port_wait_is_bounded_by_duration(self, capsys):
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()                                          # nothing listens on this port now
+        rc = self._main_with_real_dof_serial(
+            ["--port", f"rfc2217://127.0.0.1:{port}", "--duration", "2",
+             "--udp-port", str(free_udp_port())])
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert "waiting for rfc2217://127.0.0.1:" in err
+        assert "duration expired before the arm window filled" in err
+
+    def test_device_path_first_open_still_fails_at_once(self, capsys):
+        t0 = time.monotonic()
+        rc = self._main_with_real_dof_serial(
+            ["--port", "/dev/does-not-exist-439", "--udp-port", str(free_udp_port())])
+        elapsed = time.monotonic() - t0
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert "source failed" in err
+        assert "waiting for" not in err
+        assert elapsed < 5.0                                   # no URL-style retry loop
