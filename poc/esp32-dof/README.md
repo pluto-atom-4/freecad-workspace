@@ -63,7 +63,7 @@ sudo usermod -aG dialout $USER
 
 Do NOT run this command as part of automated setup — it requires an interactive login afterward and may not succeed in a headless environment.
 
-If `serial_lines` raises `DofSerialError` ("cannot open serial port ..."), the port is missing (see `dof_monitor.py --list-ports`) or you are not in `dialout` (see above). Close other readers first (the port is not locked; see Step D). More in "Troubleshooting".
+If `serial_lines` raises `DofSerialError` ("cannot open serial port ..."), the port is missing (see `dof_monitor.py --list-ports`) or you are not in `dialout` (see above). Close other readers first (the port is not locked; see Step D). URL ports (containing `://`, such as `rfc2217://localhost:4000`) are not an error at first open: the bridge prints a `waiting for` line and retries every 1 s for up to 300 s; `--duration` or Ctrl+C ends the wait earlier. More in "Troubleshooting".
 
 ## Layout
 
@@ -226,7 +226,7 @@ A **source** is an `Iterator[str]` of raw frame lines (non-empty, stripped of `\
   - Yields decoded (UTF-8, errors="replace") non-empty lines with \r\n stripped
   - Does NOT parse frames (pass each line to dof_frame.parse_line; garbled lines raise FrameError there)
   - port opens on the first next() (lazy); argument errors (ValueError) eager
-  - Failed first open raises DofSerialError (a serial.SerialException) immediately even with reconnect=True; message names the dialout group
+  - A device path raises DofSerialError (a serial.SerialException) at once, even with reconnect=True; message names the dialout group (unchanged). A URL port (contains "://") retries the first open every 1 s until it opens, `max_duration_s` expires (generator ends with no lines) or 300 s pass (DofSerialError); the `reconnect` flag only affects mid-run reconnects
   - Read timeouts don't end the iterator
   - A partial line is held and completed when the rest arrives
   - The first line after each (re)open is discarded (may be a fragment)
@@ -382,7 +382,7 @@ mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --port /dev/ttyACM0 -
 mamba run -n esp32-dof python3 monitor/dof_wheel_bridge.py --replay raw.csv --record out.csv --core none
 ```
 
-Exactly one of `--port`, `--mock`, `--replay` is required. Other options: `--core lqr|pid|none`
+Exactly one of `--port`, `--mock`, `--replay` is required. `--port` also takes a pyserial URL such as `rfc2217://localhost:4000` (the Wokwi simulator); start the simulator first or let the bridge wait, up to 300 s. Other options: `--core lqr|pid|none`
 (default `lqr`), `--udp-port` (default 5006), `--record CSV`, `--duration S`, `--baud` (115200),
 `--alpha` (0.98), `--text-log PATH` and `--echo-text` (both need `--port`, off by default; see Step D).
 `--duration` counts from start and includes the ~1 s arm window, so a value under
