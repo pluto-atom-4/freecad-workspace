@@ -331,6 +331,57 @@ unreadable file, an empty file or a missing required column (`t_s`, `msgs`, `whe
    `age_s`/`msgs` and `wheel_err` at that time to see whether it followed a command.
 4. Attach the CSV and summary to #302 (GUI) or #303 (healthy baseline), per #310.
 
+## Wokwi serial stream: `tools/wokwi-stream.sh`
+
+Prints lines from a running Wokwi simulation's RFC2217 serial port (default
+`localhost:4000`, 115200 baud). Needs:
+
+- a Wokwi simulation running with its RFC2217 serial port open;
+- the mamba env `esp32-dof` (pyserial), created from `poc/esp32-dof/mamba-envs.lock.yml`.
+
+```bash
+poc/servo-wheel-dof/tools/wokwi-stream.sh --help
+poc/servo-wheel-dof/tools/wokwi-stream.sh --host localhost --port 4000 --baud 115200
+```
+
+The path is repo-relative; the script works from any cwd. Flags `--host`, `--port`,
+`--baud` (also `--flag=value`) win over env `WOKWI_HOST`, `WOKWI_PORT`, `BAUD`; an empty
+env value counts as unset.
+
+Host: a name or IPv4 address, or IPv6 written bare (`--host ::1`, the script brackets it
+in the URL) or bracketed (`--host [::1]`). A host with a colon that is not IPv6 (for
+example `localhost:4000`) exits 2: the port goes in `--port`. A host with whitespace, and
+an IPv6 zone ID such as `fe80::1%eth0` (not supported), exit 2.
+
+Output: bytes are copied as received, with two exceptions that each add one newline: a
+partial line still pending at exit gets a newline (not after Ctrl+C), and a newline-less
+run is split every 65536 bytes with a newline added (one stderr note; the split is exactly
+65536 bytes, the rest stays pending). Complete lines are written whole, whatever their
+length, so a run of exactly 65536 bytes followed by the real newline yields one empty
+line. A partial line waits for its newline; a read timeout does not write it. stdout
+carries those bytes only; status and errors go to stderr.
+
+Exit codes: 0 ok; 1 connection, serial, stdout or env error; 2 bad arguments; 130 Ctrl+C
+(checked with a fake serial object only, not with a real RFC2217 connection). Piping into
+`dof_wheel_bridge --stdin` is intended but not verified.
+
+### Limits
+
+- No reconnect: if the Wokwi simulation restarts, the script ends with exit 1; re-run it.
+- Signals: Ctrl+C is the clean stop. Killing only the bash pid (TERM) leaves the `mamba
+  run` and python children running with the RFC2217 connection and stdout pipe open, so
+  downstream gets no EOF. Kill the whole process group instead.
+- Ctrl+C during a read drops the bytes that read had already taken (up to about 1 s of
+  data at the serial timeout); the stream does not replay them.
+- Ctrl+C stops the script at once, even while stdout is blocked (a full pipe). A pending
+  partial line is not written after Ctrl+C, and a line being written may stay partly
+  written. A Ctrl+C during the exit flush exits 130 quietly.
+- An idle stream ends only on Ctrl+C, or when the next line is written; that is when a
+  closed downstream pipe is noticed.
+- A stdout error other than a closed pipe (for example a full disk) ends the script
+  with exit 1 and a "cannot write to stdout" line.
+- The stream from a real Wokwi session has not been checked here; a human must run it.
+
 ## Run the tests
 
 ```bash
@@ -340,6 +391,17 @@ mamba run -n servo-wheel-dof python3 -m pytest -q monitor webots/controllers/ser
 
 Pure Python: no Webots, no display, no hardware. `test_swd_world_upright.py` is a
 text-level guard on the `.wbt`; set env `SWD_WORLD_PATH` to test a modified copy.
+
+Wokwi stream script tests (`tools/` is outside the command above):
+
+```bash
+cd poc/servo-wheel-dof
+mamba run -n servo-wheel-dof python3 -m pytest -q tools/test_swd_wokwi_stream.py
+```
+
+The argument tests always run. The refused-port and fake-serial tests skip without mamba
+and the `esp32-dof` env. A bare `python3 -m pytest` from `poc/servo-wheel-dof` also
+collects `tools/test_swd_wokwi_stream.py`.
 
 ## Limits
 
