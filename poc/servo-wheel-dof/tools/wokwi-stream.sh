@@ -1,11 +1,15 @@
 #!/bin/bash
 # Stream lines from a running Wokwi simulation's RFC2217 serial port to stdout.
 #
-# stdout: data lines only (safe to pipe, e.g. into dof_wheel_bridge --stdin).
+# stdout: data lines only, bytes copied as received. Intended to be pipeable
+#         (for example into dof_wheel_bridge --stdin); that pipe is not verified.
 # stderr: status and error lines only.
 # Python runs in the mamba env "esp32-dof" (pyserial 3.5); works from any cwd.
 
 set -u
+
+# Ctrl+C always ends with exit 130 (checked with a fake serial object only).
+trap 'exit 130' INT
 
 DEFAULT_HOST=localhost
 DEFAULT_PORT=4000
@@ -26,13 +30,14 @@ Stream lines from a running Wokwi simulation (RFC2217 serial port) to stdout.
 Status and errors go to stderr. Press Ctrl+C to stop.
 
 Options:
-  --host HOST   RFC2217 host (default: localhost)
+  --host HOST   RFC2217 host, IPv6 allowed as ::1 (default: localhost)
   --port PORT   RFC2217 TCP port, 1-65535 (default: 4000)
   --baud BAUD   baud rate, positive integer (default: 115200)
   -h, --help    show this help and exit
 
 Environment defaults (flags win over these):
   WOKWI_HOST, WOKWI_PORT, BAUD
+  An empty value (for example WOKWI_PORT=) counts as unset.
 
 Needs: a running Wokwi simulation exposing an RFC2217 serial port, and the
 mamba env "esp32-dof" (pyserial). Exit codes: 0 ok, 1 connection or serial
@@ -104,11 +109,19 @@ if ! mamba run -n "$PY_ENV" python3 -c 'import serial' >/dev/null 2>&1; then
 fi
 
 # Python body, quoted heredoc: no shell expansion inside.
-# argv: host port baud. "-a ''" makes mamba inherit stdio (no output capture),
-# so lines reach the pipe as they arrive.
+# argv: host port baud. mamba run -a "" makes mamba inherit stdio (no output
+# capture), so lines reach the pipe as they arrive.
 read -r -d '' PY_BODY <<'PYEOF'
+import os
 import sys
 import time
+
+MAX_PENDING = 64 * 1024
+out = sys.stdout.buffer
+
+
+class Downstream(Exception):
+    """The reader of stdout closed the pipe."""
 
 
 def status(msg):
@@ -116,15 +129,52 @@ def status(msg):
     sys.stderr.flush()
 
 
+def emit(data):
+    try:
+        out.write(data)
+        out.flush()
+    except BrokenPipeError:
+        raise Downstream()
+
+
+def drain(pending, state):
+    # Emit complete lines only; a partial line waits for its newline.
+    while True:
+        nl = pending.find(b"\n")
+        if nl < 0:
+            break
+        emit(bytes(pending[:nl + 1]))
+        del pending[:nl + 1]
+    if len(pending) > MAX_PENDING:
+        emit(bytes(pending) + b"\n")
+        pending[:] = b""
+        if not state["noted"]:
+            state["noted"] = True
+            status("line longer than %d bytes: split into lines" % MAX_PENDING)
+
+
+def quiet_stdout():
+    # Python docs recipe: point stdout at devnull so the exit-time flush
+    # cannot print "Exception ignored ... BrokenPipeError".
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, sys.stdout.fileno())
+
+
 def main():
     host = sys.argv[1]
     port = int(sys.argv[2])
     baud = int(sys.argv[3])
-    where = "%s:%d" % (host, port)
+    # A bare IPv6 literal must be bracketed in a URL.
+    shown = "[%s]" % host if ":" in host and not host.startswith("[") else host
+    where = "%s:%d" % (shown, port)
 
     import serial
 
     ser = None
+    pending = bytearray()
+    state = {"noted": False}
+    broken = False
+    rc = 0
     try:
         try:
             ser = serial.serial_for_url("rfc2217://%s" % where, baudrate=baud, timeout=1)
@@ -135,27 +185,36 @@ def main():
 
         status("connected to %s at %d baud. Press Ctrl+C to stop." % (where, baud))
         while True:
-            data = ser.readline()
-            if data:
-                sys.stdout.write(data.decode("ascii", errors="replace"))
-                sys.stdout.flush()
+            chunk = ser.readline()
+            if chunk:
+                pending += chunk
+                drain(pending, state)
             else:
                 time.sleep(0.01)
     except KeyboardInterrupt:
         status("stopped by user")
-        return 130
-    except BrokenPipeError:
-        # Downstream reader closed the pipe: stop quietly.
-        return 0
+        rc = 130
+    except Downstream:
+        broken = True
+        rc = 0
     except (serial.SerialException, OSError) as e:
         status("serial error on %s (%s)" % (where, e))
-        return 1
+        rc = 1
     finally:
         if ser is not None:
             try:
                 ser.close()
             except Exception:
                 pass
+        if pending:
+            # Flush a partial line left at exit, with its newline.
+            try:
+                emit(bytes(pending) + b"\n")
+            except Downstream:
+                broken = True
+        if broken:
+            quiet_stdout()
+    return rc
 
 
 sys.exit(main())

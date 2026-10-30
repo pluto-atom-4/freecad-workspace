@@ -345,20 +345,22 @@ poc/servo-wheel-dof/tools/wokwi-stream.sh --host localhost --port 4000 --baud 11
 ```
 
 The path is repo-relative; the script works from any cwd. Flags `--host`, `--port`,
-`--baud` win over env `WOKWI_HOST`, `WOKWI_PORT`, `BAUD`. stdout carries data lines
-only; status and errors go to stderr. Exit codes: 0 ok, 1 connection, serial or env
-error, 2 bad arguments, 130 Ctrl+C. Piping into `dof_wheel_bridge --stdin` is not verified.
+`--baud` (also `--flag=value`) win over env `WOKWI_HOST`, `WOKWI_PORT`, `BAUD`; an empty
+env value counts as unset. A bare IPv6 host such as `--host ::1` is bracketed in the URL
+by the script. stdout carries data lines only, bytes as received; status and errors go
+to stderr. Only complete lines are printed; a partial line waits for its newline or for
+exit. Exit codes: 0 ok, 1 connection, serial or env error, 2 bad arguments, 130 Ctrl+C
+(checked with a fake serial object only, not with a real RFC2217 connection). Piping into
+`dof_wheel_bridge --stdin` is intended but not verified.
 
-Limits: the tests cover argument handling and the refused-port path only. The stream
-from a real Wokwi session has not been checked here; a human must run it.
+### Limits
 
-Tests (not in the main command below, since `tools/` is outside it; they skip without
-mamba or the `esp32-dof` env):
-
-```bash
-cd poc/servo-wheel-dof
-mamba run -n servo-wheel-dof python3 -m pytest -q tools/test_swd_wokwi_stream.py
-```
+- No reconnect: if the Wokwi simulation restarts, the script ends with exit 1; re-run it.
+- SIGTERM skips the cleanup (no port close, no pending-line flush); Ctrl+C is the clean stop.
+- An idle stream ends only on Ctrl+C, or when the next line is written; that is when a
+  closed downstream pipe is noticed.
+- Lines longer than 64 KiB are split, with one stderr note.
+- The stream from a real Wokwi session has not been checked here; a human must run it.
 
 ## Run the tests
 
@@ -369,6 +371,17 @@ mamba run -n servo-wheel-dof python3 -m pytest -q monitor webots/controllers/ser
 
 Pure Python: no Webots, no display, no hardware. `test_swd_world_upright.py` is a
 text-level guard on the `.wbt`; set env `SWD_WORLD_PATH` to test a modified copy.
+
+Wokwi stream script tests (`tools/` is outside the command above):
+
+```bash
+cd poc/servo-wheel-dof
+mamba run -n servo-wheel-dof python3 -m pytest -q tools/test_swd_wokwi_stream.py
+```
+
+The argument tests always run. The refused-port and fake-serial tests skip without mamba
+and the `esp32-dof` env. A bare `python3 -m pytest` from `poc/servo-wheel-dof` also
+collects `tools/test_swd_wokwi_stream.py`.
 
 ## Limits
 
