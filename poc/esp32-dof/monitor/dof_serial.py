@@ -3,7 +3,7 @@
 trailing \r\n -- same contract as dof_sources.mock_lines/csv_replay_lines. Does NOT parse frames
 (consumers call dof_frame.parse_line). Works with /dev/ttyACM0 and pyserial URLs (loop://).
 URL ports (containing "://") wait for the first open, retrying every 1 s up to 300 s or the
---duration deadline; device paths fail at once."""
+max_duration_s deadline (the callers' --duration); device paths fail at once."""
 import math
 import sys
 from time import monotonic, sleep
@@ -88,7 +88,9 @@ def _open_url_waiting(port, baud, timeout_s, deadline):
                 _log(f"waiting for {port} (attempt {attempt}): {text}; "
                      f"retrying every {_RECONNECT_DELAY_S:g}s")
                 last_text, last_log = text, now
-        sleep(_RECONNECT_DELAY_S)
+        now = monotonic()
+        limit = cap_deadline if deadline is None else min(cap_deadline, deadline)
+        sleep(max(0.0, min(_RECONNECT_DELAY_S, limit - now)))
 
 
 def _close_quietly(ser):

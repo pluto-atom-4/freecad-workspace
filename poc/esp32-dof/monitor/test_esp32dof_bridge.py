@@ -2432,13 +2432,18 @@ class TestRealDofSerialPort:
     """Uses the real dof_serial, not the sys.modules fake of the --port tests above. Any entry
     already in sys.modules is removed for the run and put back afterwards."""
 
-    def _main_with_real_dof_serial(self, argv):
+    def _main_with_real_dof_serial(self, argv, prepare=None):
         saved = sys.modules.pop("dof_serial", None)
+        undo = None
         try:
             real = importlib.import_module("dof_serial")
             assert hasattr(real, "_open_url_waiting")          # the real module, not a stub
+            if prepare is not None:
+                undo = prepare(real)
             return b.main(argv)
         finally:
+            if undo is not None:
+                undo()
             sys.modules.pop("dof_serial", None)
             if saved is not None:
                 sys.modules["dof_serial"] = saved
@@ -2448,9 +2453,16 @@ class TestRealDofSerialPort:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
         probe.close()                                          # nothing listens on this port now
+
+        def cap_short(real):
+            # patch the 300 s URL cap so the daemon reader thread stops soon after main returns
+            old = real._URL_WAIT_CAP_S
+            real._URL_WAIT_CAP_S = 2.5
+            return lambda: setattr(real, "_URL_WAIT_CAP_S", old)
+
         rc = self._main_with_real_dof_serial(
             ["--port", f"rfc2217://127.0.0.1:{port}", "--duration", "2",
-             "--udp-port", str(free_udp_port())])
+             "--udp-port", str(free_udp_port())], prepare=cap_short)
         assert rc == 2
         err = capsys.readouterr().err
         assert "waiting for rfc2217://127.0.0.1:" in err

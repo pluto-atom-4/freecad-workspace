@@ -463,6 +463,75 @@ class TestURLFirstOpenWait:
         assert delays == []
         assert "waiting for" not in capsys.readouterr().err
 
+    def test_url_wait_sleep_is_clipped_to_the_deadline(self, monkeypatch):
+        """Test: the last wait before max_duration_s expires is clipped, not a full 1 s."""
+        now = [0.0]
+        monkeypatch.setattr(dof_serial, "monotonic", lambda: now[0])
+        slept = []
+        def fake_sleep(s):
+            slept.append(s)
+            now[0] += s
+        monkeypatch.setattr(dof_serial, "sleep", fake_sleep)
+        opened, calls = install(monkeypatch, *[serial.SerialException("refused") for _ in range(3)])
+        assert list(serial_lines("rfc2217://localhost:4000", max_duration_s=2.5)) == []
+        assert slept == [1.0, 1.0, 0.5]
+        assert len(calls) == 3
+
+    def test_url_wait_relogs_when_error_text_changes(self, monkeypatch, capsys):
+        """Test: a changed error text is logged at once; a repeated identical text is not."""
+        now = [0.0]
+        monkeypatch.setattr(dof_serial, "monotonic", lambda: now[0])
+        def fake_sleep(s):
+            now[0] += s
+        monkeypatch.setattr(dof_serial, "sleep", fake_sleep)
+        p = FakePort([b"frag\n", b"A\n"])
+        opened, calls = install(monkeypatch, serial.SerialException("refused"),
+                                serial.SerialException("refused"),
+                                serial.SerialException("timed out"), p)
+        g = serial_lines("rfc2217://localhost:4000")
+        assert next(g) == "A"
+        assert len(calls) == 4
+        err = capsys.readouterr().err
+        waits = [ln for ln in err.splitlines() if "waiting for rfc2217://localhost:4000" in ln]
+        assert len(waits) == 2
+        assert "(attempt 1)" in waits[0] and "refused" in waits[0]
+        assert "(attempt 3)" in waits[1] and "timed out" in waits[1]
+        g.close()
+
+    def test_url_wait_relogs_at_heartbeat_interval(self, monkeypatch, capsys):
+        """Test: with identical errors and a 5 s step, lines are logged at attempts 1, 3 and 5."""
+        now = [0.0]
+        monkeypatch.setattr(dof_serial, "monotonic", lambda: now[0])
+        def fake_sleep(s):
+            now[0] += 5.0
+        monkeypatch.setattr(dof_serial, "sleep", fake_sleep)
+        p = FakePort([b"frag\n", b"A\n"])
+        opened, calls = install(monkeypatch, *[serial.SerialException("refused") for _ in range(5)], p)
+        g = serial_lines("rfc2217://localhost:4000")
+        assert next(g) == "A"
+        assert len(calls) == 6
+        err = capsys.readouterr().err
+        waits = [ln for ln in err.splitlines() if "waiting for rfc2217://localhost:4000" in ln]
+        assert len(waits) == 3
+        assert "(attempt 1)" in waits[0]
+        assert "(attempt 3)" in waits[1]
+        assert "(attempt 5)" in waits[2]
+        g.close()
+
+    def test_url_wait_cap_wins_over_longer_duration(self, monkeypatch):
+        """Test: the wait cap raises DofSerialError before a much longer max_duration_s expires."""
+        now = [0.0]
+        monkeypatch.setattr(dof_serial, "monotonic", lambda: now[0])
+        def fake_sleep(s):
+            now[0] += s
+        monkeypatch.setattr(dof_serial, "sleep", fake_sleep)
+        monkeypatch.setattr(dof_serial, "_URL_WAIT_CAP_S", 3.0)
+        opened, calls = install(monkeypatch, *[serial.SerialException("refused") for _ in range(3)])
+        with pytest.raises(DofSerialError) as ei:
+            list(serial_lines("rfc2217://localhost:4000", max_duration_s=1000.0))
+        assert "did not open within 3 s" in str(ei.value)
+        assert len(calls) == 3
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
