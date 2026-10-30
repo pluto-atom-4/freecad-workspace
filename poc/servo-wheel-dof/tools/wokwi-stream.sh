@@ -2,8 +2,8 @@
 # Stream lines from a running Wokwi simulation's RFC2217 serial port to stdout.
 #
 # stdout: data lines, bytes copied as received, with two exceptions that each
-#         add one newline: a pending partial line at exit, and a newline-less
-#         run of 64 KiB that is split. Intended to be pipeable (for example
+#         add one newline: a pending partial line at exit (not after Ctrl+C),
+#         and a newline-less run of 64 KiB that is split. Intended to be pipeable (for example
 #         into dof_wheel_bridge --stdin); that pipe is not verified.
 # stderr: status and error lines only.
 # Python runs in the mamba env "esp32-dof" (pyserial 3.5); works from any cwd.
@@ -43,7 +43,8 @@ Environment defaults (flags win over these):
   An empty value (for example WOKWI_PORT=) counts as unset.
 
 Output: bytes as received, one line per output line. A newline is added to a
-partial line left at exit, and to a run of 64 KiB without a newline (split).
+partial line left at exit (not after Ctrl+C), and to a run of 64 KiB without a
+newline (split).
 
 Needs: a running Wokwi simulation exposing an RFC2217 serial port, and the
 mamba env "esp32-dof" (pyserial). Exit codes: 0 ok, 1 connection, serial,
@@ -92,20 +93,34 @@ if [ -z "$HOST" ]; then
     usage_short
     exit 2
 fi
+host_error() {
+    echo "wokwi-stream: $1" >&2
+    usage_short
+    exit 2
+}
+space_re='[[:space:]]'
 bracketed_re='^\[[0-9A-Fa-f:.]+\]$'
+bracketed_port_re='^\[.*\]:[0-9]+$'
 bare_v6_re='^[0-9A-Fa-f:.]+$'
-if [[ "$HOST" == \[* ]]; then
-    if ! [[ "$HOST" =~ $bracketed_re ]]; then
-        echo "wokwi-stream: invalid host '$HOST' (unmatched '[' or not an IPv6 address; write [::1])" >&2
-        usage_short
-        exit 2
+if [[ "$HOST" =~ $space_re ]]; then
+    host_error "host must not contain whitespace"
+fi
+if [[ "$HOST" == *%* ]]; then
+    host_error "IPv6 zone IDs are not supported (host '$HOST')"
+elif [[ "$HOST" == \[* ]]; then
+    if [[ "$HOST" =~ $bracketed_re ]]; then
+        :
+    elif [[ "$HOST" =~ $bracketed_port_re ]]; then
+        host_error "host '$HOST' ends in a port; use --port for the port; IPv6 as [::1]"
+    elif [[ "$HOST" == *\]* ]]; then
+        host_error "invalid host '$HOST' (IPv6 must be written [::1])"
+    else
+        host_error "invalid host '$HOST' (unmatched '[')"
     fi
 elif [[ "$HOST" == *:* ]]; then
     colons="${HOST//[^:]/}"
     if ! [[ "$HOST" =~ $bare_v6_re ]] || [ "${#colons}" -lt 2 ]; then
-        echo "wokwi-stream: host '$HOST' has a colon but is not IPv6; use --port for the port; IPv6 as [::1]" >&2
-        usage_short
-        exit 2
+        host_error "host '$HOST' has a colon but is not IPv6; use --port for the port; IPv6 as [::1]"
     fi
 fi
 if ! [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || [ "$((10#$PORT))" -lt 1 ] || [ "$((10#$PORT))" -gt 65535 ]; then
@@ -135,12 +150,10 @@ fi
 # capture), so lines reach the pipe as they arrive.
 read -r -d '' PY_BODY <<'PYEOF'
 import os
-import signal
 import sys
 import time
 
 MAX_PENDING = 64 * 1024
-out = sys.stdout.buffer
 
 
 class Downstream(Exception):
@@ -157,9 +170,13 @@ def status(msg):
 
 
 def emit(data):
+    # Raw os.write, looped: each partial write returns to Python, so a Ctrl+C
+    # is raised at once even while the pipe is full. (A buffered write keeps
+    # going until the whole block is written, so Ctrl+C would wait.)
+    view = memoryview(data)
     try:
-        out.write(data)
-        out.flush()
+        while view:
+            view = view[os.write(1, view):]
     except BrokenPipeError:
         raise Downstream()
     except OSError as e:
@@ -168,27 +185,25 @@ def emit(data):
 
 def emit_consume(pending, length, add_newline):
     # Write the first `length` bytes of pending (plus a newline if asked), then
-    # drop them from pending. SIGINT is blocked across both steps, so a Ctrl+C
-    # cannot land between them and make the exit flush repeat the bytes.
+    # drop them from pending. The write is not masked: a Ctrl+C raises out of a
+    # blocked write at once. After a Ctrl+C the exit flush is skipped (see main),
+    # so a line is never written twice.
     data = bytes(pending[:length]) + (b"\n" if add_newline else b"")
-    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
-    try:
-        emit(data)
-        del pending[:length]
-    finally:
-        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
+    emit(data)
+    del pending[:length]
 
 
 def drain(pending, state):
     # Emit complete lines whole, whatever their length. A partial line waits
-    # for its newline. A newline-less run of 64 KiB or more is split.
+    # for its newline. A newline-less run is split every MAX_PENDING bytes
+    # (exactly that many, plus a newline); the rest stays pending.
     while True:
         nl = pending.find(b"\n")
         if nl < 0:
             break
         emit_consume(pending, nl + 1, False)
-    if len(pending) >= MAX_PENDING:
-        emit_consume(pending, len(pending), True)
+    while len(pending) >= MAX_PENDING:
+        emit_consume(pending, MAX_PENDING, True)
         if not state["noted"]:
             state["noted"] = True
             status("run of %d bytes without a newline: split" % MAX_PENDING)
@@ -216,6 +231,7 @@ def main():
     state = {"noted": False}
     broken = False
     output_failed = False
+    interrupted = False
     rc = 0
     try:
         try:
@@ -237,6 +253,7 @@ def main():
                 time.sleep(0.01)
     except KeyboardInterrupt:
         status("stopped by user")
+        interrupted = True
         rc = 130
     except Downstream:
         broken = True
@@ -256,8 +273,9 @@ def main():
                 ser.close()
             except Exception:
                 pass
-        if pending and not output_failed:
-            # Flush a partial line left at exit, with its newline.
+        if pending and not output_failed and not interrupted:
+            # Flush a partial line left at exit, with its newline. Not after
+            # Ctrl+C: that would repeat a line already written and could block.
             try:
                 emit(bytes(pending) + b"\n")
             except Downstream:
@@ -266,6 +284,8 @@ def main():
                 status("cannot write to stdout: %s" % e)
                 broken = True
                 rc = 1
+            except KeyboardInterrupt:
+                rc = 130  # a second Ctrl+C during the flush: quiet exit 130
         if broken:
             quiet_stdout()
     return rc

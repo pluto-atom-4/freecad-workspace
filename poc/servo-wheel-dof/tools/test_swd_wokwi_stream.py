@@ -204,6 +204,21 @@ def _hex(data):
     return data.hex()
 
 
+def _read_to_eof(fd, timeout=30):
+    """Read a raw fd to EOF with a deadline (select-guarded)."""
+    data = bytearray()
+    deadline = time.time() + timeout
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            raise AssertionError("pipe not closed within %ss" % timeout)
+        if select.select([fd], [], [], remaining)[0]:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                return bytes(data)
+            data += chunk
+
+
 class _Run(object):
     """A running script with guarded reads. Output is accumulated in out/err."""
 
@@ -356,6 +371,11 @@ def test_empty_host_exits_2(tmp_path, args):
         ("[::1", b"unmatched"),
         ("[localhost]", b"invalid host"),
         ("[::1]x", b"invalid host"),
+        ("[::1]:4000", b"use --port for the port"),
+        ("fe80::1%eth0", b"zone IDs are not supported"),
+        ("[fe80::1%eth0]", b"zone IDs are not supported"),
+        ("a b", b"must not contain whitespace"),
+        ("::1 ", b"must not contain whitespace"),
     ],
 )
 def test_host_with_port_or_broken_brackets_exits_2(tmp_path, host, reason):
@@ -553,6 +573,47 @@ def test_line_longer_than_the_cap_is_split_and_the_rest_follows(tmp_path):
     assert r.stdout == b"x" * CAP + b"\n" + b"x" * 4464 + b"\n"
 
 
+def test_cap_emits_exactly_64k_after_a_timeout_partial(tmp_path):
+    _need_pyserial_env()
+    gate = tmp_path / "gate"
+    # "abc" arrives, then a timeout gap, then 65536 x's: the split must be
+    # exactly MAX_PENDING bytes ("abc" + 65533 x's), not the whole pending run.
+    chunks = ["616263", {"hex": _hex(b"x" * CAP), "gate": str(gate)}]
+    run = _Run([], **_shim(tmp_path, chunks=chunks, end="error"))
+    try:
+        run.wait_err(b"fake-serial: open")
+        run.quiet(1.5)  # "abc" is held: a timeout partial is not written
+        gate.write_text("go", encoding="utf-8")
+        rc = run.finish()
+    finally:
+        run.kill()
+    assert rc == 1, bytes(run.err)
+    assert bytes(run.out) == b"abc" + b"x" * (CAP - 3) + b"\n" + b"xxx\n"
+    assert run.err.count(b"split") == 1
+
+
+def test_ctrl_c_while_stdout_is_blocked_exits_130(tmp_path):
+    """Nothing reads stdout, so the pipe fills and the write blocks; Ctrl+C still stops it."""
+    _need_pyserial_env()
+    pid_file = tmp_path / "pid"
+    env = _shim(tmp_path, chunks=[_hex(b"line\n" * 2000)], end="repeat", pid_file=str(pid_file))
+    run = _Run([], **env)
+    try:
+        run.wait_err(b"fake-serial: open")
+        time.sleep(2.0)  # the pipe fills and the script blocks in a write
+        pid = int(pid_file.read_text(encoding="utf-8"))
+        os.kill(pid, signal.SIGINT)
+        try:
+            run.proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            raise AssertionError("Ctrl+C was deferred while stdout was blocked")
+        rc = run.finish()
+    finally:
+        run.kill()
+    assert rc == 130, bytes(run.err)
+    assert run.err.count(b"stopped by user") == 1
+
+
 def test_stdout_write_failure_has_its_own_message(tmp_path):
     _need_pyserial_env()
     if not os.path.exists("/dev/full"):
@@ -631,7 +692,7 @@ def test_closed_downstream_exits_0_quietly(tmp_path):
         assert run.read_line() == b"line\n"
         run.proc.stdout.close()  # downstream goes away while data keeps coming
         rc = run.proc.wait(timeout=30)
-        run.err += run.proc.stderr.read()
+        run.err += _read_to_eof(run.proc.stderr.fileno())
     finally:
         run.kill()
     assert rc == 0, bytes(run.err)

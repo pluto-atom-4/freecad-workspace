@@ -350,14 +350,16 @@ env value counts as unset.
 
 Host: a name or IPv4 address, or IPv6 written bare (`--host ::1`, the script brackets it
 in the URL) or bracketed (`--host [::1]`). A host with a colon that is not IPv6 (for
-example `localhost:4000`) exits 2: the port goes in `--port`.
+example `localhost:4000`) exits 2: the port goes in `--port`. A host with whitespace, and
+an IPv6 zone ID such as `fe80::1%eth0` (not supported), exit 2.
 
 Output: bytes are copied as received, with two exceptions that each add one newline: a
-partial line still pending at exit gets a newline, and a run of 64 KiB (65536 bytes)
-without a newline is split there with a newline added (one stderr note). Complete lines
-are written whole, whatever their length. A partial line waits for its newline; a read
-timeout does not write it. stdout carries those bytes only; status and errors go to
-stderr.
+partial line still pending at exit gets a newline (not after Ctrl+C), and a newline-less
+run is split every 65536 bytes with a newline added (one stderr note; the split is exactly
+65536 bytes, the rest stays pending). Complete lines are written whole, whatever their
+length, so a run of exactly 65536 bytes followed by the real newline yields one empty
+line. A partial line waits for its newline; a read timeout does not write it. stdout
+carries those bytes only; status and errors go to stderr.
 
 Exit codes: 0 ok; 1 connection, serial, stdout or env error; 2 bad arguments; 130 Ctrl+C
 (checked with a fake serial object only, not with a real RFC2217 connection). Piping into
@@ -371,6 +373,9 @@ Exit codes: 0 ok; 1 connection, serial, stdout or env error; 2 bad arguments; 13
   downstream gets no EOF. Kill the whole process group instead.
 - Ctrl+C during a read drops the bytes that read had already taken (up to about 1 s of
   data at the serial timeout); the stream does not replay them.
+- Ctrl+C stops the script at once, even while stdout is blocked (a full pipe). A pending
+  partial line is not written after Ctrl+C, and a line being written may stay partly
+  written. A second Ctrl+C during the exit flush exits 130 quietly.
 - An idle stream ends only on Ctrl+C, or when the next line is written; that is when a
   closed downstream pipe is noticed.
 - A stdout error other than a closed pipe (for example a full disk) ends the script
