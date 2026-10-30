@@ -727,7 +727,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="dof_wheel_bridge",
                                 description="IMU frames -> SerialImuHal -> LQR/PID -> UDP wheel display.")
     src = p.add_mutually_exclusive_group(required=True)
-    src.add_argument("--port", metavar="PATH", help="serial device, e.g. /dev/ttyACM0 (needs pyserial)")
+    src.add_argument("--port", metavar="PATH", help="serial device (e.g. /dev/ttyACM0) or pyserial URL (e.g. rfc2217://localhost:4000); a URL port waits up to 300 s for the port to open, ended earlier by --duration or Ctrl-C (needs pyserial)")
     src.add_argument("--mock", action="store_true", help="synthetic 50 Hz frames with a still lead-in")
     src.add_argument("--replay", metavar="CSV", help="raw-frame CSV (seq,t_us,ax,ay,az,gx,gy,gz)")
     src.add_argument("--stdin", action="store_true",
