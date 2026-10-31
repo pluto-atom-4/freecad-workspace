@@ -78,7 +78,17 @@ Options:
   --record PATH     CSV file the bridge writes (default: /tmp/check_rfc.csv)
   --overwrite       allow replacing an existing --record file
   -h, --help        show this help and exit
-  -- ARGS...        pass ARGS to dof_wheel_bridge.py unchanged
+  -- ARGS...        pass ARGS to dof_wheel_bridge.py unchanged. Reserved flags
+                    are refused (exit 2), as --flag or --flag=value or an
+                    unambiguous prefix: --port --core --duration --record
+                    --stdin --replay --mock. Other flags pass through.
+
+Notes:
+  Options accept "--opt value" and "--opt=value". --guide wins over --dry-run
+  when both are given. --record is made absolute against the caller's cwd.
+  The advisory port check (ss -ltn) runs only for rfc2217 URLs on localhost or
+  127.0.0.1 with an explicit port, and is skipped for bracketed IPv6 hosts and
+  other hosts.
 
 Environment:
   BRC_DIR   balancing-robot-controller checkout (used by --guide only)
@@ -177,7 +187,7 @@ print_dry_run() {
         "1. $RECORD exists and no --overwrite: FATAL, exit 1" \
         "2. mamba on PATH: FATAL, exit 1 if missing" \
         "3. $MON_DIR exists: FATAL, exit 1 if missing" \
-        "4. ss -ltn: WARNING if the port is listening on localhost (advisory, never gates)" \
+        "4. ss -ltn: WARNING if the port is listening; runs only for rfc2217 URLs on localhost or 127.0.0.1 with an explicit port, when ss exists (advisory, never gates)" \
         "5. reminder to stderr, then the bridge runs (it waits up to 300 s for the port)"
     heading "Command:"
     cmd_line "cd $(printf '%q' "$MON_DIR") && ${cmd_str% }"
@@ -268,6 +278,33 @@ if ! [[ "$DURATION" =~ ^[0-9]{1,9}$ ]] || [ "$((10#$DURATION))" -lt 1 ]; then
     exit 2
 fi
 DURATION=$((10#$DURATION))
+
+# Make the record path absolute now: the bridge runs after cd "$MON_DIR".
+case "$RECORD" in
+    /*) ;;
+    *) RECORD="$PWD/$RECORD" ;;
+esac
+
+# Reserved bridge flags are set only by this script's own options. argparse is
+# last-wins and accepts unambiguous prefixes, so a passthrough token that names
+# one of them (exact, as --flag=value, or as a prefix) is refused.
+RESERVED_FLAGS="--port --core --duration --record --stdin --replay --mock"
+for tok in ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}; do
+    name="${tok%%=*}"
+    case "$name" in
+        --?*) ;;
+        *) continue ;;
+    esac
+    for flag in $RESERVED_FLAGS; do
+        case "$flag" in
+            "$name"*)
+                echo "wokwi-rfc2217-check: passthrough flag '$tok' is reserved (use the script option instead)" >&2
+                usage_short
+                exit 2
+                ;;
+        esac
+    done
+done
 
 BRIDGE_ARGV=(mamba run -a "" -n "$PY_ENV" python3 dof_wheel_bridge.py \
     --port "$PORT_URL" --core "$CORE" --duration "$DURATION" \
