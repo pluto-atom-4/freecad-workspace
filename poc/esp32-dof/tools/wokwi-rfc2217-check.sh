@@ -10,7 +10,8 @@
 #
 # stdout: --guide and --dry-run text; otherwise the bridge's stdout.
 # stderr: FATAL, WARNING and status lines.
-# Writes: none by this script. The bridge writes only the --record file.
+# Writes: none by this script. The only file the bridge writes is --record
+# (--text-log is a reserved flag and is refused, so it is never written).
 # Python runs in the mamba env "esp32-dof", from $FW_DIR/poc/esp32-dof/monitor.
 
 set -u
@@ -63,6 +64,7 @@ usage() {
 Usage: wokwi-rfc2217-check.sh [--guide] [--dry-run] [--port URL] [--core lqr|pid|none]
                               [--duration SECS] [--record PATH] [--overwrite]
                               [-h|--help] [-- EXTRA_BRIDGE_ARGS...]
+Flags accept "--opt value" and "--opt=value".
 
 Run the freecad-workspace DOF wheel bridge (dof_wheel_bridge.py) against the
 RFC2217 port of a running Wokwi simulation (ttl_servo built with
@@ -71,7 +73,9 @@ UNVERIFIED. The bridge may start first; it waits up to 300 s for the port.
 
 Options:
   --guide           print the step-by-step guide and exit (runs nothing)
-  --dry-run         print the exact bridge command and the checks, run nothing
+  --dry-run         print the exact bridge command and the checks the real run
+                    does; --dry-run performs none of those checks and writes
+                    nothing
   --port URL        RFC2217 URL (default: rfc2217://localhost:4000)
   --core CORE       controller core: lqr, pid or none (default: lqr)
   --duration SECS   bridge run length, positive integer (default: 120)
@@ -79,13 +83,16 @@ Options:
   --overwrite       allow replacing an existing --record file
   -h, --help        show this help and exit
   -- ARGS...        pass ARGS to dof_wheel_bridge.py unchanged. Reserved flags
-                    are refused (exit 2), as --flag or --flag=value or an
-                    unambiguous prefix: --port --core --duration --record
-                    --stdin --replay --mock. Other flags pass through.
+                    are refused (exit 2), as --flag, --flag=value, or any prefix
+                    of a reserved flag (so --r is refused, as it matches
+                    --record and --replay): --port --core --duration --record
+                    --stdin --replay --mock --text-log. Other flags pass through.
 
 Notes:
   Options accept "--opt value" and "--opt=value". --guide wins over --dry-run
   when both are given. --record is made absolute against the caller's cwd.
+  The only file written is --record. An existing --record path is refused
+  without --overwrite, including a dangling symlink.
   The advisory port check (ss -ltn) runs only for rfc2217 URLs on localhost or
   127.0.0.1 with an explicit port, and is skipped for bracketed IPv6 hosts and
   other hosts.
@@ -151,6 +158,7 @@ print_guide() {
     printf '%s\n' "SIM-ONLY, not hardware-validated. Webots wheel signs UNVERIFIED. This only shows the pipe works."
     printf '\n'
     heading "1 Env"
+    printf '%s\n' "BRC and FW below are shell variables for these steps; the script itself reads BRC_DIR and FW_DIR."
     cmd_line "export BRC=$(printf '%q' "$BRC_DIR")"
     cmd_line "export FW=$(printf '%q' "$FW_DIR")"
     cmd_line 'export PATH="$HOME/.platformio/penv/bin:$HOME/.wokwi/bin:$PATH"'
@@ -166,6 +174,7 @@ print_guide() {
     heading "4 Bridge (this script)"
     cmd_line '"$FW/poc/esp32-dof/tools/wokwi-rfc2217-check.sh"'
     printf '%s\n' "   start it first, it waits up to 300 s for the port"
+    printf '%s\n' "   add --overwrite if the --record file from an earlier run exists"
     printf '\n'
     heading "5 VS Code simulator"
     printf '%s\n' '   open programs/ttl_servo in $BRC and run "Wokwi: Start Simulator"'
@@ -182,7 +191,7 @@ print_dry_run() {
     local cmd_str
     printf -v cmd_str '%q ' "${BRIDGE_ARGV[@]}"
     heading "Dry run: nothing is started and nothing is written."
-    printf '%s\n' "Checks the real run would do, in order:"
+    printf '%s\n' "Checks the real run does, in order (--dry-run performs none of them):"
     printf '  %s\n' \
         "1. $RECORD exists and no --overwrite: FATAL, exit 1" \
         "2. mamba on PATH: FATAL, exit 1 if missing" \
@@ -286,9 +295,9 @@ case "$RECORD" in
 esac
 
 # Reserved bridge flags are set only by this script's own options. argparse is
-# last-wins and accepts unambiguous prefixes, so a passthrough token that names
-# one of them (exact, as --flag=value, or as a prefix) is refused.
-RESERVED_FLAGS="--port --core --duration --record --stdin --replay --mock"
+# last-wins and accepts prefixes, so a passthrough token that is any prefix of a
+# reserved flag (exact, as --flag=value, or shorter, e.g. --r) is refused.
+RESERVED_FLAGS="--port --core --duration --record --stdin --replay --mock --text-log"
 for tok in ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}; do
     name="${tok%%=*}"
     case "$name" in
@@ -321,7 +330,8 @@ if [ "$DRY_RUN" -eq 1 ]; then
 fi
 
 # Order: record clobber -> mamba -> monitor dir -> advisory check -> run.
-if [ -e "$RECORD" ] && [ "$OVERWRITE" -ne 1 ]; then
+# [ -e ] follows symlinks, so a dangling symlink is caught by [ -L ] too.
+if { [ -e "$RECORD" ] || [ -L "$RECORD" ]; } && [ "$OVERWRITE" -ne 1 ]; then
     fatal "record file exists: $RECORD (use --overwrite to replace it)"
 fi
 if ! command -v mamba >/dev/null 2>&1; then

@@ -3,14 +3,17 @@
 These are shell-launcher tests only, no simulator: nothing here starts a real
 bridge, a real mamba env or a Wokwi simulation. Where a run must reach the
 mamba call, a stub `mamba` script on PATH records its argv and PWD and exits 37.
-A stub `ss` on PATH prints canned listener output. Colour is checked on a real
-pseudo-terminal (stdlib pty) where available, and on a pipe otherwise.
+Every stub PATH also carries a stub `ss`, silent unless a test asks for a
+listener, so the host's real port 4000 is never read. Colour is checked on a
+real pseudo-terminal (stdlib pty) where available, and on a pipe otherwise.
 """
 
 import os
+import select
 import shlex
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -24,6 +27,7 @@ SCRIPT = Path(__file__).parent / "wokwi-rfc2217-check.sh"
 REPO_FW = Path(__file__).resolve().parents[3]
 BASH = shutil.which("bash") or "/bin/bash"
 STUB_EXIT = 37
+PTY_TIMEOUT_S = 30
 TOKEN = "SECRETVALUE123"
 LISTEN_HEADER = "State Recv-Q Send-Q Local Address:Port Peer Address:Port"
 
@@ -58,6 +62,8 @@ def run_on_pty(args, *, env_update=None, drop=()):
         env.pop(key, None)
     if env_update:
         env.update(env_update)
+    proc = None
+    slave_open = True
     try:
         proc = subprocess.Popen(
             [BASH, str(SCRIPT), *args],
@@ -66,11 +72,19 @@ def run_on_pty(args, *, env_update=None, drop=()):
             stderr=subprocess.PIPE,
             env=env,
         )
-    finally:
         os.close(slave)
-    chunks = []
-    try:
+        slave_open = False
+        chunks = []
+        deadline = time.monotonic() + PTY_TIMEOUT_S
         while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                proc.kill()
+                proc.wait()
+                pytest.fail(f"pty run did not finish within {PTY_TIMEOUT_S} s")
+            ready, _, _ = select.select([master], [], [], min(remaining, 1.0))
+            if not ready:
+                continue
             try:
                 data = os.read(master, 4096)
             except OSError:  # EIO once the child closed the slave
@@ -78,38 +92,48 @@ def run_on_pty(args, *, env_update=None, drop=()):
             if not data:
                 break
             chunks.append(data)
+        proc.wait(timeout=PTY_TIMEOUT_S)
+        out = b"".join(chunks).decode("utf-8", errors="replace")
+        err = proc.stderr.read().decode("utf-8", errors="replace")
+        return proc.returncode, out, err
     finally:
+        if slave_open:
+            os.close(slave)
         os.close(master)
-    proc.wait(timeout=60)
-    out = b"".join(chunks).decode("utf-8", errors="replace")
-    err = proc.stderr.read().decode("utf-8", errors="replace")
-    return proc.returncode, out, err
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def _write_stub(path_obj, text):
+    path_obj.write_text(text)
+    path_obj.chmod(0o755)
 
 
 def make_stub_mamba(tmp_path):
+    """Return (PATH, argv_file). The bindir also holds a silent stub ss."""
     bindir = tmp_path / "stubbin"
     bindir.mkdir()
     out = tmp_path / "stub_argv.txt"
-    stub = bindir / "mamba"
-    stub.write_text(
+    _write_stub(
+        bindir / "mamba",
         "#!/bin/bash\n"
         "{ printf 'PWD=%s\\n' \"$PWD\"; printf '%s\\n' \"$@\"; } > \"$STUB_OUT\"\n"
-        f"exit {STUB_EXIT}\n"
+        f"exit {STUB_EXIT}\n",
     )
-    stub.chmod(0o755)
+    _write_stub(bindir / "ss", "#!/bin/bash\nexit 0\n")
     path = str(bindir) + os.pathsep + os.environ.get("PATH", "")
     return path, out
 
 
 def make_stub_ss(tmp_path, path, listening):
+    """Prefix PATH with a stub ss that prints a LISTEN line for *:4000."""
     ssdir = tmp_path / "ssbin"
     ssdir.mkdir(exist_ok=True)
     body = LISTEN_HEADER + "\n"
     if listening:
         body += "LISTEN 0 4096 *:4000 *:*\n"
-    stub = ssdir / "ss"
-    stub.write_text("#!/bin/bash\ncat <<'SSEOF'\n" + body + "SSEOF\n")
-    stub.chmod(0o755)
+    _write_stub(ssdir / "ss", "#!/bin/bash\ncat <<'SSEOF'\n" + body + "SSEOF\n")
     return str(ssdir) + os.pathsep + path
 
 
@@ -134,6 +158,7 @@ def test_help_exit0_mentions_guide():
     assert "--guide" in r.stdout
     assert "--opt=value" in r.stdout
     assert "--stdin" in r.stdout
+    assert "--text-log" in r.stdout
 
 
 def test_guide_exit0_and_content():
@@ -141,14 +166,10 @@ def test_guide_exit0_and_content():
     assert r.returncode == 0
     assert "TTL_SERVO_DOF_FRAMES" in r.stdout
     assert "SIM-ONLY" in r.stdout
+    assert "--overwrite" in r.stdout
+    assert "reads BRC_DIR and FW_DIR" in r.stdout
     assert "\x1b" not in r.stdout
     assert "\x1b" not in r.stderr
-
-
-def test_guide_no_escape_with_no_color():
-    r = run(["--guide"], env_update={"NO_COLOR": "1"})
-    assert r.returncode == 0
-    assert "\x1b" not in r.stdout
 
 
 def test_guide_never_prints_token():
@@ -204,6 +225,7 @@ def test_dry_run_prints_command_and_writes_nothing(tmp_path):
     assert "mamba run -a" in r.stdout
     assert "dof_wheel_bridge.py" in r.stdout
     assert "--echo-text" in r.stdout
+    assert "performs none of them" in r.stdout
     assert "\x1b" not in r.stdout
     assert not rec.exists()
     assert not out.exists()
@@ -244,12 +266,11 @@ def test_dry_run_relative_record_resolves_against_caller_cwd(tmp_path):
     assert shlex.quote(str(expected)) in r.stdout
 
 
-def test_dry_run_default_fw_dir_derived_from_script(tmp_path):
+def test_dry_run_default_fw_dir_derived_from_script():
     r = run(["--dry-run"], drop=("FW_DIR",))
     assert r.returncode == 0
     expected = REPO_FW / "poc" / "esp32-dof" / "monitor"
     assert shlex.quote(str(expected)) in r.stdout
-    assert str(expected).endswith(os.path.join("poc", "esp32-dof", "monitor"))
 
 
 @pytest.mark.parametrize(
@@ -289,6 +310,10 @@ def test_bad_arguments_exit2(args, tmp_path):
         ["--replay", "x.csv"],
         ["--mock"],
         ["--rec", "x"],
+        ["--r", "x"],
+        ["--p", "4001"],
+        ["--s"],
+        ["--text-log", "/existing"],
     ],
 )
 def test_reserved_passthrough_refused(passthrough, tmp_path):
@@ -302,19 +327,6 @@ def test_reserved_passthrough_refused(passthrough, tmp_path):
     assert r.returncode == 2
     assert "reserved" in r.stderr
     assert not out.exists()
-
-
-def test_harmless_passthrough_still_reaches_bridge(tmp_path):
-    path, out = make_stub_mamba(tmp_path)
-    fw = make_fw(tmp_path)
-    r = run(
-        ["--record", str(tmp_path / "new.csv"), "--", "--foo", "bar"],
-        path=path,
-        env_update={"FW_DIR": str(fw), "STUB_OUT": str(out)},
-    )
-    assert r.returncode == STUB_EXIT
-    _, argv = read_stub(out)
-    assert argv[-3:] == ["--echo-text", "--foo", "bar"]
 
 
 def test_record_exists_without_overwrite_exits1(tmp_path):
@@ -352,6 +364,36 @@ def test_relative_record_exists_in_caller_cwd_exits1(tmp_path):
     assert rel.read_text() == "keep me\n"
 
 
+def test_dangling_symlink_record_exits1_without_overwrite(tmp_path):
+    path, out = make_stub_mamba(tmp_path)
+    fw = make_fw(tmp_path)
+    rec = tmp_path / "dangling.csv"
+    os.symlink(tmp_path / "nowhere.csv", rec)
+    r = run(
+        ["--record", str(rec)],
+        path=path,
+        env_update={"FW_DIR": str(fw), "STUB_OUT": str(out)},
+    )
+    assert r.returncode == 1
+    assert "FATAL" in r.stderr
+    assert not out.exists()
+    assert rec.is_symlink()
+
+
+def test_dangling_symlink_record_with_overwrite_reaches_bridge(tmp_path):
+    path, out = make_stub_mamba(tmp_path)
+    fw = make_fw(tmp_path)
+    rec = tmp_path / "dangling.csv"
+    os.symlink(tmp_path / "nowhere.csv", rec)
+    r = run(
+        ["--overwrite", "--record", str(rec)],
+        path=path,
+        env_update={"FW_DIR": str(fw), "STUB_OUT": str(out)},
+    )
+    assert r.returncode == STUB_EXIT
+    assert out.exists()
+
+
 def test_overwrite_reaches_bridge_with_passthrough(tmp_path):
     path, out = make_stub_mamba(tmp_path)
     fw = make_fw(tmp_path)
@@ -385,6 +427,51 @@ def test_overwrite_reaches_bridge_with_passthrough(tmp_path):
         "--extra-x",
         "y",
     ]
+
+
+def test_relative_record_real_run_argv_is_absolute(tmp_path):
+    path, out = make_stub_mamba(tmp_path)
+    fw = make_fw(tmp_path)
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    r = run(
+        ["--record", "rel.csv"],
+        path=path,
+        cwd=str(caller),
+        env_update={"FW_DIR": str(fw), "STUB_OUT": str(out)},
+    )
+    assert r.returncode == STUB_EXIT
+    _, argv = read_stub(out)
+    i = argv.index("--record")
+    assert argv[i + 1] == str(caller.resolve() / "rel.csv")
+
+
+@pytest.mark.parametrize(
+    "flag, value",
+    [
+        ("--port", "rfc2217://127.0.0.1:4001"),
+        ("--core", "pid"),
+        ("--duration", "30"),
+    ],
+)
+@pytest.mark.parametrize("form", ["space", "equals"])
+def test_value_flags_reach_bridge_argv(flag, value, form, tmp_path):
+    path, out = make_stub_mamba(tmp_path)
+    fw = make_fw(tmp_path)
+    rec = tmp_path / "new.csv"
+    if form == "space":
+        opt = [flag, value]
+    else:
+        opt = [f"{flag}={value}"]
+    r = run(
+        [*opt, "--record", str(rec)],
+        path=path,
+        env_update={"FW_DIR": str(fw), "STUB_OUT": str(out)},
+    )
+    assert r.returncode == STUB_EXIT
+    _, argv = read_stub(out)
+    i = argv.index(flag)
+    assert argv[i + 1] == value
 
 
 def test_missing_monitor_dir_exits1(tmp_path):
@@ -446,14 +533,15 @@ def test_ss_no_listener_no_warning(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "url",
+    "url, expect_warning",
     [
-        "rfc2217://[::1]:4000",
-        "rfc2217://localhost",
-        "rfc2217://localhost:4000/path",
+        ("rfc2217://[::1]:4000", False),
+        ("rfc2217://localhost", False),
+        ("rfc2217://localhost:4000/path", True),
+        ("rfc2217://127.0.0.1:4000", True),
     ],
 )
-def test_url_shapes_do_not_crash(url, tmp_path):
+def test_url_shapes_listener_check(url, expect_warning, tmp_path):
     path, out = make_stub_mamba(tmp_path)
     path = make_stub_ss(tmp_path, path, listening=True)
     fw = make_fw(tmp_path)
@@ -463,4 +551,8 @@ def test_url_shapes_do_not_crash(url, tmp_path):
         env_update={"FW_DIR": str(fw), "STUB_OUT": str(out)},
     )
     assert r.returncode == STUB_EXIT
-    assert "Traceback" not in r.stderr
+    if expect_warning:
+        assert "WARNING" in r.stderr
+        assert "4000" in r.stderr
+    else:
+        assert "WARNING" not in r.stderr
