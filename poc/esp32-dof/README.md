@@ -74,6 +74,8 @@ poc/esp32-dof/
   README.md               This file
   CLAUDE.md               Per-POC guidance for Claude Code
   run_mock_demo.sh        One-command demo: Webots GUI + mock monitor publishing over UDP (#239)
+  tools/                  Launchers (sim only)
+    wokwi-rfc2217-check.sh  Runs dof_wheel_bridge.py on rfc2217://localhost:4000 and prints the copy-paste build / Webots / bridge / VS Code simulator guide (`--guide`, `--help`) (#441)
   firmware/               Arduino sketch and documentation (build artifacts gitignored)
     README.md             Firmware setup, compilation, and testing guide
     esp32_dof/            Firmware sketch directory (folder name matches .ino basename)
