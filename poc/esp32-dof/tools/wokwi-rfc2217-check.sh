@@ -10,8 +10,10 @@
 #
 # stdout: --guide and --dry-run text; otherwise the bridge's stdout.
 # stderr: FATAL, WARNING and status lines.
-# Writes: none by this script. The only file the bridge writes is --record
-# (--text-log is a reserved flag and is refused, so it is never written).
+# Writes: this script writes nothing itself; the bridge writes the --record file.
+# Every bridge flag that opens a file for writing is reserved (see below).
+# The existence check is not atomic; a file created between the check and the
+# bridge's open is truncated.
 # Python runs in the mamba env "esp32-dof", from $FW_DIR/poc/esp32-dof/monitor.
 
 set -u
@@ -80,19 +82,28 @@ Options:
   --core CORE       controller core: lqr, pid or none (default: lqr)
   --duration SECS   bridge run length, positive integer (default: 120)
   --record PATH     CSV file the bridge writes (default: /tmp/check_rfc.csv)
-  --overwrite       allow replacing an existing --record file
+  --overwrite       replace an existing regular file at --record; a symlink at
+                    --record is always refused (exit 1), never written through
   -h, --help        show this help and exit
   -- ARGS...        pass ARGS to dof_wheel_bridge.py unchanged. Reserved flags
                     are refused (exit 2), as --flag, --flag=value, or any prefix
                     of a reserved flag (so --r is refused, as it matches
                     --record and --replay): --port --core --duration --record
-                    --stdin --replay --mock --text-log. Other flags pass through.
+                    --stdin --replay --mock --text-log --cmd-out.
+                    Other flags pass through.
 
 Notes:
   Options accept "--opt value" and "--opt=value". --guide wins over --dry-run
   when both are given. --record is made absolute against the caller's cwd.
-  The only file written is --record. An existing --record path is refused
-  without --overwrite, including a dangling symlink.
+  This script writes nothing itself; the bridge writes the --record file. Every
+  bridge flag that opens a file for writing is reserved.
+  An existing --record path is refused without --overwrite, including a
+  dangling symlink. A symlink at --record is refused with or without
+  --overwrite.
+  The existence check is not atomic; a file created between the check and the
+  bridge's open is truncated.
+  The script always adds --echo-text; do not pass it yourself (a duplicate is
+  harmless).
   The advisory port check (ss -ltn) runs only for rfc2217 URLs on localhost or
   127.0.0.1 with an explicit port, and is skipped for bracketed IPv6 hosts and
   other hosts.
@@ -105,8 +116,10 @@ Environment:
             (default: three levels above this script)
   The mamba env is fixed to esp32-dof.
 
-Exit codes: 0 ok; 1 FATAL before start (record exists, mamba missing, monitor
-dir missing); 2 bad arguments; 130 Ctrl+C; otherwise the bridge's exit code.
+Exit codes: 0 ok; 1 FATAL before start (record exists, record is a symlink,
+mamba missing, monitor dir missing); 2 bad arguments, or a bridge error (the
+bridge also exits 2 for runtime failures, see stderr); 130 Ctrl+C; otherwise
+the bridge's exit code.
 EOF
 }
 
@@ -193,7 +206,7 @@ print_dry_run() {
     heading "Dry run: nothing is started and nothing is written."
     printf '%s\n' "Checks the real run does, in order (--dry-run performs none of them):"
     printf '  %s\n' \
-        "1. $RECORD exists and no --overwrite: FATAL, exit 1" \
+        "1. $RECORD is not a symlink, and without --overwrite does not exist: FATAL, exit 1" \
         "2. mamba on PATH: FATAL, exit 1 if missing" \
         "3. $MON_DIR exists: FATAL, exit 1 if missing" \
         "4. ss -ltn: WARNING if the port is listening; runs only for rfc2217 URLs on localhost or 127.0.0.1 with an explicit port, when ss exists (advisory, never gates)" \
@@ -297,7 +310,9 @@ esac
 # Reserved bridge flags are set only by this script's own options. argparse is
 # last-wins and accepts prefixes, so a passthrough token that is any prefix of a
 # reserved flag (exact, as --flag=value, or shorter, e.g. --r) is refused.
-RESERVED_FLAGS="--port --core --duration --record --stdin --replay --mock --text-log"
+# --text-log and --cmd-out open files for writing in the bridge, so they are
+# reserved too. --echo-text is added by this script and is not reserved.
+RESERVED_FLAGS="--port --core --duration --record --stdin --replay --mock --text-log --cmd-out"
 for tok in ${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}; do
     name="${tok%%=*}"
     case "$name" in
@@ -329,8 +344,11 @@ if [ "$DRY_RUN" -eq 1 ]; then
     exit 0
 fi
 
-# Order: record clobber -> mamba -> monitor dir -> advisory check -> run.
-# [ -e ] follows symlinks, so a dangling symlink is caught by [ -L ] too.
+# Order: symlink refusal -> record clobber -> mamba -> monitor dir -> advisory
+# check -> run. [ -e ] follows symlinks, so a dangling symlink is caught by [ -L ].
+if [ -L "$RECORD" ]; then
+    fatal "record path is a symlink: $RECORD (refusing to write through it)"
+fi
 if { [ -e "$RECORD" ] || [ -L "$RECORD" ]; } && [ "$OVERWRITE" -ne 1 ]; then
     fatal "record file exists: $RECORD (use --overwrite to replace it)"
 fi

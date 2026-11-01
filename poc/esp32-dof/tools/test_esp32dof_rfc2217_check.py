@@ -4,8 +4,9 @@ These are shell-launcher tests only, no simulator: nothing here starts a real
 bridge, a real mamba env or a Wokwi simulation. Where a run must reach the
 mamba call, a stub `mamba` script on PATH records its argv and PWD and exits 37.
 Every stub PATH also carries a stub `ss`, silent unless a test asks for a
-listener, so the host's real port 4000 is never read. Colour is checked on a
-real pseudo-terminal (stdlib pty) where available, and on a pipe otherwise.
+listener, so the host's real port 4000 is never read. Colour tests need a real
+pseudo-terminal (stdlib pty) and are skipped if pty is unavailable; the other
+tests pipe stdout and assert plain output.
 """
 
 import os
@@ -51,6 +52,10 @@ def run(args, *, env_update=None, path=None, cwd=None, drop=()):
 
 
 def run_on_pty(args, *, env_update=None, drop=()):
+    """Run the script with stdout and stderr on a pty; stderr is merged into out.
+
+    Returns (rc, out, ""). Merging stderr into the pty means no pipe can block.
+    """
     if pty is None:
         pytest.skip("pty module unavailable")
     try:
@@ -69,7 +74,7 @@ def run_on_pty(args, *, env_update=None, drop=()):
             [BASH, str(SCRIPT), *args],
             stdin=subprocess.DEVNULL,
             stdout=slave,
-            stderr=subprocess.PIPE,
+            stderr=slave,
             env=env,
         )
         os.close(slave)
@@ -94,8 +99,7 @@ def run_on_pty(args, *, env_update=None, drop=()):
             chunks.append(data)
         proc.wait(timeout=PTY_TIMEOUT_S)
         out = b"".join(chunks).decode("utf-8", errors="replace")
-        err = proc.stderr.read().decode("utf-8", errors="replace")
-        return proc.returncode, out, err
+        return proc.returncode, out, ""
     finally:
         if slave_open:
             os.close(slave)
@@ -152,7 +156,7 @@ def read_stub(out):
     return pwd, lines[1:]
 
 
-def test_help_exit0_mentions_guide():
+def test_help_exit0_lists_usage_flags():
     r = run(["--help"])
     assert r.returncode == 0
     assert "--guide" in r.stdout
@@ -173,6 +177,7 @@ def test_guide_exit0_and_content():
 
 
 def test_guide_never_prints_token():
+    # Guards a future regression: the script must never read or print the token.
     r = run(["--guide"], env_update={"WOKWI_CLI_TOKEN": TOKEN})
     assert r.returncode == 0
     assert TOKEN not in r.stdout
@@ -314,6 +319,7 @@ def test_bad_arguments_exit2(args, tmp_path):
         ["--p", "4001"],
         ["--s"],
         ["--text-log", "/existing"],
+        ["--cmd-out", "/tmp/x"],
     ],
 )
 def test_reserved_passthrough_refused(passthrough, tmp_path):
@@ -380,7 +386,7 @@ def test_dangling_symlink_record_exits1_without_overwrite(tmp_path):
     assert rec.is_symlink()
 
 
-def test_dangling_symlink_record_with_overwrite_reaches_bridge(tmp_path):
+def test_dangling_symlink_record_with_overwrite_exits1(tmp_path):
     path, out = make_stub_mamba(tmp_path)
     fw = make_fw(tmp_path)
     rec = tmp_path / "dangling.csv"
@@ -390,8 +396,34 @@ def test_dangling_symlink_record_with_overwrite_reaches_bridge(tmp_path):
         path=path,
         env_update={"FW_DIR": str(fw), "STUB_OUT": str(out)},
     )
-    assert r.returncode == STUB_EXIT
-    assert out.exists()
+    assert r.returncode == 1
+    assert "FATAL" in r.stderr
+    assert "symlink" in r.stderr
+    assert not out.exists()
+    assert rec.is_symlink()
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+def test_symlink_to_regular_file_refused_and_target_unchanged(overwrite, tmp_path):
+    path, out = make_stub_mamba(tmp_path)
+    fw = make_fw(tmp_path)
+    target = tmp_path / "target.csv"
+    target.write_text("keep me\n")
+    rec = tmp_path / "link.csv"
+    os.symlink(target, rec)
+    args = ["--record", str(rec)]
+    if overwrite:
+        args = ["--overwrite", *args]
+    r = run(
+        args,
+        path=path,
+        env_update={"FW_DIR": str(fw), "STUB_OUT": str(out)},
+    )
+    assert r.returncode == 1
+    assert "symlink" in r.stderr
+    assert not out.exists()
+    assert target.read_text() == "keep me\n"
+    assert rec.is_symlink()
 
 
 def test_overwrite_reaches_bridge_with_passthrough(tmp_path):
