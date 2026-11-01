@@ -54,7 +54,7 @@ def run(args, *, env_update=None, path=None, cwd=None, drop=()):
 def run_on_pty(args, *, env_update=None, drop=()):
     """Run the script with stdout and stderr on a pty; stderr is merged into out.
 
-    Returns (rc, out, ""). Merging stderr into the pty means no pipe can block.
+    Returns (rc, out). Merging stderr into the pty means no pipe can block.
     """
     if pty is None:
         pytest.skip("pty module unavailable")
@@ -99,7 +99,7 @@ def run_on_pty(args, *, env_update=None, drop=()):
             chunks.append(data)
         proc.wait(timeout=PTY_TIMEOUT_S)
         out = b"".join(chunks).decode("utf-8", errors="replace")
-        return proc.returncode, out, ""
+        return proc.returncode, out
     finally:
         if slave_open:
             os.close(slave)
@@ -163,6 +163,7 @@ def test_help_exit0_lists_usage_flags():
     assert "--opt=value" in r.stdout
     assert "--stdin" in r.stdout
     assert "--text-log" in r.stdout
+    assert "use at least 3" in r.stdout
 
 
 def test_guide_exit0_and_content():
@@ -199,20 +200,20 @@ def test_guide_wins_over_dry_run():
 
 
 def test_guide_colour_on_pty_when_no_color_unset():
-    rc, out, _ = run_on_pty(["--guide"], drop=("NO_COLOR",))
+    rc, out = run_on_pty(["--guide"], drop=("NO_COLOR",))
     assert rc == 0
     assert "\x1b[1;36m" in out
     assert "\x1b[32m" in out
 
 
 def test_guide_no_escape_on_pty_when_no_color_set():
-    rc, out, _ = run_on_pty(["--guide"], env_update={"NO_COLOR": "1"})
+    rc, out = run_on_pty(["--guide"], env_update={"NO_COLOR": "1"})
     assert rc == 0
     assert "\x1b" not in out
 
 
 def test_guide_colour_on_pty_when_no_color_empty():
-    rc, out, _ = run_on_pty(["--guide"], env_update={"NO_COLOR": ""})
+    rc, out = run_on_pty(["--guide"], env_update={"NO_COLOR": ""})
     assert rc == 0
     assert "\x1b[1;36m" in out
 
@@ -267,15 +268,15 @@ def test_dry_run_relative_record_resolves_against_caller_cwd(tmp_path):
         cwd=str(tmp_path),
     )
     assert r.returncode == 0
-    expected = Path(tmp_path).resolve() / "rel.csv"
-    assert shlex.quote(str(expected)) in r.stdout
+    expected = os.path.realpath(tmp_path / "rel.csv")
+    assert shlex.quote(expected) in r.stdout
 
 
 def test_dry_run_default_fw_dir_derived_from_script():
     r = run(["--dry-run"], drop=("FW_DIR",))
     assert r.returncode == 0
-    expected = REPO_FW / "poc" / "esp32-dof" / "monitor"
-    assert shlex.quote(str(expected)) in r.stdout
+    expected = os.path.realpath(REPO_FW / "poc" / "esp32-dof" / "monitor")
+    assert shlex.quote(expected) in r.stdout
 
 
 @pytest.mark.parametrize(
@@ -404,6 +405,47 @@ def test_dangling_symlink_record_with_overwrite_exits1(tmp_path):
 
 
 @pytest.mark.parametrize("overwrite", [False, True])
+def test_record_is_directory_exits1(overwrite, tmp_path):
+    path, out = make_stub_mamba(tmp_path)
+    fw = make_fw(tmp_path)
+    rec = tmp_path / "adir"
+    rec.mkdir()
+    args = ["--record", str(rec)]
+    if overwrite:
+        args = ["--overwrite", *args]
+    r = run(
+        args,
+        path=path,
+        env_update={"FW_DIR": str(fw), "STUB_OUT": str(out)},
+    )
+    assert r.returncode == 1
+    assert "not a regular file" in r.stderr
+    assert not out.exists()
+    assert rec.is_dir()
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+def test_record_is_fifo_exits1(overwrite, tmp_path):
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("os.mkfifo unavailable")
+    path, out = make_stub_mamba(tmp_path)
+    fw = make_fw(tmp_path)
+    rec = tmp_path / "fifo.csv"
+    os.mkfifo(rec)
+    args = ["--record", str(rec)]
+    if overwrite:
+        args = ["--overwrite", *args]
+    r = run(
+        args,
+        path=path,
+        env_update={"FW_DIR": str(fw), "STUB_OUT": str(out)},
+    )
+    assert r.returncode == 1
+    assert "not a regular file" in r.stderr
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
 def test_symlink_to_regular_file_refused_and_target_unchanged(overwrite, tmp_path):
     path, out = make_stub_mamba(tmp_path)
     fw = make_fw(tmp_path)
@@ -438,7 +480,7 @@ def test_overwrite_reaches_bridge_with_passthrough(tmp_path):
     )
     assert r.returncode == STUB_EXIT
     pwd, argv = read_stub(out)
-    assert Path(pwd).resolve() == (fw / "poc" / "esp32-dof" / "monitor").resolve()
+    assert os.path.realpath(pwd) == os.path.realpath(fw / "poc" / "esp32-dof" / "monitor")
     assert argv == [
         "run",
         "-a",
@@ -475,7 +517,8 @@ def test_relative_record_real_run_argv_is_absolute(tmp_path):
     assert r.returncode == STUB_EXIT
     _, argv = read_stub(out)
     i = argv.index("--record")
-    assert argv[i + 1] == str(caller.resolve() / "rel.csv")
+    assert os.path.isabs(argv[i + 1])
+    assert os.path.realpath(argv[i + 1]) == os.path.realpath(caller / "rel.csv")
 
 
 @pytest.mark.parametrize(
