@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Tests for the ctrl-wheel bridge command line (ctrl_wheel_bridge.main and
-build_parser), issue FW #454 part 1 (tests first). The CLI is added to
-ctrl_wheel_bridge.py in the next run; these tests pin its contract.
+build_parser), issue FW #454. These tests pin its contract.
 
 CLI contract pinned here:
     exactly one of --port PORT / --stdin; --record CSV (required);
@@ -33,14 +32,16 @@ import socket
 import subprocess
 import sys
 import threading
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ctrl_wheel_bridge import BridgeStats, build_parser, main  # noqa: E402
-from ctrl_wheel_log import COLUMNS  # noqa: E402
+import ctrl_wheel_bridge as cwb  # noqa: E402
+from ctrl_wheel_bridge import BridgeStats, DofSerialError, build_parser, main  # noqa: E402
+from ctrl_wheel_log import COLUMNS, CsvLog  # noqa: E402
 from ctrl_wheel_msg import Whl, format_whl, step_lines  # noqa: E402
 from ctrl_wheel_udp import open_listener  # noqa: E402
 from fake_wheel import FakeWheel  # noqa: E402
@@ -241,6 +242,20 @@ def test_duration_must_be_positive(tmp_path, text):
     _assert_usage_error(_argv(record, 40001, 40002, "--duration", text), record)
 
 
+def test_echo_timeout_10_seconds_accepted():
+    args = build_parser().parse_args(["--stdin", "--record", "out.csv", "--echo-timeout", "10"])
+    assert args.echo_timeout == 10.0
+
+
+@pytest.mark.parametrize("text", ["10.5", "1e9"])
+def test_echo_timeout_above_10_seconds_refused(tmp_path, text):
+    record = tmp_path / "out.csv"
+    with pytest.raises(SystemExit) as exc:
+        build_parser().parse_args(["--stdin", "--record", str(record), "--echo-timeout", text])
+    assert exc.value.code == 2
+    assert not record.exists()
+
+
 # ---------------------------------------------------------------------------
 # --record and --overwrite
 # ---------------------------------------------------------------------------
@@ -323,12 +338,6 @@ class _InterruptedStdin:
     def __next__(self):
         return next(self._gen)
 
-    def readline(self):
-        try:
-            return next(self._gen)
-        except StopIteration:
-            return ""
-
 
 def test_keyboard_interrupt_is_clean_shutdown_returns_0(tmp_path, monkeypatch):
     record = tmp_path / "out.csv"
@@ -338,6 +347,48 @@ def test_keyboard_interrupt_is_clean_shutdown_returns_0(tmp_path, monkeypatch):
     rc = main(_argv(record, cmd_port, echo_port))
 
     assert rc == 0
+    with open(record, newline="", encoding="utf-8") as fh:
+        assert next(csv.reader(fh)) == list(COLUMNS)
+
+
+def test_source_error_mid_run_returns_2_with_summary_and_error(tmp_path, monkeypatch, capsys):
+    record = tmp_path / "source_error.csv"
+    cmd_port, echo_port = _two_free_ports()
+
+    def _failing_source():
+        yield _whl_line(0)
+        raise DofSerialError("'/dev/fake-wheel': read failed: injected")
+
+    monkeypatch.setattr(cwb, "_stdin_lines", _failing_source)
+
+    rc = main(_argv(record, cmd_port, echo_port, "--echo-timeout", "0.05"))
+
+    assert rc == 2
+    err_lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.strip()]
+    assert any("read failed: injected" in ln for ln in err_lines)
+    summaries = [ln for ln in err_lines if ln.startswith("[ctrl_wheel_bridge] summary ")]
+    assert len(summaries) == 1
+    assert re.search(r"whl_lines=1\b", summaries[0])
+    with open(record, newline="", encoding="utf-8") as fh:
+        reader = list(csv.reader(fh))
+    assert reader[0] == list(COLUMNS)
+    assert len(reader) - 1 == 1
+
+
+def test_csv_write_error_returns_2_and_closes_run(tmp_path, monkeypatch, capsys):
+    record = tmp_path / "disk_full.csv"
+    cmd_port, echo_port = _two_free_ports()
+
+    def _disk_full(self, row):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(CsvLog, "write_row", _disk_full)
+    monkeypatch.setattr(cwb, "_stdin_lines", lambda: iter([_whl_line(0)]))
+
+    rc = main(_argv(record, cmd_port, echo_port, "--echo-timeout", "0.05"))
+
+    assert rc == 2
+    assert "No space left on device" in capsys.readouterr().err
     with open(record, newline="", encoding="utf-8") as fh:
         assert next(csv.reader(fh)) == list(COLUMNS)
 
@@ -375,7 +426,7 @@ def test_stdin_end_to_end_logs_rows_and_summary(tmp_path, monkeypatch, capsys):
     err_lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.strip()]
     assert len(err_lines) == 1
     summary = err_lines[0]
-    for field in (f.name for f in BridgeStats.__dataclass_fields__.values()):
+    for field in (f.name for f in fields(BridgeStats)):
         assert field in summary
     assert re.search(r"whl_lines\D*30\b", summary)
     assert re.search(r"bad_lines\D*0\b", summary)
