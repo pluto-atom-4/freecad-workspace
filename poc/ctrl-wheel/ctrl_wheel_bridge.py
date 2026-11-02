@@ -648,11 +648,16 @@ def main(argv: list[str] | None = None) -> int:
 
         relay = Relay(sign=args.sign)
         stop = threading.Event()
+        source_error = None
+        close_error = None
         restore_sigint = _route_sigint(stop)
         try:
             stats = run_bridge(
                 lines, relay, (_LOOPBACK, args.cmd_port), sock, log,
                 duration_s=args.duration, echo_timeout_s=args.echo_timeout, stop_event=stop)
+            # Decide NOW, before the port is closed below: closing it makes the reader thread
+            # fail its next read, and that late failure is a consequence of the shutdown.
+            source_error = stats.source_error
         except KeyboardInterrupt:
             _log("interrupted during shutdown; no summary")
             return 0
@@ -661,13 +666,20 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         finally:
             restore_sigint()
-            log.close()
-            sock.close()
+            try:
+                log.close()
+            except OSError as exc:  # flush on close can fail (for example disk full)
+                close_error = exc
+            finally:
+                sock.close()
     finally:
         if ser is not None:
             _close_quietly(ser)
     _log(f"summary {_summary_text(stats)}")
-    return 2 if stats.source_error is not None else 0
+    if close_error is not None:
+        _log(f"cannot finish --record {args.record!r}: {close_error}")
+        return 2
+    return 2 if source_error is not None else 0
 
 
 if __name__ == "__main__":

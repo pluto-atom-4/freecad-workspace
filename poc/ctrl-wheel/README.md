@@ -11,8 +11,8 @@ Not hardware-validated. No balance claim. The wheel sign is UNVERIFIED. Latency 
 What ran:
 
 - `pytest` in the `esp32-dof` mamba env, over the seven test modules in this directory: `test_ctrl_wheel_msg.py`, `test_ctrl_wheel_udp.py`, `test_ctrl_wheel_relay.py`, `test_ctrl_wheel_fake.py`, `test_ctrl_wheel_log.py`, `test_ctrl_wheel_bridge.py`, `test_ctrl_wheel_bridge_cli.py`.
-- A scratch end-to-end run: `ctrl_wheel_msg` step input, the real `ctrl_wheel_bridge.py` and the other modules here, against a STUB `controller` plant (not Webots). Result: 150 rows, echo velocity 0.500, positive sign. The reported `host_rtt` median of 20.7 ms is the stub's pacing and is NOT a Webots number.
-- Headless Wokwi run of `c3_ctrl_wheel`: two runs of 15 s and 12 s gave 608 and 458 WHL lines, all parsed with `ctrl_wheel_msg.parse_line`. The lines were read from stdout, not over RFC2217.
+- (Self-reported by the author, scratch scripts not committed, not reproducible from this tree.) A scratch end-to-end run: `ctrl_wheel_msg` step input, the real `ctrl_wheel_bridge.py` and the other modules here, against a STUB `controller` plant (not Webots). Result: 150 rows, echo velocity 0.500, positive sign. The reported `host_rtt` median of 20.7 ms is the stub's pacing and is NOT a Webots number.
+- (Self-reported by the author; the captured logs and parse script are not committed here.) Headless Wokwi run of `c3_ctrl_wheel`: two runs of 15 s and 12 s gave 608 and 458 WHL lines, all parsed with `ctrl_wheel_msg.parse_line`. The lines were read from stdout, not over RFC2217.
 
 Not run:
 
@@ -94,7 +94,7 @@ Sign: the controller has a fixed +1. Flip the sign ONLY with the bridge `--sign 
 ## Notes
 
 - The bridge summary field `unmatched_echoes` counts every echo that does not complete a pending row: a repeated echo of a command that already completed, an echo that arrives after `--echo-timeout`, and an echo with a null `cmd_seq_echo` (the controller before its first command). The controller is EXPECTED to echo every 16 ms step while commands arrive every 20 ms (Webots not run, so UNVERIFIED), so a non-zero count is expected in the scratch stub run (it gave 64 of 150).
-- Rows: one per `WHL` line (a line with state 1 or 2 still gets its own stale command and its own row), plus one row per silence episode. The final stale command sent at shutdown is NOT logged, so `cmds_sent` can exceed the row count by one. `cmd_seq` is an unbounded counter (no wrap).
+- Rows (a reordered line that arrives late stays counted as missed): one per `WHL` line (a line with state 1 or 2 still gets its own stale command and its own row), plus one row per silence episode. The final stale command sent at shutdown is NOT logged, so `cmds_sent` can exceed the row count by one. `cmd_seq` is an unbounded counter (no wrap).
 - Exit codes: 0 clean (EOF, duration or Ctrl-C), 2 for a usage error, an unusable CSV or port, a source that fails mid-run, or a CSV write error. An unreachable URL with `--duration` also returns 2 (nothing was opened).
 - `pyserial` is imported at module load, so the bridge needs the esp32-dof env even with `--stdin`.
 - The controller reads ports 5008 and 5007 only. Port 5006 belongs to `servo_wheel_dof`.

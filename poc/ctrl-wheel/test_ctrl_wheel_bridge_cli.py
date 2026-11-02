@@ -485,3 +485,39 @@ def test_script_help_runs_as_program():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_csv_close_error_returns_2_after_summary(tmp_path, monkeypatch, capsys):
+    """log.close() can fail on flush (disk full): rc 2, summary still printed, no traceback."""
+    orig = CsvLog._release
+
+    def bad(self):
+        orig(self)
+        raise OSError(28, "No space left on device (injected at close)")
+
+    monkeypatch.setattr(CsvLog, "_release", bad)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    out = tmp_path / "close.csv"
+    echo_port = _free_port()
+    rc = cwb.main(["--stdin", "--record", str(out), "--cmd-port", str(_free_port()),
+                   "--echo-port", str(echo_port), "--echo-timeout", "0.05"])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "summary" in err
+    assert "cannot finish --record" in err
+
+
+def test_ctrl_c_on_a_real_serial_source_exits_0(tmp_path):
+    """Regression: closing the port at shutdown made the reader thread fail and flipped a clean
+    Ctrl-C into rc 2 about 40% of the time. A pyserial loop:// source stands in for the port."""
+    import signal as _signal
+    for i in range(5):
+        timer = threading.Timer(0.3, lambda: os.kill(os.getpid(), _signal.SIGINT))
+        timer.start()
+        try:
+            rc = cwb.main(["--port", "loop://", "--record", str(tmp_path / f"c{i}.csv"),
+                           "--cmd-port", str(_free_port()), "--echo-port", str(_free_port()),
+                           "--echo-timeout", "0.05"])
+        finally:
+            timer.cancel()
+        assert rc == 0, f"run {i}"
