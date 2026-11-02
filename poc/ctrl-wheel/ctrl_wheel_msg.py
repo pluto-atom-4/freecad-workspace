@@ -5,8 +5,10 @@ step-input generator for the ctrl-wheel POC.
 
 SIM ONLY. The sign convention of the model and raw values is UNVERIFIED.
 The wire format is not validated against any real device or receiver.
-This module must stay in step with the BRC firmware header
-lib/wheel_frame/wheel_frame.h (format, field order, limits, raw conversion).
+This module must stay in step with the BRC header lib/wheel_frame/wheel_frame.h
+(format, field order, limits, raw conversion). That header is from
+pluto-atom-4/balancing-robot-controller PR #249 (issue #240). The PR is NOT
+merged yet, so the header does not exist on main.
 
 Line format (ASCII, one line per sample):
     WHL,<seq>,<t_us>,<model %.6f>,<raw>,<state>*<HH>\\n
@@ -15,7 +17,9 @@ Protocol details:
 - seq: uint16 sequence number, wraps at 65536 (format takes seq mod 65536)
 - t_us: uint32 device microseconds (0 .. 2^32-1)
 - model: model wheel velocity in rad/s, %.6f; non-finite formats as 0.000000
-- raw: Dynamixel goal velocity raw units (0.229 rpm per unit), capped at +-125
+- raw: Dynamixel goal velocity raw units (0.229 rpm per unit). The wire accepts
+  any int32 value (-2^31 .. 2^31-1). The +-125 clamp (RAW_CAP) is the
+  firmware's own step cap and is applied only by step_lines, not by the wire.
 - state: 0, 1 or 2
 - HH: 2-digit UPPERCASE hex XOR checksum of the body (WHL up to the *)
 - "-0.000000" is normalised to "0.000000"
@@ -40,8 +44,11 @@ from dataclasses import dataclass
 PREFIX = "WHL"
 SEQ_MOD = 65536
 T_US_MAX = 2**32 - 1
+INT32_MIN = -(2**31)
+INT32_MAX = 2**31 - 1
 STATES = (0, 1, 2)
 FIELD_COUNT = 6
+# Firmware's own step cap (SIM ONLY). step_lines clamps to it; the wire does not.
 RAW_CAP = 125
 RAW_RPM_PER_UNIT = 0.229
 
@@ -77,6 +84,20 @@ def checksum(body: str) -> int:
 def _check_int(name: str, value: object) -> None:
     if isinstance(value, bool) or not isinstance(value, int):
         raise WhlError(f"{name} must be int, got {value!r}")
+
+
+def _check_int32(name: str, value: int) -> None:
+    if not (INT32_MIN <= value <= INT32_MAX):
+        raise WhlError(f"{name} out of int32 range [{INT32_MIN}, {INT32_MAX}], got {value}")
+
+
+def _model_to_float(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise WhlError(f"model_rad_s must be a real number, got {value!r}")
+    try:
+        return float(value)
+    except OverflowError:
+        raise WhlError(f"model_rad_s out of float range, got {value!r}")
 
 
 def _parse_uint(name: str, tok: str) -> int:
@@ -115,12 +136,13 @@ def format_whl(w: Whl) -> str:
 
     if not (0 <= w.t_us <= T_US_MAX):
         raise WhlError(f"t_us out of range [0, {T_US_MAX}], got {w.t_us}")
+    _check_int32("raw", w.raw)
     if w.state not in STATES:
         raise WhlError(f"state must be one of {STATES}, got {w.state}")
 
     seq = w.seq % SEQ_MOD
 
-    model = float(w.model_rad_s)
+    model = _model_to_float(w.model_rad_s)
     if not math.isfinite(model):
         model = 0.0
     model_str = f"{model:.6f}"
@@ -137,7 +159,7 @@ def parse_line(line: str) -> Whl:
 
     Float tokens are lenient (exponent, leading '+') but must be finite and
     free of whitespace and underscores. Integer tokens are checked with an
-    explicit pattern, not int(), so "1_0" is rejected.
+    explicit pattern, not int(), so "1_0" is rejected. raw must fit int32.
 
     Raises:
         WhlError: on any malformed, mis-checksummed or out-of-range line.
@@ -177,6 +199,7 @@ def parse_line(line: str) -> Whl:
 
     model = _parse_float("model_rad_s", fields[3])
     raw = _parse_int("raw", fields[4])
+    _check_int32("raw", raw)
 
     state = _parse_uint("state", fields[5])
     if state not in STATES:
@@ -186,9 +209,9 @@ def parse_line(line: str) -> Whl:
 
 
 def _raw_for(value_rad_s: float) -> int:
-    """rad/s -> Dynamixel raw velocity, clamped to +-RAW_CAP."""
-    raw = round(value_rad_s * 60.0 / (2.0 * math.pi) / RAW_RPM_PER_UNIT)
-    return max(-RAW_CAP, min(RAW_CAP, raw))
+    """rad/s -> Dynamixel raw velocity, clamped to +-RAW_CAP before rounding."""
+    raw_f = value_rad_s * 60.0 / (2.0 * math.pi) / RAW_RPM_PER_UNIT
+    return round(max(-RAW_CAP, min(RAW_CAP, raw_f)))
 
 
 def step_lines(
@@ -205,19 +228,32 @@ def step_lines(
 
     State is 0. seq counts up from start_seq (format wraps it at 65536).
     t_us steps by round(1e6 / rate_hz) and wraps at 2^32 like the device.
+    A step below 1 us is rejected (WhlError). raw is the model value converted
+    to raw units and clamped to +-RAW_CAP (firmware cap).
     When realtime is True, each line is released against the injected clock
     by sleeping with the injected sleep.
     """
     value = float(value_rad_s)
     if not math.isfinite(value):
         raise WhlError(f"step value must be finite, got {value_rad_s!r}")
+    if isinstance(start_seq, bool) or not isinstance(start_seq, int):
+        raise WhlError(f"start_seq must be int, got {start_seq!r}")
     if not (math.isfinite(rate_hz) and rate_hz > 0):
         raise WhlError(f"rate must be a positive finite number, got {rate_hz!r}")
     if not (math.isfinite(seconds) and seconds >= 0):
         raise WhlError(f"seconds must be a non-negative finite number, got {seconds!r}")
 
-    count = round(seconds * rate_hz)
-    t_step = round(1e6 / rate_hz)
+    count_f = seconds * rate_hz
+    if not math.isfinite(count_f):
+        raise WhlError(f"seconds * rate overflows, got {seconds!r} * {rate_hz!r}")
+    count = round(count_f)
+
+    t_step_f = 1e6 / rate_hz
+    if not math.isfinite(t_step_f) or round(t_step_f) < 1:
+        raise WhlError(
+            f"rate {rate_hz!r} Hz gives a t_us step below 1 us (1e6/rate = {t_step_f!r})"
+        )
+    t_step = round(t_step_f)
     period = 1.0 / rate_hz
     raw = _raw_for(value)
 
@@ -264,6 +300,8 @@ def main(argv: list[str] | None = None) -> int:
     except WhlError as exc:
         print(f"ctrl_wheel_msg: {exc}", file=sys.stderr)
         return 2
+    except BrokenPipeError:
+        return 0
     return 0
 
 

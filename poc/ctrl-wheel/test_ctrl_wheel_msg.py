@@ -2,8 +2,8 @@
 """
 Unit tests for the WHL wheel-velocity line protocol (ctrl_wheel_msg).
 
-Pure Python / pytest, stdlib only. The module under test is a flat module in
-poc/ctrl-wheel and is imported by bare name.
+Pure Python, needs pytest. The module under test is a flat module in
+poc/ctrl-wheel and is imported by bare name. SIM ONLY.
 
 Usage:
     cd poc/ctrl-wheel
@@ -104,12 +104,6 @@ class TestFormat:
     def test_output_ends_with_newline(self):
         assert format_whl(Whl(0, 0, 0.0, 0, 0)).endswith("\n")
 
-    def test_hex_uppercase(self):
-        line = format_whl(Whl(0, 0, 0.0, 0, 0))
-        hh = line[line.rfind("*") + 1:line.rfind("*") + 3]
-        assert len(hh) == 2
-        assert all(c in "0123456789ABCDEF" for c in hh)
-
     def test_negative_zero_normalized(self):
         line = format_whl(Whl(0, 0, -0.0, 0, 0))
         assert "-0.000000" not in line
@@ -127,6 +121,11 @@ class TestFormat:
         assert "nan" not in line.lower()
         assert "inf" not in line.lower()
         assert parse_line(line).model_rad_s == 0.0
+
+    @pytest.mark.parametrize("bad", [True, "0.5", None, 10**400])
+    def test_non_real_model_rejected(self, bad):
+        with pytest.raises(WhlError):
+            format_whl(Whl(0, 0, bad, 0, 0))
 
     def test_seq_taken_mod_65536(self):
         line = format_whl(Whl(65536, 0, 0.0, 0, 0))
@@ -160,6 +159,15 @@ class TestFormat:
         with pytest.raises(WhlError):
             format_whl(Whl(**base))
 
+    @pytest.mark.parametrize("raw", [500, -500, 2**31 - 1, -(2**31)])
+    def test_raw_int32_range_accepted(self, raw):
+        assert parse_line(format_whl(Whl(0, 0, 0.0, raw, 0))).raw == raw
+
+    @pytest.mark.parametrize("raw", [2**31, -(2**31) - 1])
+    def test_raw_outside_int32_rejected_in_format(self, raw):
+        with pytest.raises(WhlError):
+            format_whl(Whl(0, 0, 0.0, raw, 0))
+
 
 class TestParse:
     """Test: parse_line accepts valid lines and rejects malformed ones."""
@@ -168,6 +176,12 @@ class TestParse:
     def test_golden_lines_parse(self, w, expected):
         assert parse_line(expected) == w
 
+    @pytest.mark.parametrize("ending", ["\n", "\r\n", ""], ids=["lf", "crlf", "none"])
+    @pytest.mark.parametrize("w,expected", GOLDEN, ids=["basic", "max_min", "zero", "neg_tiny"])
+    def test_line_endings_parse(self, w, expected, ending):
+        line = expected.rstrip("\n") + ending
+        assert parse_line(line) == w
+
     def test_round_trip(self):
         w = Whl(seq=1234, t_us=987654321, model_rad_s=-0.5, raw=-21, state=1)
         assert parse_line(format_whl(w)) == w
@@ -175,14 +189,6 @@ class TestParse:
     def test_round_trip_zero(self):
         w = Whl(seq=0, t_us=0, model_rad_s=0.0, raw=0, state=0)
         assert parse_line(format_whl(w)) == w
-
-    def test_crlf_equal_to_lf(self):
-        line_lf = GOLDEN[0][1]
-        line_crlf = line_lf.rstrip("\n") + "\r\n"
-        assert parse_line(line_crlf) == parse_line(line_lf)
-
-    def test_bare_lf_parses(self):
-        assert parse_line(GOLDEN[2][1]).state == 1
 
     def test_missing_star_rejected(self):
         with pytest.raises(WhlError):
@@ -246,6 +252,12 @@ class TestParse:
         with pytest.raises(WhlError):
             parse_line(_with_checksum(body))
 
+    @pytest.mark.parametrize("raw", ["2147483648", "-2147483649"])
+    def test_raw_outside_int32_rejected_in_parse(self, raw):
+        body = f"WHL,1,20000,0.500000,{raw},0"
+        with pytest.raises(WhlError):
+            parse_line(_with_checksum(body))
+
     @pytest.mark.parametrize("state", ["3", "-1"])
     def test_state_out_of_set_rejected(self, state):
         body = f"WHL,1,20000,0.500000,21,{state}"
@@ -286,10 +298,7 @@ class TestParse:
 
 
 class TestSeqWrap:
-    """Test: seq wraps at 65536."""
-
-    def test_format_wraps_65536_to_zero(self):
-        assert parse_line(format_whl(Whl(65536, 0, 0.0, 0, 0))).seq == 0
+    """Test: step_lines seq wraps at 65536."""
 
     def test_step_lines_wrap_from_65535(self):
         lines = list(step_lines(1.0, 0.1, rate_hz=50.0, realtime=False, start_seq=65535))
@@ -298,7 +307,7 @@ class TestSeqWrap:
 
 
 class TestStepLines:
-    """Test: step_lines generator contents and pacing."""
+    """Test: step_lines generator contents, clamping, validation and pacing."""
 
     def test_count_five_seconds_at_50hz(self):
         lines = list(step_lines(1.0, 5.0, realtime=False))
@@ -323,9 +332,25 @@ class TestStepLines:
         t = [parse_line(line).t_us for line in lines]
         assert t == [i * 10000 for i in range(10)]
 
+    def test_t_us_wraps_mod_2_32(self):
+        # rate 1 Hz -> t step 1_000_000 us. Line i has t = (i * 1e6) mod 2**32,
+        # with 2**32 = 4294967296.
+        #   i=4293 -> 4293000000 (below 2**32, unchanged)
+        #   i=4294 -> 4294000000 (below 2**32, unchanged)
+        #   i=4295 -> 4295000000 - 4294967296 = 32704
+        lines = list(step_lines(0.0, 4296.0, rate_hz=1.0, realtime=False))
+        assert len(lines) == 4296
+        t = [parse_line(lines[i]).t_us for i in (4293, 4294, 4295)]
+        assert t == [4293000000, 4294000000, 32704]
+
     def test_start_seq_offset(self):
         lines = list(step_lines(0.0, 0.1, realtime=False, start_seq=100))
         assert [parse_line(line).seq for line in lines] == [100, 101, 102, 103, 104]
+
+    @pytest.mark.parametrize("start_seq", [True, 1.0, "0"])
+    def test_start_seq_non_int_rejected(self, start_seq):
+        with pytest.raises(WhlError):
+            list(step_lines(0.0, 0.1, realtime=False, start_seq=start_seq))
 
     @pytest.mark.parametrize(
         "value,raw",
@@ -335,6 +360,23 @@ class TestStepLines:
         lines = list(step_lines(value, 0.02, realtime=False))
         assert len(lines) == 1
         assert parse_line(lines[0]).raw == raw
+
+    @pytest.mark.parametrize("value,raw", [(1e308, 125), (-1e308, -125)])
+    def test_huge_finite_value_clamps_without_overflow(self, value, raw):
+        # value * 60 overflows to inf; the clamp must happen before round().
+        lines = list(step_lines(value, 0.02, realtime=False))
+        assert len(lines) == 1
+        assert parse_line(lines[0]).raw == raw
+
+    @pytest.mark.parametrize("rate", [1e7, 1e300])
+    def test_t_step_below_one_us_rejected(self, rate):
+        # round(1e6 / rate) == 0 for these rates; must raise before any line.
+        with pytest.raises(WhlError):
+            list(step_lines(0.0, 0.1, rate_hz=rate, realtime=False))
+
+    def test_t_step_of_one_us_accepted(self):
+        lines = list(step_lines(0.0, 5e-6, rate_hz=1e6, realtime=False))
+        assert [parse_line(line).t_us for line in lines] == [0, 1, 2, 3, 4]
 
     def test_realtime_false_never_sleeps(self):
         sleeps = []
@@ -351,19 +393,21 @@ class TestStepLines:
         assert sleeps == []
 
     def test_realtime_true_calls_injected_sleep(self):
+        # Clock frozen at 0 and 50 Hz: line i is due at i * 0.02 s. Line 0 has
+        # delay 0 (not > 0, no sleep), so the sleeps are for lines 1..4.
         sleeps = []
         lines = list(
             step_lines(
                 1.0,
                 0.1,
+                rate_hz=50.0,
                 realtime=True,
                 clock=lambda: 0.0,
-                sleep=lambda s: sleeps.append(s),
+                sleep=sleeps.append,
             )
         )
         assert len(lines) == 5
-        assert len(sleeps) >= 1
-        assert all(math.isfinite(s) for s in sleeps)
+        assert sleeps == pytest.approx([0.02, 0.04, 0.06, 0.08])
 
 
 class TestMain:
@@ -385,6 +429,34 @@ class TestMain:
         out_lines = capsys.readouterr().out.splitlines(keepends=True)
         assert len(out_lines) == 10
         assert parse_line(out_lines[1]).t_us == 10000
+
+    def test_huge_step_returns_zero(self, capsys):
+        rc = main(["--step", "1e308", "--seconds", "0.1", "--no-sleep"])
+        assert rc == 0
+        out_lines = capsys.readouterr().out.splitlines(keepends=True)
+        assert len(out_lines) == 5
+        assert all(parse_line(line).raw == 125 for line in out_lines)
+
+    def test_rate_zero_exits_2(self, capsys):
+        rc = main(["--step", "1.0", "--seconds", "0.1", "--rate", "0", "--no-sleep"])
+        assert rc == 2
+        assert capsys.readouterr().err != ""
+
+    def test_step_nan_exits_2(self, capsys):
+        rc = main(["--step", "nan", "--seconds", "0.1", "--no-sleep"])
+        assert rc == 2
+        assert capsys.readouterr().err != ""
+
+    def test_broken_pipe_returns_zero(self, monkeypatch):
+        class _ClosedPipe:
+            def write(self, _text):
+                raise BrokenPipeError
+
+            def flush(self):
+                raise BrokenPipeError
+
+        monkeypatch.setattr(sys, "stdout", _ClosedPipe())
+        assert main(["--step", "0.5", "--seconds", "0.1", "--no-sleep"]) == 0
 
     def test_default_is_realtime(self, monkeypatch):
         calls = []
