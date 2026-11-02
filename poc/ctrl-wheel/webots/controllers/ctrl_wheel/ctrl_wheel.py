@@ -5,12 +5,14 @@ ctrl_wheel -- Webots controller for the ctrl-wheel relay simulation.
 SIM ONLY. Nothing here is validated on hardware, and it makes no balance claim.
 The sign of the wheel against the firmware is UNVERIFIED.
 
-State after the strip step (issue #455, sub-issue of #446): this file is the
-copied servo_wheel_dof controller with the telemetry, overlay, odometry and
-upright-pose code removed. It binds a UDP socket and prints the wheel sensor
-reading each step. It does NOT yet drive the motor and does NOT yet send
-anything back; those come in the next tasks (#456 setVelocity and the stale
-stop, #457 the sensor echo).
+State after #456 (sub-issue of #446): this file is the copied servo_wheel_dof
+controller with the telemetry, overlay, odometry and upright-pose code removed.
+It binds UDP CMD_PORT, drains the command socket each step, keeps the latest
+valid command and drives the motor by setVelocity. It sends 0 rad/s when no
+command has arrived, when the latest command carries stale=1, or when the latest
+command is STALE_SIM_S or more old in simulated time. A non-finite sensor read
+also stops the motor (velocity 0) and skips that step's log line. The echo back to the bridge is still NOT implemented (next
+task #457). Runtime behaviour in Webots is NOT CHECKED.
 
 Only Webots-specific import is `controller`; the sensor maths lives in
 sensor_read.py so it stays importable outside Webots.
@@ -20,7 +22,8 @@ Device names (must match ctrl_wheel.wbt, case-sensitive):
     PositionSensor:  "wheel_sensor"
 """
 
-import os
+import json
+import math
 import socket
 import sys
 from pathlib import Path
@@ -29,14 +32,16 @@ from controller import Robot
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from sensor_read import read_sensor  # noqa: E402
+from sensor_read import SensorReadError, read_sensor  # noqa: E402
 
 HOST = "127.0.0.1"
-DEFAULT_PORT = 5006  # to be changed to 5008 in #456; 5006 belongs to servo_wheel_dof
-PORT_ENV = "SWD_UDP_PORT"
+CMD_PORT = 5008  # fixed command port; 5006 belongs to servo_wheel_dof, never use it
 MOTOR_NAME = "wheel_motor"
 SENSOR_NAME = "wheel_sensor"
 TAG = "ctrl_wheel"
+CLAMP_RAD_S = 3.0  # UNVERIFIED: symmetric clamp on the commanded wheel velocity
+STALE_SIM_S = 0.2  # simulated seconds without a fresh command before v = 0
+SIGN = 1  # UNVERIFIED sign against the firmware; the flip lives ONLY in the bridge --sign flag, never flip both
 
 
 def _say(msg: str, err: bool = False) -> None:
@@ -51,18 +56,44 @@ def _log(t_s: float, angle_rad: float, velocity_rad_s) -> None:
           flush=True)
 
 
-def _read_port() -> int:
-    """Return the UDP port from SWD_UDP_PORT (default DEFAULT_PORT); ValueError if bad."""
-    raw = os.environ.get(PORT_ENV)
-    if raw is None or raw == "":
-        return DEFAULT_PORT
+def _reject_constant(name: str):
+    raise ValueError(f"non-finite JSON constant {name}")
+
+
+def _no_duplicate_keys(pairs):
+    # Same strictness as the bridge decoder (ctrl_wheel_udp.py): a repeated key is invalid.
+    obj = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ValueError(f"duplicate key {key!r}")
+        obj[key] = value
+    return obj
+
+
+def _parse_cmd(data: bytes):
+    """Return (cmd_seq, wheel_rad_s, stale) for a valid datagram, else None."""
     try:
-        port = int(raw)
-    except ValueError:
-        raise ValueError(f"{PORT_ENV}={raw!r} is not an integer") from None
-    if not 1 <= port <= 65535:
-        raise ValueError(f"{PORT_ENV}={port} is outside 1..65535")
-    return port
+        obj = json.loads(data.decode("utf-8"), parse_constant=_reject_constant,
+                         object_pairs_hook=_no_duplicate_keys)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(obj, dict) or set(obj.keys()) != {"cmd_seq", "wheel_rad_s", "stale"}:
+        return None
+    seq = obj["cmd_seq"]
+    wheel = obj["wheel_rad_s"]
+    stale = obj["stale"]
+    if type(seq) is not int or seq < 0:
+        return None
+    if type(wheel) not in (int, float):
+        return None
+    if type(stale) is not int or stale not in (0, 1):
+        return None
+    try:
+        if not math.isfinite(float(wheel)):
+            return None
+    except OverflowError:
+        return None
+    return seq, wheel, stale
 
 
 def _open_socket(port: int) -> socket.socket:
@@ -79,14 +110,8 @@ def _open_socket(port: int) -> socket.socket:
 
 
 def main() -> int:
-    try:
-        port = _read_port()
-    except ValueError as exc:
-        _say(f"ERROR: {exc}", err=True)
-        return 1
-
-    # Plain Robot: nothing here needs Supervisor powers (works with the world's
-    # supervisor flag either way).
+    # Plain Robot: nothing here needs Supervisor powers (expected to work with the
+    # world's supervisor flag either way; NOT CHECKED in Webots).
     robot = Robot()
     timestep = int(robot.getBasicTimeStep())
 
@@ -100,32 +125,73 @@ def main() -> int:
         return 1
 
     try:
-        sock = _open_socket(port)
+        sock = _open_socket(CMD_PORT)
     except OSError as exc:
         _say(
-            f"ERROR: cannot bind UDP {HOST}:{port} ({exc}). "
+            f"ERROR: cannot bind UDP {HOST}:{CMD_PORT} ({exc}). "
             "Is another ctrl_wheel / Webots instance already running?",
             err=True,
         )
         return 1
-    _say(f"listening on {HOST}:{port}")
+    _say(f"listening on {HOST}:{CMD_PORT}")
 
     # PositionSensor must be enabled at the sim timestep, or getValue() -> nan.
     sensor.enable(timestep)
 
+    # Velocity mode. NOT CHECKED in Webots: the position-infinity then
+    # setVelocity sequence is the standard RotationalMotor idiom, not run here.
+    motor.setPosition(float("inf"))
+    motor.setVelocity(0.0)
+
     angle_prev_rad = None
     t_prev_s = None
+    last_cmd_seq = None
+    last_cmd_wheel = None
+    last_cmd_stale = None
+    last_msg_sim_t = None
+    ignored_count = 0
 
     try:
         while robot.step(timestep) != -1:
             t_s = robot.getTime()
 
-            reading = read_sensor(
-                t_s=t_s,
-                angle_source=sensor.getValue,
-                angle_prev_rad=angle_prev_rad,
-                t_prev_s=t_prev_s,
-            )
+            # Drain every pending datagram; keep only the latest valid one.
+            while True:
+                try:
+                    data, _addr = sock.recvfrom(4096)
+                except OSError:  # includes BlockingIOError: nothing more pending
+                    break
+                parsed = _parse_cmd(data)
+                if parsed is None:
+                    ignored_count += 1
+                    if ignored_count <= 3:
+                        _say(f"ignored invalid datagram #{ignored_count} "
+                             f"({len(data)} bytes)")
+                    continue
+                last_cmd_seq, last_cmd_wheel, last_cmd_stale = parsed
+                last_msg_sim_t = t_s
+
+            # Stale or missing command -> stop. Sim time, not wall time.
+            if (last_cmd_wheel is None or last_cmd_stale == 1
+                    or (t_s - last_msg_sim_t) >= STALE_SIM_S):
+                v = 0.0
+            else:
+                v = max(-CLAMP_RAD_S, min(CLAMP_RAD_S, SIGN * last_cmd_wheel))
+            motor.setVelocity(v)
+
+            try:
+                reading = read_sensor(
+                    t_s=t_s,
+                    angle_source=sensor.getValue,
+                    angle_prev_rad=angle_prev_rad,
+                    t_prev_s=t_prev_s,
+                )
+            except SensorReadError as exc:
+                # Never leave the last velocity latched on a bad read.
+                motor.setVelocity(0.0)
+                _say(f"ERROR: sensor read failed ({exc}); velocity 0, step skipped",
+                     err=True)
+                continue
             _log(reading.t_s, reading.angle_rad, reading.velocity_rad_s)
 
             angle_prev_rad = reading.angle_rad
