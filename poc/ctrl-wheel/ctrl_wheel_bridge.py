@@ -4,8 +4,19 @@ ctrl-wheel bridge (issue FW #453, part 2): reads WHL lines from a serial source,
 relays the wheel velocity to the headless ctrl_wheel stand-in over UDP and logs
 one CSV row per command (ctrl_wheel_log.COLUMNS).
 
+Command line (FW #454): build_parser() and main(argv) -> int. Run from poc/ctrl-wheel:
+    python3 -m ctrl_wheel_msg --step 0.5 --seconds 5 | python3 ctrl_wheel_bridge.py --stdin --record ac1.csv
+    python3 ctrl_wheel_bridge.py --port rfc2217://localhost:4001 --record ac1.csv
+Exactly one of --port / --stdin. --record is required; an existing file is refused
+unless --overwrite. Exit codes: 0 run finished (EOF or Ctrl-C), 2 usage error, a failed
+source (at open, or mid-run after the summary), a CSV write error or an echo socket error.
+Ctrl-C ends the run through stop_event and prints the summary.
+An unreachable URL with --duration returns 2 on purpose: nothing was ever opened, so the
+run is a failed source, not a clean finish.
+
 SIM ONLY. The bridge is a relay, not a control loop, and makes no balance claim.
-The wheel sign is UNVERIFIED; it is flipped only through the Relay sign argument.
+The wheel sign is UNVERIFIED; it is flipped only through the Relay sign argument,
+which the CLI exposes as --sign (the only sign flip in the CLI).
 Latency is UNMEASURED: host_rtt_ms is wall time, not link latency.
 
 Copied, not imported (owner decision: no import across directories). Source is
@@ -25,19 +36,32 @@ poc/esp32-dof/monitor/dof_serial.py in this repo:
 
 from __future__ import annotations
 
+import argparse
 import math
 import queue
+import signal
 import socket
 import sys
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 import serial
 
+from ctrl_wheel_log import CsvLog
 from ctrl_wheel_msg import SEQ_MOD, WhlError, parse_line
-from ctrl_wheel_udp import UdpMsgError, clamp, decode_echo, drain_all, encode_cmd
+from ctrl_wheel_relay import Relay
+from ctrl_wheel_udp import (
+    PORT_CMD,
+    PORT_ECHO,
+    UdpMsgError,
+    clamp,
+    decode_echo,
+    drain_all,
+    encode_cmd,
+    open_listener,
+)
 
 _MAX_BUF_BYTES = 4096
 _READ_CHUNK = 4096
@@ -63,8 +87,9 @@ class BridgeStats:
     stale_cmds: int = 0
 
     def __post_init__(self) -> None:
-        # Not a dataclass field: the pinned field list has no send-error column.
+        # Not dataclass fields: the pinned field list has no send-error or source-error column.
         self.send_errors = 0
+        self.source_error: str | None = None  # text of a line source error that ended the run
 
 
 @dataclass
@@ -126,14 +151,16 @@ def _open_url_waiting(port: str, baud: int, timeout_s: float, deadline: float | 
         time.sleep(max(0.0, min(_RECONNECT_DELAY_S, limit - now)))
 
 
-def _serial_gen(port: str, baud: int, timeout_s: float, max_duration_s: float | None) -> Iterator[str]:
-    deadline = None if max_duration_s is None else time.monotonic() + max_duration_s
+def _open_serial(port: str, baud: int, timeout_s: float, deadline: float | None):
+    # Opens now. Device paths raise DofSerialError at once. URL ports return None
+    # when deadline passes first, and raise DofSerialError after _URL_WAIT_CAP_S.
     if _is_url(port):
-        ser = _open_url_waiting(port, baud, timeout_s, deadline)
-        if ser is None:
-            return
-    else:
-        ser = _open_first(port, baud, timeout_s)
+        return _open_url_waiting(port, baud, timeout_s, deadline)
+    return _open_first(port, baud, timeout_s)
+
+
+def _read_serial(ser, port: str, deadline: float | None) -> Iterator[str]:
+    # Owns ser: closed when the generator finishes or is closed.
     buf = bytearray()
     synced = False  # discard through first "\n" after open
     try:
@@ -168,6 +195,14 @@ def _serial_gen(port: str, baud: int, timeout_s: float, max_duration_s: float | 
         _close_quietly(ser)
 
 
+def _serial_gen(port: str, baud: int, timeout_s: float, max_duration_s: float | None) -> Iterator[str]:
+    deadline = None if max_duration_s is None else time.monotonic() + max_duration_s
+    ser = _open_serial(port, baud, timeout_s, deadline)
+    if ser is None:
+        return
+    yield from _read_serial(ser, port, deadline)
+
+
 def open_serial_lines(
     port: str,
     baud: int = 115200,
@@ -194,11 +229,15 @@ def open_serial_lines(
                        None if max_duration_s is None else float(max_duration_s))
 
 
-def _read_lines(lines: Iterable[str], out: queue.Queue, finished: threading.Event) -> None:
+def _read_lines(lines: Iterable[str], out: queue.Queue, finished: threading.Event,
+                stats: BridgeStats) -> None:
     try:
         for line in lines:
             out.put(line)
-    except Exception as exc:  # the line source ends the run; it does not crash the bridge
+    except KeyboardInterrupt:  # Ctrl-C ends the source like EOF
+        pass
+    except BaseException as exc:  # the line source ends the run; it does not crash the bridge
+        stats.source_error = f"{type(exc).__name__}: {exc}"
         _log(f"line source stopped: {exc}")
     finally:
         finished.set()
@@ -269,11 +308,14 @@ class _Run:
             return
         self.stats.whl_lines += 1
         missed = 0
-        if self.last_whl_seq is not None:
+        if self.last_whl_seq is None:
+            self.last_whl_seq = whl.seq
+        else:
             gap = (whl.seq - self.last_whl_seq - 1) % SEQ_MOD
-            if gap < _SEQ_HALF:  # a repeat or reorder is not a gap
+            if gap < _SEQ_HALF:  # forward: count the gap and move on
                 missed = gap
-        self.last_whl_seq = whl.seq
+                self.last_whl_seq = whl.seq
+            # else a repeat or reorder: not a gap, and last_whl_seq keeps the highest seen
         self.stats.missed_whl_total += missed
         self.relay.on_whl(whl)
         out = self.relay.poll()
@@ -344,11 +386,21 @@ def run_bridge(
 ) -> BridgeStats:
     """Relay WHL lines to the wheel over UDP and log one CSV row per command.
 
-    One command per WHL line. A stale command is sent once per silence episode.
+    One command per WHL line. A WHL line with state != 0 sends its own stale command
+    and its own row: one per line, not one per episode. A stale command from silence
+    (no new line) is sent once per silence episode.
     Rows are written on echo match or after echo_timeout_s with no echo. The run
     ends on duration_s, stop_event, or an exhausted line source (after draining).
-    A final stale command is sent unless the last command was already stale.
+    A line source that raises (other than KeyboardInterrupt) also ends the run; its
+    error text is kept in BridgeStats.source_error.
+    A final stale command is sent unless the last command was already stale. It is
+    not logged as a CSV row, so cmds_sent can exceed the row count by one.
     UDP send errors are counted in BridgeStats.send_errors, not raised.
+    cmd_seq is an unbounded counter with no wrap (the Webots controller accepts any
+    non-negative int).
+    The injected clock drives echo timing (echo timeouts, host_rtt_ms) and duration_s
+    only; Relay uses its own clock. A clock that never advances makes settle loop
+    forever, so library callers must advance it.
     """
     if duration_s is not None and (
             isinstance(duration_s, bool) or not isinstance(duration_s, (int, float))
@@ -365,7 +417,7 @@ def run_bridge(
     lines_q: queue.Queue = queue.Queue()
     finished = threading.Event()
     reader = threading.Thread(
-        target=_read_lines, args=(lines, lines_q, finished), name="ctrl_wheel_lines", daemon=True)
+        target=_read_lines, args=(lines, lines_q, finished, stats), name="ctrl_wheel_lines", daemon=True)
     reader.start()
     started = clock()
     try:
@@ -393,3 +445,230 @@ def run_bridge(
         finally:
             run.cmd_tx.close()
     return stats
+
+
+# ---------------------------------------------------------------------------
+# Command line (FW #454). SIM ONLY. The sign flip is only --sign, through Relay.
+# ---------------------------------------------------------------------------
+
+_RESERVED_PORT = 5006
+_LOOPBACK = "127.0.0.1"
+_SERIAL_READ_TIMEOUT_S = 0.05
+
+
+def _stdin_lines() -> Iterator[str]:
+    # sys.stdin is read when iteration starts, so a replaced stdin is honoured.
+    # Ctrl-C while reading ends the source; main then sends the final stale command.
+    try:
+        for raw in sys.stdin:
+            line = raw.strip()
+            if line:
+                yield line
+    except KeyboardInterrupt:
+        return
+
+
+def _finite_float(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {text!r}") from None
+    if not math.isfinite(value):
+        raise argparse.ArgumentTypeError(f"must be finite, got {text!r}")
+    return value
+
+
+def _positive_finite(text: str) -> float:
+    value = _finite_float(text)
+    if value <= 0:
+        raise argparse.ArgumentTypeError(f"must be > 0, got {text!r}")
+    return value
+
+
+def _nonnegative_finite(text: str) -> float:
+    value = _finite_float(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0, got {text!r}")
+    return value
+
+
+_ECHO_TIMEOUT_MAX_S = 10.0
+
+
+def _echo_timeout(text: str) -> float:
+    value = _nonnegative_finite(text)
+    if value > _ECHO_TIMEOUT_MAX_S:
+        raise argparse.ArgumentTypeError(f"must be <= {_ECHO_TIMEOUT_MAX_S:g}, got {text!r}")
+    return value
+
+
+def _port_number(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not an integer: {text!r}") from None
+    if not 1 <= value <= 65535:
+        raise argparse.ArgumentTypeError(f"must be 1..65535, got {value}")
+    return value
+
+
+def _baud(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not an integer: {text!r}") from None
+    if value <= 0:
+        raise argparse.ArgumentTypeError(f"must be > 0, got {value}")
+    return value
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Relay WHL lines from a serial port or stdin to the ctrl_wheel stand-in over UDP "
+            "and log one CSV row per command. SIM ONLY. Sign UNVERIFIED, latency UNMEASURED, "
+            "no balance claim. pyserial is imported at module load, so it is needed even "
+            "for --stdin."),
+        epilog=(
+            "examples:\n"
+            "  python3 -m ctrl_wheel_msg --step 0.5 --seconds 5 | "
+            "python3 ctrl_wheel_bridge.py --stdin --record ac1.csv\n"
+            "  python3 ctrl_wheel_bridge.py --port rfc2217://localhost:4001 --record ac1.csv\n"
+            "exit codes: 0 run finished (EOF or Ctrl-C); 2 usage error, failed source (at open or "
+            "mid-run), CSV write error or echo socket error."),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument(
+        "--port", metavar="PORT",
+        help="serial device path or pyserial URL such as rfc2217://localhost:4001 "
+             "(URL ports retry the first open for up to 300 s)")
+    source.add_argument(
+        "--stdin", action="store_true",
+        help="read WHL lines from stdin until EOF")
+    parser.add_argument(
+        "--record", metavar="CSV", required=True,
+        help="CSV log, one row per command (ctrl_wheel_log columns)")
+    parser.add_argument(
+        "--overwrite", action="store_true",
+        help="replace an existing --record file (default: refuse and leave it untouched)")
+    parser.add_argument(
+        "--sign", type=int, choices=(1, -1), default=1,
+        help="wheel sign, 1 or -1 (default 1). This is the ONLY place the sign is flipped "
+             "(Relay). UNVERIFIED.")
+    parser.add_argument(
+        "--duration", type=_positive_finite, default=None, metavar="SECONDS",
+        help="stop after SECONDS (> 0); default: run until the source ends")
+    parser.add_argument(
+        "--cmd-port", type=_port_number, default=PORT_CMD, metavar="N",
+        help=f"UDP port of the wheel stand-in for commands (default {PORT_CMD}); not 5006")
+    parser.add_argument(
+        "--echo-port", type=_port_number, default=PORT_ECHO, metavar="N",
+        help=f"UDP port this bridge listens on for echoes (default {PORT_ECHO}); not 5006")
+    parser.add_argument(
+        "--baud", type=_baud, default=115200,
+        help="serial baud rate (default 115200); not used by --stdin")
+    parser.add_argument(
+        "--echo-timeout", type=_echo_timeout, default=0.5, metavar="SECONDS",
+        help=f"seconds to wait for an echo before the row is written without one, 0..{_ECHO_TIMEOUT_MAX_S:g} "
+             f"(default 0.5)")
+    return parser
+
+
+def _check_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.port is not None and args.port.strip() == "":
+        parser.error("--port must be a non-empty device path or URL")
+    if _RESERVED_PORT in (args.cmd_port, args.echo_port):
+        parser.error(f"port {_RESERVED_PORT} is reserved; choose another --cmd-port/--echo-port")
+    if args.cmd_port == args.echo_port:
+        parser.error("--cmd-port and --echo-port must be different")
+
+
+def _open_source(args: argparse.Namespace, deadline: float | None):
+    # Returns (lines, ser). ser is None for --stdin. Raises DofSerialError on failure.
+    if args.stdin:
+        return _stdin_lines(), None
+    ser = _open_serial(args.port, args.baud, _SERIAL_READ_TIMEOUT_S, deadline)
+    if ser is None:
+        raise DofSerialError(f"{args.port!r} did not open before --duration elapsed")
+    return _read_serial(ser, args.port, deadline), ser
+
+
+def _route_sigint(stop: threading.Event) -> Callable[[], None]:
+    # Ctrl-C ends the loop through stop_event, so the summary still prints.
+    # Signals can only be set from the main thread; elsewhere this is a no-op.
+    if threading.current_thread() is not threading.main_thread():
+        return lambda: None
+    previous = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, lambda _signum, _frame: stop.set())
+
+    def restore() -> None:
+        signal.signal(
+            signal.SIGINT,
+            previous if previous is not None else signal.default_int_handler)
+
+    return restore
+
+
+def _summary_text(stats: BridgeStats) -> str:
+    parts = [f"{f.name}={getattr(stats, f.name)}" for f in fields(stats)]
+    parts.append(f"send_errors={stats.send_errors}")
+    return " ".join(parts)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    _check_args(parser, args)
+    deadline = None if args.duration is None else time.monotonic() + args.duration
+
+    try:
+        lines, ser = _open_source(args, deadline)
+    except DofSerialError as exc:
+        _log(str(exc))
+        return 2
+    except KeyboardInterrupt:
+        _log("interrupted while opening the source")
+        return 0
+
+    try:
+        try:
+            sock = open_listener(args.echo_port)
+        except OSError as exc:
+            _log(f"cannot listen for echoes on UDP port {args.echo_port}: {exc}")
+            return 2
+
+        try:
+            log = CsvLog(args.record, overwrite=args.overwrite)
+        except OSError as exc:
+            sock.close()
+            hint = " (pass --overwrite to replace it)" if isinstance(exc, FileExistsError) else ""
+            _log(f"cannot write --record {args.record!r}: {exc}{hint}")
+            return 2
+
+        relay = Relay(sign=args.sign)
+        stop = threading.Event()
+        restore_sigint = _route_sigint(stop)
+        try:
+            stats = run_bridge(
+                lines, relay, (_LOOPBACK, args.cmd_port), sock, log,
+                duration_s=args.duration, echo_timeout_s=args.echo_timeout, stop_event=stop)
+        except KeyboardInterrupt:
+            _log("interrupted during shutdown; no summary")
+            return 0
+        except OSError as exc:  # CSV write failure (for example disk full) from run_bridge
+            _log(f"cannot write --record {args.record!r}: {exc}")
+            return 2
+        finally:
+            restore_sigint()
+            log.close()
+            sock.close()
+    finally:
+        if ser is not None:
+            _close_quietly(ser)
+    _log(f"summary {_summary_text(stats)}")
+    return 2 if stats.source_error is not None else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

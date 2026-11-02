@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Tests for the ctrl-wheel bridge (ctrl_wheel_bridge), issue FW #453, part 1
-(tests first). The module is written in the next run; these tests pin its API.
+Tests for the ctrl-wheel bridge (ctrl_wheel_bridge), issue FW #453. The bridge
+module is in this directory; these tests pin its API.
 
 Integration tests use real loopback UDP sockets, a real FakeWheel in a thread
 and the real clock, each well under 3 s. Every socket uses port 0 (ephemeral).
@@ -41,7 +41,14 @@ from ctrl_wheel_bridge import (  # noqa: E402
 from ctrl_wheel_log import COLUMNS, CsvLog  # noqa: E402
 from ctrl_wheel_msg import Whl, format_whl, step_lines  # noqa: E402
 from ctrl_wheel_relay import Relay  # noqa: E402
-from ctrl_wheel_udp import decode_cmd, drain_all, encode_echo, open_listener  # noqa: E402
+from ctrl_wheel_udp import (  # noqa: E402
+    UdpMsgError,
+    decode_cmd,
+    decode_echo,
+    drain_all,
+    encode_echo,
+    open_listener,
+)
 from fake_wheel import FakeWheel  # noqa: E402
 
 
@@ -254,6 +261,29 @@ def test_b_seq_wrap_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
     assert stats.missed_whl_total == 1
 
 
+def test_b_seq_reorder_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
+    # 7 arrives before 6: the late 6 is a reorder (0), and 8 is measured from
+    # the highest seq seen (7), so it is not a gap either.
+    seqs = [5, 7, 6, 8]
+    stats, path = _run(
+        tmp_path, [_line(s) for s in seqs], cmd_rx.getsockname(), echo_rx
+    )
+    by_seq = _by_seq(_rows(path))
+    assert {s: int(by_seq[s]["missed_whl"]) for s in seqs} == {5: 0, 6: 0, 7: 1, 8: 0}
+    assert stats.missed_whl_total == 1
+
+
+def test_b_seq_pure_repeat_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
+    seqs = [5, 5, 6]
+    stats, path = _run(
+        tmp_path, [_line(s) for s in seqs], cmd_rx.getsockname(), echo_rx
+    )
+    rows = _rows(path)
+    assert [int(r["whl_seq"]) for r in rows] == seqs
+    assert all(r["missed_whl"] == "0" for r in rows)
+    assert stats.missed_whl_total == 0
+
+
 def test_c_bad_lines_counted_and_skipped(tmp_path, cmd_rx, echo_rx):
     good2 = _line(2)
     lines = [_line(0), "garbage", _line(1), _bad_checksum(good2), good2]
@@ -287,7 +317,7 @@ def test_d_state_one_row_shows_stale_and_zero_command(tmp_path, cmd_rx, echo_rx)
     assert float(by_seq[1]["cmd_rad_s"]) == 0.0
 
 
-def test_e_silence_gives_one_stale_command_then_fresh_resumes(tmp_path, echo_rx, live_wheel):
+def test_e_silence_gives_one_stale_command_then_fresh_resumes(tmp_path, echo_rx):
     gate = threading.Event()
     resumed_at: list[float] = []
 
@@ -297,26 +327,46 @@ def test_e_silence_gives_one_stale_command_then_fresh_resumes(tmp_path, echo_rx,
         resumed_at.append(time.monotonic())
         yield _line(1, model=0.5)
 
+    # Echo tap: FakeWheel sends its echoes here; the tap records each echoed
+    # vel_rad_s (public decode_echo) and forwards the bytes unchanged to the
+    # bridge's echo socket. The CSV keeps only one echo per command, so it
+    # cannot show the decay during the silence.
+    tap = open_listener(0)
+    tap_tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     samples: list[tuple[float, float]] = []
-    sampling_done = threading.Event()
+    tap_done = threading.Event()
 
-    def _sample():
-        # Test-only read of FakeWheel._velocity to see the wheel decay.
-        while not sampling_done.is_set():
-            samples.append((time.monotonic(), live_wheel._velocity))
-            sampling_done.wait(0.01)
+    def _tap():
+        while not tap_done.is_set():
+            for data in drain_all(tap):
+                tap_tx.sendto(data, echo_rx.getsockname())
+                try:
+                    echo = decode_echo(data)
+                except (UdpMsgError, RecursionError):
+                    continue
+                if echo.vel_rad_s is not None:
+                    samples.append((time.monotonic(), echo.vel_rad_s))
+            tap_done.wait(0.005)
 
-    sampler = threading.Thread(target=_sample, daemon=True)
+    wheel = FakeWheel(tap.getsockname())
+    wheel_stop = threading.Event()
+    wheel_thread = wheel.run_background(wheel_stop)
+    tap_thread = threading.Thread(target=_tap, daemon=True)
+    tap_thread.start()
     gap_timer = threading.Timer(0.5, gate.set)
-    sampler.start()
     gap_timer.start()
     try:
-        stats, path = _run(tmp_path, _gapped(), live_wheel.cmd_addr, echo_rx)
+        stats, path = _run(tmp_path, _gapped(), wheel.cmd_addr, echo_rx)
     finally:
         gap_timer.cancel()
         gate.set()
-        sampling_done.set()
-        sampler.join(timeout=1.0)
+        wheel_stop.set()
+        wheel_thread.join(timeout=1.0)
+        wheel.close()
+        tap_done.set()
+        tap_thread.join(timeout=1.0)
+        tap_tx.close()
+        tap.close()
 
     assert len(resumed_at) == 1
     rows = _rows(path)
