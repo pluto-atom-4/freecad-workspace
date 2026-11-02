@@ -5,14 +5,16 @@ ctrl_wheel -- Webots controller for the ctrl-wheel relay simulation.
 SIM ONLY. Nothing here is validated on hardware, and it makes no balance claim.
 The sign of the wheel against the firmware is UNVERIFIED.
 
-State after #456 (sub-issue of #446): this file is the copied servo_wheel_dof
+State after #457 (sub-issue of #446): this file is the copied servo_wheel_dof
 controller with the telemetry, overlay, odometry and upright-pose code removed.
 It binds UDP CMD_PORT, drains the command socket each step, keeps the latest
 valid command and drives the motor by setVelocity. It sends 0 rad/s when no
 command has arrived, when the latest command carries stale=1, or when the latest
 command is STALE_SIM_S or more old in simulated time. A non-finite sensor read
-also stops the motor (velocity 0) and skips that step's log line. The echo back to the bridge is still NOT implemented (next
-task #457). Runtime behaviour in Webots is NOT CHECKED.
+also stops the motor (velocity 0) and skips that step's log line. Each step it
+also sends ONE sensor echo datagram to 127.0.0.1:5007 (ECHO_ADDR). Send failures
+are ignored and counted, never raised. The echo sign is UNVERIFIED. Runtime
+behaviour in Webots is NOT CHECKED. No balance claim.
 
 Only Webots-specific import is `controller`; the sensor maths lives in
 sensor_read.py so it stays importable outside Webots.
@@ -36,6 +38,7 @@ from sensor_read import SensorReadError, read_sensor  # noqa: E402
 
 HOST = "127.0.0.1"
 CMD_PORT = 5008  # fixed command port; 5006 belongs to servo_wheel_dof, never use it
+ECHO_ADDR = ("127.0.0.1", 5007)  # sensor echo destination (bridge side); send only, no bind
 MOTOR_NAME = "wheel_motor"
 SENSOR_NAME = "wheel_sensor"
 TAG = "ctrl_wheel"
@@ -151,7 +154,13 @@ def main() -> int:
     last_msg_sim_t = None
     ignored_count = 0
 
+    # Plain UDP socket for the sensor echo. No bind, non-blocking, send only.
+    echo_sock = None
+    echo_fail_count = 0
+
     try:
+        echo_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        echo_sock.setblocking(False)
         while robot.step(timestep) != -1:
             t_s = robot.getTime()
 
@@ -194,9 +203,29 @@ def main() -> int:
                 continue
             _log(reading.t_s, reading.angle_rad, reading.velocity_rad_s)
 
+            # ONE echo datagram per step. KEY NAMES ARE A CONTRACT with
+            # ctrl_wheel_udp.py in poc/ctrl-wheel (cannot be imported here):
+            # cmd_seq_echo, sim_t_s, angle_rad, vel_rad_s. Do not rename.
+            # Failures (ValueError from non-finite floats, OSError from send)
+            # are counted and never raised, so Webots is never stalled.
+            try:
+                payload = json.dumps(
+                    {"cmd_seq_echo": last_cmd_seq,
+                     "sim_t_s": reading.t_s,
+                     "angle_rad": reading.angle_rad,
+                     "vel_rad_s": reading.velocity_rad_s},
+                    allow_nan=False, separators=(",", ":")).encode("utf-8")
+                echo_sock.sendto(payload, ECHO_ADDR)
+            except (ValueError, OSError):
+                echo_fail_count += 1
+                if echo_fail_count <= 3:
+                    _say(f"echo send failed #{echo_fail_count}", err=True)
+
             angle_prev_rad = reading.angle_rad
             t_prev_s = reading.t_s
     finally:
+        if echo_sock is not None:
+            echo_sock.close()
         sock.close()
     return 0
 
