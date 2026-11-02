@@ -11,6 +11,9 @@ Rules (pure logic, no sockets, no threads, no sleeping):
 - poll() before the first on_whl() returns None (nothing to send).
 - A sample with state != 0 (hold or bus down) gives RelayOut(0.0, 1).
 - age >= stale_s since the latest on_whl() gives RelayOut(0.0, 1).
+- A non-finite model_rad_s (nan, inf, -inf) on a fresh state-0 sample is a
+  fault and gives RelayOut(0.0, 1). Without this, min() would pass nan to
+  the clamp and return +clamp.
 - Otherwise RelayOut(clamp(sign * model_rad_s), 0). Sign is applied before
   the symmetric clamp.
 
@@ -51,7 +54,7 @@ class Relay:
         clamp: float = CLAMP_RAD_S,
         sign: int = 1,
     ) -> None:
-        if isinstance(sign, bool) or sign not in (1, -1):
+        if type(sign) is not int or sign not in (1, -1):
             raise ValueError(f"sign must be +1 or -1, got {sign!r}")
         if not (math.isfinite(stale_s) and stale_s > 0):
             raise ValueError(f"stale_s must be a positive finite number, got {stale_s!r}")
@@ -79,6 +82,8 @@ class Relay:
         if whl.state != 0:
             return RelayOut(wheel_rad_s=0.0, stale=1)
         if self._clock() - self._t_arrival >= self._stale_s:
+            return RelayOut(wheel_rad_s=0.0, stale=1)
+        if not math.isfinite(whl.model_rad_s):
             return RelayOut(wheel_rad_s=0.0, stale=1)
         value = self._sign * whl.model_rad_s
         value = max(-self._clamp, min(self._clamp, value))

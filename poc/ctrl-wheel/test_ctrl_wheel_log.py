@@ -3,7 +3,7 @@
 Unit tests for the ctrl-wheel CSV log writer (ctrl_wheel_log), issue FW #452.
 
 Test-first: the module under test is a flat, stdlib-only module in poc/ctrl-wheel
-that is written in a later run. Every test writes only under pytest's tmp_path,
+that exists alongside it. Every test writes only under pytest's tmp_path,
 never to a real path, and opens no network port. SIM ONLY. The sign convention
 is UNVERIFIED.
 
@@ -23,7 +23,6 @@ import pytest
 # Add the script directory to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import ctrl_wheel_log
 from ctrl_wheel_log import COLUMN_DOC, COLUMNS, CsvLog
 
 
@@ -53,17 +52,6 @@ FLOAT_COLUMNS = (
     "angle_rad",
     "vel_rad_s",
     "host_rtt_ms",
-)
-
-INT_COLUMNS = (
-    "whl_seq",
-    "whl_t_us",
-    "whl_raw",
-    "whl_state",
-    "cmd_seq",
-    "stale",
-    "echo_cmd_seq",
-    "missed_whl",
 )
 
 HEADER = list(EXPECTED_COLUMNS)

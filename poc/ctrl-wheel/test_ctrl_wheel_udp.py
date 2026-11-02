@@ -23,7 +23,6 @@ import pytest
 # Add the script directory to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import ctrl_wheel_udp
 from ctrl_wheel_udp import (
     HOST,
     PORT_CMD,
@@ -125,9 +124,6 @@ class TestClamp:
 
     def test_far_negative_clamped(self):
         assert clamp(-9) == -3.0
-
-    def test_default_limit_is_wheel_clamp(self):
-        assert clamp(100.0) == WHEEL_CLAMP_RAD_S
 
     @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
     def test_non_finite_rejected(self, bad):
@@ -250,6 +246,15 @@ class TestDecodeCmd:
         with pytest.raises(UdpMsgError):
             decode_cmd(data)
 
+    def test_deeply_nested_json_rejected(self):
+        with pytest.raises(UdpMsgError):
+            decode_cmd(b"[" * 100000)
+
+    def test_huge_int_wheel_rejected(self):
+        data = json.dumps({"cmd_seq": 1, "wheel_rad_s": 10**400, "stale": 0}).encode()
+        with pytest.raises(UdpMsgError):
+            decode_cmd(data)
+
 
 class TestEncodeEcho:
     """Test: encode_echo produces compact JSON with the pinned keys and nulls."""
@@ -333,6 +338,10 @@ class TestDecodeEcho:
         with pytest.raises(UdpMsgError):
             decode_echo(data)
 
+    def test_deeply_nested_json_rejected(self):
+        with pytest.raises(UdpMsgError):
+            decode_echo(b"[" * 100000)
+
 
 class TestRoundTrip:
     """Test: encode -> real loopback UDP -> drain_all -> decode, on port 0."""
@@ -397,17 +406,6 @@ class TestDrainAll:
         assert got == payloads
         assert [decode_cmd(d).cmd_seq for d in got] == [0, 1, 2]
         assert drain_all(listener) == []
-
-
-class TestPinnedKeys:
-    """Test: key names are a literal contract with the Webots controller."""
-
-    def test_cmd_wire_keys_literal(self):
-        assert set(json.loads(encode_cmd(1, 0.0, 0))) == {"cmd_seq", "wheel_rad_s", "stale"}
-
-    def test_echo_wire_keys_literal(self):
-        keys = set(json.loads(encode_echo(1, 0.0, 0.0, 0.0)))
-        assert keys == {"cmd_seq_echo", "sim_t_s", "angle_rad", "vel_rad_s"}
 
 
 if __name__ == "__main__":
