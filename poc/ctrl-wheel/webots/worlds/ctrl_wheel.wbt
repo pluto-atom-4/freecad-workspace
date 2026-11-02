@@ -17,7 +17,7 @@
 
 WorldInfo {
   info [
-    "ctrl-wheel (issues #447/#458): procedural STS3032 servo + wheel with active controller."
+    "ctrl-wheel (issues #447/#458): idealised velocity-driven wheel (generic RotationalMotor, no servo model) with the ctrl_wheel controller."
   ]
   title "ctrl_wheel"
   coordinateSystem "ENU"
