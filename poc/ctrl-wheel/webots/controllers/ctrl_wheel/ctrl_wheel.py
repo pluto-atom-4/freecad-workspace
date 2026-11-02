@@ -60,10 +60,21 @@ def _reject_constant(name: str):
     raise ValueError(f"non-finite JSON constant {name}")
 
 
+def _no_duplicate_keys(pairs):
+    # Same strictness as the bridge decoder (ctrl_wheel_udp.py): a repeated key is invalid.
+    obj = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ValueError(f"duplicate key {key!r}")
+        obj[key] = value
+    return obj
+
+
 def _parse_cmd(data: bytes):
     """Return (cmd_seq, wheel_rad_s, stale) for a valid datagram, else None."""
     try:
-        obj = json.loads(data.decode("utf-8"), parse_constant=_reject_constant)
+        obj = json.loads(data.decode("utf-8"), parse_constant=_reject_constant,
+                         object_pairs_hook=_no_duplicate_keys)
     except (ValueError, RecursionError):
         return None
     if not isinstance(obj, dict) or set(obj.keys()) != {"cmd_seq", "wheel_rad_s", "stale"}:
