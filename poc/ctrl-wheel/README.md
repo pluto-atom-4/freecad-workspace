@@ -1,6 +1,6 @@
 # ctrl-wheel
 
-SIM ONLY. Bridge and Webots wheel copy for the ctrl-wheel relay. It reads the `WHL` wheel-velocity line from the Wokwi program `c3_ctrl_wheel` (pluto-atom-4/balancing-robot-controller, `programs/c3_ctrl_wheel`, see `docs/CTRL_WHEEL.md` there), relays it as UDP JSON commands to a velocity-driven Webots wheel, and logs the Webots sensor echo to a CSV.
+SIM ONLY. Bridge and Webots wheel copy for the ctrl-wheel relay. It reads the `WHL` wheel-velocity line from the Wokwi program `c3_ctrl_wheel` (pluto-atom-4/balancing-robot-controller, `programs/c3_ctrl_wheel`, added by the BRC stack #248 to #257 which is not merged yet, see `docs/CTRL_WHEEL.md` there), relays it as UDP JSON commands to a velocity-driven Webots wheel, and logs the Webots sensor echo to a CSV.
 
 This is a RELAY, not a closed loop. The firmware receives nothing back. The firmware's `model` value (its lagged model velocity) and the `meas` values (Webots sensor angle and finite-difference velocity) are never mixed.
 
@@ -42,8 +42,8 @@ Open:
 | `ctrl_wheel_relay.py` | Relay rules, no sockets: stale after 200 ms of wall time (not device `t_us`); `state != 0` gives zero and stale; non-finite model gives zero and stale; sign applied before the symmetric clamp. |
 | `fake_wheel.py` | Headless stand-in for the Webots controller, tests and scratch runs only. First-order lag is a plant GUESS (`tau_s` 0.05, `dt_s` 0.016). No sensor-failure path: it always echoes. |
 | `ctrl_wheel_log.py` | CSV writer, columns in this order: `host_t_s`, `whl_seq`, `whl_t_us`, `whl_model_rad_s`, `whl_raw`, `whl_state`, `cmd_seq`, `cmd_rad_s`, `stale`, `echo_cmd_seq`, `sim_t_s`, `angle_rad`, `vel_rad_s`, `host_rtt_ms`, `missed_whl`. `host_rtt_ms` is wall ms from sending `cmd_seq` to the echo with that `cmd_seq_echo`. It includes up to one simulation step and one bridge poll, so it is not link latency. Empty when no echo arrived. |
-| `ctrl_wheel_bridge.py` | Read loop (serial URL, device path or stdin, one command per WHL line, one CSV row per command) and CLI (`build_parser`, `main`). Exit 0 on finish or Ctrl-C; exit 2 on usage error or a failed source, CSV or echo socket. `--sign` is the only sign flip. |
-| `webots/controllers/ctrl_wheel/ctrl_wheel.py` | Webots controller. Skeleton from the servo-wheel copy, plus `setVelocity` and the echo. Reads ports 5008 and 5007 only. Sign is a fixed +1. Cannot import `ctrl_wheel_udp`, so the JSON key names are duplicated there on purpose. |
+| `ctrl_wheel_bridge.py` | Read loop (serial URL, device path or stdin, one command per WHL line, one CSV row per WHL line plus one per silence episode) and CLI (`build_parser`, `main`). Exit 0 on finish or Ctrl-C; exit 2 on usage error or a failed source, CSV or echo socket. `--sign` is the only sign flip. |
+| `webots/controllers/ctrl_wheel/ctrl_wheel.py` | Webots controller. Skeleton from the servo-wheel copy, plus `setVelocity` and the echo. Binds 5008 for commands and only sends echoes to 5007. Sign is a fixed +1. Cannot import `ctrl_wheel_udp`, so the JSON key names are duplicated there on purpose. |
 | `webots/controllers/ctrl_wheel/sensor_read.py` | Byte copy of the sensor-read module. The module name also exists in `poc/servo-wheel-dof`. |
 | `webots/worlds/ctrl_wheel.wbt` | Webots world. Tick 16 ms. |
 
@@ -51,7 +51,7 @@ Origins of each copy:
 
 - `webots/controllers/ctrl_wheel/ctrl_wheel.py`: from `poc/servo-wheel-dof/webots/controllers/servo_wheel_dof/servo_wheel_dof.py`, stripped to the skeleton, plus `setVelocity` and the echo.
 - `webots/controllers/ctrl_wheel/sensor_read.py`: byte copy of the same directory's `sensor_read.py`.
-- `webots/worlds/ctrl_wheel.wbt`: from `servo_wheel_dof.wbt`, text edits only (`maxVelocity`, `maxTorque`). The supervisor is untouched.
+- `webots/worlds/ctrl_wheel.wbt`: from `servo_wheel_dof.wbt`, text edits only (controller name, names, header comment). `maxVelocity`, `maxTorque` and the supervisor flag are NOT set or changed: the owner reads the Webots defaults first.
 - RFC2217 open and retry, and the line reader in `ctrl_wheel_bridge.py`: copied from `poc/esp32-dof/monitor/dof_serial.py`. Line references are in the bridge docstring.
 - `WHL` checksum and format rules: follow `poc/esp32-dof/monitor/dof_frame.py`.
 - No cross-import between directories. `poc/esp32-dof` and `poc/servo-wheel-dof` are untouched.
@@ -97,6 +97,6 @@ Sign: the controller has a fixed +1. Flip the sign ONLY with the bridge `--sign 
 - Rows (a reordered line that arrives late stays counted as missed): one per `WHL` line (a line with state 1 or 2 still gets its own stale command and its own row), plus one row per silence episode. The final stale command sent at shutdown is NOT logged, so `cmds_sent` can exceed the row count by one. `cmd_seq` is an unbounded counter (no wrap).
 - Exit codes: 0 clean (EOF, duration or Ctrl-C), 2 for a usage error, an unusable CSV or port, a source that fails mid-run, or a CSV write error. An unreachable URL with `--duration` also returns 2 (nothing was opened).
 - `pyserial` is imported at module load, so the bridge needs the esp32-dof env even with `--stdin`.
-- The controller reads ports 5008 and 5007 only. Port 5006 belongs to `servo_wheel_dof`.
+- The controller binds 5008 and sends echoes to 5007 only. Port 5006 belongs to `servo_wheel_dof`.
 - The Webots tick is 16 ms in the world file.
 - Test counts are not fixed here. Run pytest to see the current count.
