@@ -125,7 +125,7 @@ def _parse_object(data: bytes, keys: frozenset[str]) -> dict[str, object]:
         )
     except UdpMsgError:
         raise
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise UdpMsgError(f"message is not valid JSON: {exc}") from exc
     if not isinstance(obj, dict):
         raise UdpMsgError(f"message must be a JSON object, got {type(obj).__name__}")
@@ -203,9 +203,9 @@ def drain_all(sock: socket.socket) -> list[bytes]:
     while True:
         try:
             data, _addr = sock.recvfrom(RECV_BUFSIZE)
-        except BlockingIOError:
-            break
         except OSError:
+            # Covers BlockingIOError (no datagram pending on a non-blocking socket)
+            # and any other receive error: stop draining, never block.
             break
         payloads.append(data)
     return payloads
