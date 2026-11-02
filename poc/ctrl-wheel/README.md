@@ -93,7 +93,10 @@ Sign: the controller has a fixed +1. Flip the sign ONLY with the bridge `--sign 
 
 ## Notes
 
-- The bridge summary field `unmatched_echoes` also counts repeated echoes of a command that already completed. The controller echoes every 16 ms step, but commands arrive every 20 ms. A non-zero `unmatched_echoes` is expected.
+- The bridge summary field `unmatched_echoes` counts every echo that does not complete a pending row: a repeated echo of a command that already completed, an echo that arrives after `--echo-timeout`, and an echo with a null `cmd_seq_echo` (the controller before its first command). The controller is EXPECTED to echo every 16 ms step while commands arrive every 20 ms (Webots not run, so UNVERIFIED), so a non-zero count is expected in the scratch stub run (it gave 64 of 150).
+- Rows: one per `WHL` line (a line with state 1 or 2 still gets its own stale command and its own row), plus one row per silence episode. The final stale command sent at shutdown is NOT logged, so `cmds_sent` can exceed the row count by one. `cmd_seq` is an unbounded counter (no wrap).
+- Exit codes: 0 clean (EOF, duration or Ctrl-C), 2 for a usage error, an unusable CSV or port, a source that fails mid-run, or a CSV write error. An unreachable URL with `--duration` also returns 2 (nothing was opened).
+- `pyserial` is imported at module load, so the bridge needs the esp32-dof env even with `--stdin`.
 - The controller reads ports 5008 and 5007 only. Port 5006 belongs to `servo_wheel_dof`.
 - The Webots tick is 16 ms in the world file.
 - Test counts are not fixed here. Run pytest to see the current count.

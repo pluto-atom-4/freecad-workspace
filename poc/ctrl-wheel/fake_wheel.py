@@ -3,7 +3,7 @@
 Headless fake of the Webots ctrl_wheel controller (issue FW #451).
 
 SIM ONLY. Headless stand-in for webots/controllers/ctrl_wheel/ctrl_wheel.py
-(stacked PRs #461-#465, not in this tree). It is not a Webots model. The wheel
+(stacked PRs #460-#465, not in this tree). It is not a Webots model. The wheel
 sign convention is UNVERIFIED and the model values (tau, dt, clamp, stale
 window) are guesses. For tests only. Nothing here validates a real wheel or a
 balance loop.
