@@ -1,42 +1,25 @@
 #VRML_SIM R2025a utf8
 
-# servo-wheel-dof Webots POC (issue #261, sub-issue of #258).
-# Procedural STS3032 servo body (box/cylinder primitives, no PROTO/mesh, per
-# locked decision on #258) with a wheel attached via a HingeJoint +
-# RotationalMotor + PositionSensor. The Robot's `controller` field is wired to
-# "servo_wheel_dof" (controllers/servo_wheel_dof/servo_wheel_dof.py, added in
-# sub-issue #265).
+# copy of servo_wheel_dof.wbt for the ctrl-wheel relay sim (issues #447/#458, parent #446).
+# The wheel is driven by the ctrl_wheel controller with setVelocity.
+# SIM ONLY. No balance claim.
 #
-# Device names (exact, case-sensitive -- a later controller looks these up):
+# Device names (exact, case-sensitive -- the controller looks these up):
 #   RotationalMotor name: "wheel_motor"
 #   PositionSensor  name: "wheel_sensor"
 #
-# Frame: ENU (x East, y North, z Up), matching this repo's other Webots worlds.
-# The wheel stands UPRIGHT beside the servo body, its disc plane vertical, with
-# its rim (radius 0.03) resting on the floor at z=0. The Robot is rotated +90 deg
-# about X (rotation 1 0 0 1.57079633) and lifted to z=0.03 (= wheel radius), so
-# the Robot-local hinge axis Z maps to world -Y (horizontal). Wheel centre is at
-# world (0, -0.026, 0.03); the body box spans z 0.02..0.04, y -0.02..0.02. A
-# Webots Cylinder's axis is local Z, so do NOT add a `rotation` to the wheel
+# Frame: ENU (x East, y North, z Up).
+# A Webots Cylinder's axis is local Z, so do NOT add a `rotation` to the wheel
 # Solid. HingeJoint anchor and wheel translation must stay identical
 # (0 0 0.026 = body face 0.02 + half the wheel height 0.006).
-# The Robot is static (no Physics). By default the wheel spins in place; with
-# env SWD_ODOMETRY=1 the controller also translates the Robot along the rim
-# direction by radius x delta wheel_angle (kinematic odometry, issue #301;
-# positive angle moves the Robot toward -X (west) at yaw 0).
-# The Robot is a supervisor: the controller sets the Robot rotation and
-# translation each step.
-# Sign convention: the hinge axis is Robot-local +Z = world -Y, so positive motor
-# velocity / wheel_sensor angle is a right-hand rotation about world -Y: the wheel
-# top moves toward -X, counter-clockwise seen from the -Y camera. The red box on the
-# wheel rim (Transform at wheel-local 0.024 0 0) is a visual-only direction marker;
-# it moves up during the first positive half-cycle of the sinusoid.
+# The Robot has no Physics node; the wheel endPoint does (mass 0.05).
+# The Robot has the `supervisor` field set to TRUE (unchanged from the copied world).
 
 WorldInfo {
   info [
-    "servo-wheel-dof (issue #261): procedural STS3032 servo + wheel with active controller."
+    "ctrl-wheel (issues #447/#458): idealised velocity-driven wheel (generic RotationalMotor, no servo model) with the ctrl_wheel controller."
   ]
-  title "servo_wheel_dof"
+  title "ctrl_wheel"
   coordinateSystem "ENU"
   basicTimeStep 16
 }
@@ -76,7 +59,7 @@ Solid {
   }
 }
 
-DEF SERVO_WHEEL_DOF Robot {
+DEF CTRL_WHEEL Robot {
   translation 0 0 0.03
   rotation 1 0 0 1.57079633
   children [
@@ -95,6 +78,7 @@ DEF SERVO_WHEEL_DOF Robot {
         axis 0 0 1
         anchor 0 0 0.026
       }
+      # maxVelocity and maxTorque are not set here; owner reads the Webots defaults then sets them (issue #458)
       device [
         RotationalMotor {
           name "wheel_motor"
@@ -145,7 +129,7 @@ DEF SERVO_WHEEL_DOF Robot {
       }
     }
   ]
-  name "servo_wheel_dof"
-  controller "servo_wheel_dof"
+  name "ctrl_wheel"
+  controller "ctrl_wheel"
   supervisor TRUE
 }
