@@ -16,8 +16,9 @@ Cell rules:
 
 host_rtt_ms: wall-clock milliseconds from sending the command with cmd_seq to
 receiving the echo whose cmd_seq_echo equals that cmd_seq. It includes up to one
-16 ms Webots step and one bridge poll, so it is NOT a pure link latency. Empty
-when no echo has arrived.
+simulation step (16 ms in the world file and in fake_wheel, UNVERIFIED for Webots)
+and one bridge poll, so it is NOT a pure link latency. Empty when no echo has
+arrived.
 
 echo_cmd_seq: the value of the echo JSON key cmd_seq_echo.
 """
@@ -61,16 +62,6 @@ COLUMN_DOC = {
     "host_rtt_ms": "wall ms from sending cmd_seq to its echo (not link latency); empty when no echo",
     "missed_whl": "count of missed wheel telemetry frames as supplied by the caller",
 }
-
-_FLOAT_COLUMNS = (
-    "host_t_s",
-    "whl_model_rad_s",
-    "cmd_rad_s",
-    "sim_t_s",
-    "angle_rad",
-    "vel_rad_s",
-    "host_rtt_ms",
-)
 
 _INT_COLUMNS = (
     "whl_seq",
