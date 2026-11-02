@@ -8,17 +8,23 @@ sign convention is UNVERIFIED and the model values (tau, dt, clamp, stale
 window) are guesses. For tests only. Nothing here validates a real wheel or a
 balance loop.
 
-Controller law imitated:
+Controller law (imitates ctrl_wheel.py, which calls motor.setVelocity(v)
+directly with the clamped, stale-gated target):
     target = 0 if no command yet, cmd.stale == 1, or simulated age since the
              last accepted command >= stale_s; else clamp(sign * wheel_rad_s).
+    Each step sends one echo to echo_addr: cmd_seq_echo (last accepted cmd_seq,
+    None before the first), sim_t_s, angle_rad, vel_rad_s.
+    The fake has NO sensor-failure path. The controller skips the echo on a
+    bad read; this fake always echoes.
+
+Plant model (a GUESS for the Webots motor response, not controller law):
     velocity += (target - velocity) * (dt / (tau + dt))     first-order lag
     angle += velocity * dt
-    sim time += dt
-Each step sends one echo to echo_addr: cmd_seq_echo (last accepted cmd_seq,
-None before the first), sim_t_s, angle_rad, vel_rad_s (finite difference of
-angle, None on the first sample).
+    sim time += dt, dt = 16 ms per step
+    vel_rad_s is the finite difference of angle (None on the first sample).
 
 Ports: cmd_port 5005-5008 is refused and echo_addr port 5006 is refused.
+clamp must be in (0, WHEEL_CLAMP_RAD_S].
 step() is not thread-safe: drive it from one thread only.
 
 Usage (run from poc/ctrl-wheel):
@@ -31,7 +37,10 @@ import socket
 import threading
 import time
 
+from ctrl_wheel_relay import STALE_S
 from ctrl_wheel_udp import (
+    PORT_CMD,
+    WHEEL_CLAMP_RAD_S,
     UdpMsgError,
     decode_cmd,
     drain_all,
@@ -40,7 +49,7 @@ from ctrl_wheel_udp import (
 )
 from ctrl_wheel_udp import clamp as _clamp_rad_s
 
-_RESERVED_CMD_PORTS = frozenset(range(5005, 5009))
+_RESERVED_CMD_PORTS = frozenset(range(5005, PORT_CMD + 1))
 _RESERVED_ECHO_PORT = 5006
 
 
@@ -54,14 +63,16 @@ class FakeWheel:
         tau_s: float = 0.05,
         dt_s: float = 0.016,
         sign: int = 1,
-        stale_s: float = 0.2,
-        clamp: float = 3.0,
+        stale_s: float = STALE_S,
+        clamp: float = WHEEL_CLAMP_RAD_S,
         host: str = "127.0.0.1",
     ) -> None:
         if cmd_port in _RESERVED_CMD_PORTS:
             raise ValueError(f"cmd_port {cmd_port} is reserved (5005-5008)")
         if echo_addr[1] == _RESERVED_ECHO_PORT:
             raise ValueError(f"echo_addr port {_RESERVED_ECHO_PORT} is reserved")
+        if not (0.0 < clamp <= WHEEL_CLAMP_RAD_S):
+            raise ValueError(f"clamp {clamp} must be in (0, {WHEEL_CLAMP_RAD_S}]")
         self._echo_addr = echo_addr
         self._dt = dt_s
         self._lag = dt_s / (tau_s + dt_s)

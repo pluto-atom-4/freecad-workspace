@@ -2,9 +2,9 @@
 """
 Unit tests for the ctrl-wheel relay (ctrl_wheel_relay), issue FW #450.
 
-Test-first: the module under test is a flat module in poc/ctrl-wheel that is
-written in a later run. Every test uses an injected fake clock, never real
-time. SIM ONLY. The sign convention is UNVERIFIED.
+The module under test is the flat module ctrl_wheel_relay in poc/ctrl-wheel.
+Every test uses an injected fake clock, never real time. SIM ONLY. The sign
+convention is UNVERIFIED.
 
 Usage:
     cd poc/ctrl-wheel
@@ -13,6 +13,7 @@ Usage:
 
 import dataclasses
 import inspect
+import math
 import sys
 import time
 from pathlib import Path
@@ -22,7 +23,6 @@ import pytest
 # Add the script directory to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import ctrl_wheel_relay
 from ctrl_wheel_msg import Whl
 from ctrl_wheel_relay import (
     CLAMP_RAD_S,
@@ -84,8 +84,8 @@ class TestConstructor:
         assert params["clamp"].default == CLAMP_RAD_S
         assert params["sign"].default == 1
 
-    @pytest.mark.parametrize("sign", [0, 2, -2, 0.5])
-    def test_sign_not_plus_or_minus_one_rejected(self, sign):
+    @pytest.mark.parametrize("sign", [0, 2, -2, 0.5, 1.0, -1.0, True])
+    def test_sign_not_plus_or_minus_one_int_rejected(self, sign):
         with pytest.raises(ValueError):
             Relay(clock=FakeClock(), sign=sign)
 
@@ -199,7 +199,7 @@ class TestStaleBoundary:
         clk.advance(0.125)  # age of latest sample is 0.125, first is 0.25
         assert relay.poll() == RelayOut(wheel_rad_s=0.6, stale=0)
 
-    def test_stale_output_never_exposes_model(self):
+    def test_stale_output_is_zero_with_stale_flag(self):
         clk = FakeClock(0.0)
         relay = Relay(clock=clk, stale_s=0.25)
         relay.on_whl(_whl(model=2.5, state=0))
@@ -247,6 +247,20 @@ class TestClampAndSign:
         relay = Relay(clock=clk, sign=-1)
         relay.on_whl(_whl(model=0.0, state=0))
         assert relay.poll() == RelayOut(wheel_rad_s=0.0, stale=0)
+
+
+class TestNonFiniteModel:
+    """Test: a fresh state-0 sample with a non-finite model is treated as a fault."""
+
+    @pytest.mark.parametrize(
+        "model", [math.nan, math.inf, -math.inf], ids=["nan", "inf", "neg_inf"]
+    )
+    @pytest.mark.parametrize("sign", [1, -1])
+    def test_non_finite_model_gives_stale_zero(self, model, sign):
+        clk = FakeClock()
+        relay = Relay(clock=clk, sign=sign)
+        relay.on_whl(_whl(model=model, state=0))
+        assert relay.poll() == RelayOut(wheel_rad_s=0.0, stale=1)
 
 
 class TestRecovery:

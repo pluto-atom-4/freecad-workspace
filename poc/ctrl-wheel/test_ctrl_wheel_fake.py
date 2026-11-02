@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Unit tests for fake_wheel.FakeWheel, the headless stand-in for the Webots
-ctrl_wheel controller (issue FW #451, test first). The module is written in
-the next run; these tests pin its API and behaviour.
+ctrl_wheel controller (issue FW #451, test first). These tests pin its API
+and behaviour.
 
 SIM ONLY. The sign convention and the model values (tau, dt, clamp) are
 UNVERIFIED. Nothing here validates a real wheel or a balance loop.
@@ -26,7 +26,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ctrl_wheel_udp import decode_echo, drain_all, encode_cmd  # noqa: E402
+from ctrl_wheel_udp import (  # noqa: E402
+    WHEEL_CLAMP_RAD_S,
+    decode_echo,
+    drain_all,
+    encode_cmd,
+)
 from fake_wheel import FakeWheel  # noqa: E402
 
 
@@ -223,13 +228,35 @@ def test_close_is_idempotent(echo_rx):
     wheel.close()
 
 
-def test_run_background_starts_and_stops_within_1s(make_wheel):
+@pytest.mark.parametrize("clamp", [WHEEL_CLAMP_RAD_S + 0.5, 10.0])
+def test_clamp_above_wheel_clamp_is_rejected(echo_rx, clamp):
+    with pytest.raises(ValueError):
+        FakeWheel(echo_rx.getsockname(), clamp=clamp)
+
+
+@pytest.mark.parametrize("clamp", [0.0, -1.0, float("nan")])
+def test_clamp_not_in_zero_to_wheel_clamp_is_rejected(echo_rx, clamp):
+    with pytest.raises(ValueError):
+        FakeWheel(echo_rx.getsockname(), clamp=clamp)
+
+
+def test_clamp_at_wheel_clamp_is_accepted(make_wheel):
+    make_wheel(clamp=WHEEL_CLAMP_RAD_S)
+
+
+def test_run_background_starts_and_stops_within_1s(make_wheel, echo_rx, tx):
     wheel = make_wheel()
+    _send(tx, wheel, encode_cmd(1, 1.0, 0))
     stop = threading.Event()
     thread = wheel.run_background(stop)
     assert isinstance(thread, threading.Thread)
     assert thread.is_alive()
-    time.sleep(0.05)
+    time.sleep(0.2)
+    echoes = _echoes(echo_rx)
+    assert len(echoes) >= 2
+    assert any(e.cmd_seq_echo == 1 for e in echoes)
+    t0 = time.monotonic()
     stop.set()
     thread.join(timeout=1.0)
     assert not thread.is_alive()
+    assert time.monotonic() - t0 < 1.0
