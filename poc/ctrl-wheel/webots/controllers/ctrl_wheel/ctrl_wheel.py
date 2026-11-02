@@ -9,11 +9,12 @@ State after #457 (sub-issue of #446): this file is the copied servo_wheel_dof
 controller with the telemetry, overlay, odometry and upright-pose code removed.
 It binds UDP CMD_PORT, drains the command socket each step, keeps the latest
 valid command and drives the motor by setVelocity. It sends 0 rad/s when no
-command has arrived, when the command is stale, or when the message is older
-than STALE_SIM_S. Each step it also sends ONE sensor echo datagram to
-127.0.0.1:5007 (ECHO_ADDR). Send failures are ignored and counted, never raised.
-SIM ONLY. The echo sign is UNVERIFIED. Runtime behaviour in Webots is NOT
-CHECKED. No balance claim.
+command has arrived, when the latest command carries stale=1, or when the latest
+command is STALE_SIM_S or more old in simulated time. A non-finite sensor read
+also stops the motor (velocity 0) and skips that step's log line. Each step it
+also sends ONE sensor echo datagram to 127.0.0.1:5007 (ECHO_ADDR). Send failures
+are ignored and counted, never raised. The echo sign is UNVERIFIED. Runtime
+behaviour in Webots is NOT CHECKED. No balance claim.
 
 Only Webots-specific import is `controller`; the sensor maths lives in
 sensor_read.py so it stays importable outside Webots.
@@ -33,7 +34,7 @@ from controller import Robot
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from sensor_read import read_sensor  # noqa: E402
+from sensor_read import SensorReadError, read_sensor  # noqa: E402
 
 HOST = "127.0.0.1"
 CMD_PORT = 5008  # fixed command port; 5006 belongs to servo_wheel_dof, never use it
@@ -101,8 +102,8 @@ def _open_socket(port: int) -> socket.socket:
 
 
 def main() -> int:
-    # Plain Robot: nothing here needs Supervisor powers (works with the world's
-    # supervisor flag either way).
+    # Plain Robot: nothing here needs Supervisor powers (expected to work with the
+    # world's supervisor flag either way; NOT CHECKED in Webots).
     robot = Robot()
     timestep = int(robot.getBasicTimeStep())
 
@@ -143,11 +144,12 @@ def main() -> int:
     ignored_count = 0
 
     # Plain UDP socket for the sensor echo. No bind, non-blocking, send only.
-    echo_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    echo_sock.setblocking(False)
+    echo_sock = None
     echo_fail_count = 0
 
     try:
+        echo_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        echo_sock.setblocking(False)
         while robot.step(timestep) != -1:
             t_s = robot.getTime()
 
@@ -155,9 +157,7 @@ def main() -> int:
             while True:
                 try:
                     data, _addr = sock.recvfrom(4096)
-                except BlockingIOError:
-                    break
-                except OSError:
+                except OSError:  # includes BlockingIOError: nothing more pending
                     break
                 parsed = _parse_cmd(data)
                 if parsed is None:
@@ -177,12 +177,19 @@ def main() -> int:
                 v = max(-CLAMP_RAD_S, min(CLAMP_RAD_S, SIGN * last_cmd_wheel))
             motor.setVelocity(v)
 
-            reading = read_sensor(
-                t_s=t_s,
-                angle_source=sensor.getValue,
-                angle_prev_rad=angle_prev_rad,
-                t_prev_s=t_prev_s,
-            )
+            try:
+                reading = read_sensor(
+                    t_s=t_s,
+                    angle_source=sensor.getValue,
+                    angle_prev_rad=angle_prev_rad,
+                    t_prev_s=t_prev_s,
+                )
+            except SensorReadError as exc:
+                # Never leave the last velocity latched on a bad read.
+                motor.setVelocity(0.0)
+                _say(f"ERROR: sensor read failed ({exc}); velocity 0, step skipped",
+                     err=True)
+                continue
             _log(reading.t_s, reading.angle_rad, reading.velocity_rad_s)
 
             # ONE echo datagram per step. KEY NAMES ARE A CONTRACT with
@@ -206,7 +213,8 @@ def main() -> int:
             angle_prev_rad = reading.angle_rad
             t_prev_s = reading.t_s
     finally:
-        echo_sock.close()
+        if echo_sock is not None:
+            echo_sock.close()
         sock.close()
     return 0
 
