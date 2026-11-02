@@ -11,8 +11,8 @@ It binds UDP CMD_PORT, drains the command socket each step, keeps the latest
 valid command and drives the motor by setVelocity. It sends 0 rad/s when no
 command has arrived, when the latest command carries stale=1, or when the latest
 command is STALE_SIM_S or more old in simulated time. A non-finite sensor read
-also stops the motor (velocity 0) and skips that step's log line. Each step it
-also sends ONE sensor echo datagram to 127.0.0.1:5007 (ECHO_ADDR). Send failures
+also stops the motor (velocity 0) and skips that step's log line, echo and
+angle update. Each normal step it also sends ONE sensor echo datagram to 127.0.0.1:5007 (ECHO_ADDR). Send failures
 are ignored and counted, never raised. The echo sign is UNVERIFIED. Runtime
 behaviour in Webots is NOT CHECKED. No balance claim.
 
