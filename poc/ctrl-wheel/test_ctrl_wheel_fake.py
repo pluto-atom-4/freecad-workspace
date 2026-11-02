@@ -260,3 +260,23 @@ def test_run_background_starts_and_stops_within_1s(make_wheel, echo_rx, tx):
     thread.join(timeout=1.0)
     assert not thread.is_alive()
     assert time.monotonic() - t0 < 1.0
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"dt_s": 0.0},
+        {"dt_s": -0.016},
+        {"tau_s": 0.0},
+        {"tau_s": -0.016},
+        {"dt_s": float("nan")},
+        {"tau_s": float("nan")},
+        {"sign": 0},
+        {"sign": 2},
+        {"sign": 1.0},
+        {"sign": True},
+    ],
+)
+def test_bad_dynamics_arguments_rejected_before_binding(kwargs):
+    with pytest.raises(ValueError):
+        FakeWheel(echo_addr=("127.0.0.1", 40123), **kwargs)

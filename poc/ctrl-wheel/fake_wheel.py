@@ -3,7 +3,7 @@
 Headless fake of the Webots ctrl_wheel controller (issue FW #451).
 
 SIM ONLY. Headless stand-in for webots/controllers/ctrl_wheel/ctrl_wheel.py
-(stacked PRs #461-#465, not in this tree). It is not a Webots model. The wheel
+(stacked PRs #460-#465, not in this tree). It is not a Webots model. The wheel
 sign convention is UNVERIFIED and the model values (tau, dt, clamp, stale
 window) are guesses. For tests only. Nothing here validates a real wheel or a
 balance loop.
@@ -73,6 +73,12 @@ class FakeWheel:
             raise ValueError(f"echo_addr port {_RESERVED_ECHO_PORT} is reserved")
         if not (0.0 < clamp <= WHEEL_CLAMP_RAD_S):
             raise ValueError(f"clamp {clamp} must be in (0, {WHEEL_CLAMP_RAD_S}]")
+        if not (dt_s > 0.0 and dt_s != float("inf")):
+            raise ValueError(f"dt_s {dt_s} must be finite and > 0")
+        if not (tau_s > 0.0 and tau_s != float("inf")):
+            raise ValueError(f"tau_s {tau_s} must be finite and > 0")
+        if type(sign) is not int or sign not in (1, -1):
+            raise ValueError(f"sign {sign!r} must be the int +1 or -1")
         self._echo_addr = echo_addr
         self._dt = dt_s
         self._lag = dt_s / (tau_s + dt_s)

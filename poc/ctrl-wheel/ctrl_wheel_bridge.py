@@ -2,7 +2,7 @@
 """
 ctrl-wheel bridge (issue FW #453, part 2): reads WHL lines from a serial source,
 relays the wheel velocity to the headless ctrl_wheel stand-in over UDP and logs
-one CSV row per command (ctrl_wheel_log.COLUMNS).
+one CSV row per WHL line plus one per silence episode (ctrl_wheel_log.COLUMNS).
 
 Command line (FW #454): build_parser() and main(argv) -> int. Run from poc/ctrl-wheel:
     python3 -m ctrl_wheel_msg --step 0.5 --seconds 5 | python3 ctrl_wheel_bridge.py --stdin --record ac1.csv
@@ -384,7 +384,7 @@ def run_bridge(
     echo_timeout_s: float = 0.5,
     stop_event: threading.Event | None = None,
 ) -> BridgeStats:
-    """Relay WHL lines to the wheel over UDP and log one CSV row per command.
+    """Relay WHL lines to the wheel over UDP and log one CSV row per WHL line (plus one per silence episode).
 
     One command per WHL line. A WHL line with state != 0 sends its own stale command
     and its own row: one per line, not one per episode. A stale command from silence
@@ -526,7 +526,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Relay WHL lines from a serial port or stdin to the ctrl_wheel stand-in over UDP "
-            "and log one CSV row per command. SIM ONLY. Sign UNVERIFIED, latency UNMEASURED, "
+            "and log one CSV row per WHL line (plus one per silence episode). SIM ONLY. Sign UNVERIFIED, latency UNMEASURED, "
             "no balance claim. pyserial is imported at module load, so it is needed even "
             "for --stdin."),
         epilog=(
@@ -648,11 +648,16 @@ def main(argv: list[str] | None = None) -> int:
 
         relay = Relay(sign=args.sign)
         stop = threading.Event()
+        source_error = None
+        close_error = None
         restore_sigint = _route_sigint(stop)
         try:
             stats = run_bridge(
                 lines, relay, (_LOOPBACK, args.cmd_port), sock, log,
                 duration_s=args.duration, echo_timeout_s=args.echo_timeout, stop_event=stop)
+            # Decide NOW, before the port is closed below: closing it makes the reader thread
+            # fail its next read, and that late failure is a consequence of the shutdown.
+            source_error = stats.source_error
         except KeyboardInterrupt:
             _log("interrupted during shutdown; no summary")
             return 0
@@ -661,13 +666,20 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         finally:
             restore_sigint()
-            log.close()
-            sock.close()
+            try:
+                log.close()
+            except OSError as exc:  # flush on close can fail (for example disk full)
+                close_error = exc
+            finally:
+                sock.close()
     finally:
         if ser is not None:
             _close_quietly(ser)
     _log(f"summary {_summary_text(stats)}")
-    return 2 if stats.source_error is not None else 0
+    if close_error is not None:
+        _log(f"cannot finish --record {args.record!r}: {close_error}")
+        return 2
+    return 2 if source_error is not None else 0
 
 
 if __name__ == "__main__":
