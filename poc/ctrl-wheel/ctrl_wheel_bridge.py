@@ -90,6 +90,9 @@ class BridgeStats:
         # Not dataclass fields: the pinned field list has no send-error or source-error column.
         self.send_errors = 0
         self.source_error: str | None = None  # text of a line source error that ended the run
+        # Set True by run_bridge on every exit path; a reader failure after that is a consequence
+        # of shutdown (the owner closes the port next).
+        self.closing = False
 
 
 @dataclass
@@ -237,8 +240,9 @@ def _read_lines(lines: Iterable[str], out: queue.Queue, finished: threading.Even
     except KeyboardInterrupt:  # Ctrl-C ends the source like EOF
         pass
     except BaseException as exc:  # the line source ends the run; it does not crash the bridge
-        stats.source_error = f"{type(exc).__name__}: {exc}"
-        _log(f"line source stopped: {exc}")
+        if not stats.closing:
+            stats.source_error = f"{type(exc).__name__}: {exc}"
+            _log(f"line source stopped: {exc}")
     finally:
         finished.set()
 
@@ -392,7 +396,10 @@ def run_bridge(
     Rows are written on echo match or after echo_timeout_s with no echo. The run
     ends on duration_s, stop_event, or an exhausted line source (after draining).
     A line source that raises (other than KeyboardInterrupt) also ends the run; its
-    error text is kept in BridgeStats.source_error.
+    error text is kept in BridgeStats.source_error. Once the run loop has ended (including
+    the final settle wait, and after run_bridge returns or raises) a failure of the line source is a
+    consequence of shutdown and is neither logged nor recorded; a failure before that still sets
+    stats.source_error and is logged.
     A final stale command is sent unless the last command was already stale. It is
     not logged as a CSV row, so cmds_sent can exceed the row count by one.
     UDP send errors are counted in BridgeStats.send_errors, not raised.
@@ -439,6 +446,7 @@ def run_bridge(
             run.flush_timeouts()
             sleep(poll_s)
     finally:
+        stats.closing = True
         try:
             run.finish()
             run.settle(poll_s, sleep)
