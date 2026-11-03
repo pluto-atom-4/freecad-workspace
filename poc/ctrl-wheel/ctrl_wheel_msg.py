@@ -6,9 +6,8 @@ step-input generator for the ctrl-wheel POC.
 SIM ONLY. The sign convention of the model and raw values is UNVERIFIED.
 The wire format is not validated against any real device or receiver.
 This module must stay in step with the BRC header lib/wheel_frame/wheel_frame.h
-(format, field order, limits, raw conversion). That header is from
-pluto-atom-4/balancing-robot-controller PR #249 (issue #240). The PR is NOT
-merged yet, so the header does not exist on main.
+(format, field order, limits, raw conversion). That header is on the main branch of
+pluto-atom-4/balancing-robot-controller (merged in PR #258, issue #240).
 
 Line format (ASCII, one line per sample):
     WHL,<seq>,<t_us>,<model %.6f>,<raw>,<state>*<HH>\\n
