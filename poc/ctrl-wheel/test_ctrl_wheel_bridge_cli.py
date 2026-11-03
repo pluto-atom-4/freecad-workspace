@@ -28,10 +28,12 @@ import csv
 import io
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import fields
 from pathlib import Path
 
@@ -521,3 +523,69 @@ def test_ctrl_c_on_a_real_serial_source_exits_0(tmp_path):
         finally:
             timer.cancel()
         assert rc == 0, f"run {i}"
+
+
+def _sigint_when_reader_runs(cancel: threading.Event) -> None:
+    """Send SIGINT once the bridge's line reader thread is live (no fixed timer)."""
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline and not cancel.is_set():
+        if any(t.name == "ctrl_wheel_lines" and t.is_alive() for t in threading.enumerate()):
+            time.sleep(0.05)
+            if not cancel.is_set():
+                os.kill(os.getpid(), signal.SIGINT)
+            return
+        time.sleep(0.01)
+
+
+def test_clean_ctrl_c_prints_nothing_after_the_summary(tmp_path, capsys):
+    """Regression (FW #477): after a clean stop on a real port, the reader thread's failed read
+    must not log 'line source stopped' after the summary. The SIGINT lands while the reader
+    thread is live, so the port is closed mid-read."""
+    for i in range(8):
+        cmd_port, echo_port = _two_free_ports()
+        cancel = threading.Event()
+        helper = threading.Thread(target=_sigint_when_reader_runs, args=(cancel,), daemon=True)
+        helper.start()
+        try:
+            rc = cwb.main(["--port", "loop://", "--record", str(tmp_path / f"clean{i}.csv"),
+                           "--cmd-port", str(cmd_port), "--echo-port", str(echo_port),
+                           "--echo-timeout", "0.05"])
+        finally:
+            cancel.set()
+            helper.join(timeout=5.0)
+        assert rc == 0, f"run {i}"
+        time.sleep(0.3)
+        err = capsys.readouterr().err
+        lines = err.splitlines()
+        summaries = [ln for ln in lines if ln.startswith("[ctrl_wheel_bridge] summary ")]
+        assert len(summaries) == 1, f"run {i}: {err!r}"
+        assert "line source stopped" not in err, f"run {i}: {err!r}"
+        idx = lines.index(summaries[0])
+        assert not [ln for ln in lines[idx + 1:] if ln.strip()], f"run {i}: {err!r}"
+
+
+def test_midrun_source_failure_line_comes_before_the_summary(tmp_path, monkeypatch, capsys):
+    """Over-suppression guard (FW #477): a real mid-run source failure is still logged,
+    before the summary, and returns 2."""
+    record = tmp_path / "midrun_fail.csv"
+    cmd_port, echo_port = _two_free_ports()
+
+    def _failing_source():
+        yield _whl_line(0)
+        raise DofSerialError("'/dev/fake-wheel': read failed: injected")
+
+    monkeypatch.setattr(cwb, "_stdin_lines", _failing_source)
+
+    rc = main(_argv(record, cmd_port, echo_port, "--echo-timeout", "0.05"))
+
+    assert rc == 2
+    time.sleep(0.2)
+    err = capsys.readouterr().err
+    lines = err.splitlines()
+    summaries = [i for i, ln in enumerate(lines) if ln.startswith("[ctrl_wheel_bridge] summary ")]
+    stopped = [i for i, ln in enumerate(lines) if "line source stopped" in ln]
+    assert len(summaries) == 1
+    assert len(stopped) == 1
+    assert "read failed: injected" in lines[stopped[0]]
+    assert stopped[0] < summaries[0]
+    assert not [ln for ln in lines[summaries[0] + 1:] if ln.strip()]
