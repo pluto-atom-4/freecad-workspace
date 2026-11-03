@@ -539,6 +539,11 @@ def test_clean_ctrl_c_prints_nothing_after_the_summary(tmp_path, capsys):
     thread's failed read must not log 'line source stopped' after the summary. The SIGINT lands
     while the reader thread is live, so the port is closed mid-read."""
     for i in range(8):
+        for _ in range(300):  # a reader left over from the previous run must be gone first
+            if not [t for t in threading.enumerate()
+                    if t.name == "ctrl_wheel_lines" and t.is_alive()]:
+                break
+            time.sleep(0.01)
         cmd_port, echo_port = _two_free_ports()
         cancel = threading.Event()
         helper = threading.Thread(target=_sigint_when_reader_runs, args=(cancel,), daemon=True)
