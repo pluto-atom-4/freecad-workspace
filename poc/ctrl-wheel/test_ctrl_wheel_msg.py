@@ -113,13 +113,17 @@ class TestFormat:
         assert "-0.000000" not in line
         assert parse_line(line).model_rad_s == 0.0
 
+    @pytest.mark.parametrize("state", [0, 1, 2])
     @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
-    def test_non_finite_model_formats_as_zero(self, bad):
-        line = format_whl(Whl(1, 0, bad, 0, 0))
+    def test_non_finite_model_rejected(self, bad, state):
+        with pytest.raises(WhlError):
+            format_whl(Whl(seq=0, t_us=0, model_rad_s=bad, raw=0, state=state))
+
+    def test_finite_values_still_format(self):
+        assert parse_line(format_whl(Whl(1, 0, 3.0, 125, 0))) == Whl(1, 0, 3.0, 125, 0)
+        assert parse_line(format_whl(Whl(1, 0, -3.0, -125, 0))) == Whl(1, 0, -3.0, -125, 0)
+        line = format_whl(Whl(1, 0, 1e-9, 0, 0))
         assert line.startswith("WHL,1,0,0.000000,0,0*")
-        assert "nan" not in line.lower()
-        assert "inf" not in line.lower()
-        assert parse_line(line).model_rad_s == 0.0
 
     @pytest.mark.parametrize("bad", [True, "0.5", None, 10**400])
     def test_non_real_model_rejected(self, bad):
@@ -231,7 +235,7 @@ class TestParse:
             parse_line(_with_checksum(body))
 
     @pytest.mark.parametrize("tok", ["nan", "NaN", "inf", "-inf", "Infinity"])
-    def test_non_finite_model_rejected(self, tok):
+    def test_non_finite_token_rejected(self, tok):
         body = f"WHL,1,20000,{tok},21,0"
         with pytest.raises(WhlError):
             parse_line(_with_checksum(body))
@@ -366,6 +370,11 @@ class TestStepLines:
         lines = list(step_lines(value, 0.02, realtime=False))
         assert len(lines) == 1
         assert parse_line(lines[0]).raw == raw
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_step_lines_still_rejects_non_finite(self, bad):
+        with pytest.raises(WhlError):
+            list(step_lines(bad, 0.1, realtime=False))
 
     @pytest.mark.parametrize("rate", [1e7, 1e300])
     def test_t_step_below_one_us_rejected(self, rate):

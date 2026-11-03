@@ -13,7 +13,9 @@ Rules (pure logic, no sockets, no threads, no sleeping):
 - age >= stale_s since the latest on_whl() gives RelayOut(0.0, 1).
 - A non-finite model_rad_s (nan, inf, -inf) on a fresh state-0 sample is a
   fault and gives RelayOut(0.0, 1). Without this, min() would pass nan to
-  the clamp and return +clamp.
+  the clamp and return +clamp. Defence in depth: the formatter and parse_line
+  both reject non-finite values, so this branch only triggers for a Whl built
+  directly in code.
 - Otherwise RelayOut(clamp(sign * model_rad_s), 0). Sign is applied before
   the symmetric clamp.
 
