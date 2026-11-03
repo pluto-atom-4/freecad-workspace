@@ -51,7 +51,7 @@ import serial
 
 from ctrl_wheel_log import CsvLog
 from ctrl_wheel_msg import SEQ_MOD, WhlError, parse_line
-from ctrl_wheel_relay import Relay
+from ctrl_wheel_relay import POLL_S, Relay
 from ctrl_wheel_udp import (
     PORT_CMD,
     PORT_ECHO,
@@ -384,7 +384,7 @@ def run_bridge(
     log,
     *,
     duration_s: float | None = None,
-    poll_s: float = 0.02,
+    poll_s: float = POLL_S,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], object] = time.sleep,
     echo_timeout_s: float = 0.5,
