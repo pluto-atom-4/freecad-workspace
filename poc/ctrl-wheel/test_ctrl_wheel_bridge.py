@@ -447,6 +447,41 @@ def test_blocked_iterator_does_not_hang_bridge(tmp_path, cmd_rx, echo_rx):
     assert _rows(path) == []
 
 
+def test_source_error_after_run_ended_is_not_logged_or_recorded(tmp_path, cmd_rx, echo_rx, capsys):
+    release = threading.Event()
+
+    def _late_failure():
+        yield _line(0)
+        release.wait(timeout=5.0)
+        raise RuntimeError("late failure")
+
+    try:
+        stats, _path = _run(
+            tmp_path, _late_failure(), cmd_rx.getsockname(), echo_rx, duration_s=0.3
+        )
+        release.set()
+        time.sleep(0.3)
+    finally:
+        release.set()
+    err = capsys.readouterr().err
+    assert stats.source_error is None
+    assert "line source stopped" not in err
+
+
+def test_source_error_before_the_run_ended_is_still_recorded(tmp_path, cmd_rx, echo_rx, capsys):
+    def _early_failure():
+        yield _line(0)
+        raise RuntimeError("early failure")
+
+    stats, _path = _run(
+        tmp_path, _early_failure(), cmd_rx.getsockname(), echo_rx, duration_s=5.0
+    )
+    err = capsys.readouterr().err
+    assert stats.source_error is not None
+    assert "early failure" in stats.source_error
+    assert "line source stopped: early failure" in err
+
+
 # ---------------------------------------------------------------------------
 # Echo handling
 # ---------------------------------------------------------------------------
