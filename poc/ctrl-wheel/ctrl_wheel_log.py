@@ -45,6 +45,8 @@ COLUMNS = (
     "missed_whl",
 )
 
+# Documentation data for humans. It is read only by test_ctrl_wheel_log.py, which pins its keys to COLUMNS,
+# so adding a column needs a description here. It is not used at run time.
 COLUMN_DOC = {
     "host_t_s": "host wall-clock seconds at the row, 3 decimals",
     "whl_seq": "wheel telemetry sequence number from the device",

@@ -31,6 +31,8 @@ import serial
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import ctrl_wheel_bridge  # noqa: E402
+import ctrl_wheel_relay  # noqa: E402
 from ctrl_wheel_bridge import (  # noqa: E402
     BridgeStats,
     DofSerialError,
@@ -191,6 +193,8 @@ def test_run_bridge_signature_pinned():
         assert params[name].kind is inspect.Parameter.KEYWORD_ONLY
     assert params["duration_s"].default is None
     assert params["poll_s"].default == 0.02
+    assert ctrl_wheel_bridge.POLL_S is ctrl_wheel_relay.POLL_S
+    assert params["poll_s"].default is ctrl_wheel_relay.POLL_S
     assert params["clock"].default is time.monotonic
     assert params["sleep"].default is time.sleep
     assert params["echo_timeout_s"].default == 0.5
