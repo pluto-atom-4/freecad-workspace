@@ -548,7 +548,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="read WHL lines from stdin until EOF")
     parser.add_argument(
         "--record", metavar="CSV", required=True,
-        help="CSV log, one row per command (ctrl_wheel_log columns)")
+        help="CSV log: one row per WHL line plus one per silence episode (ctrl_wheel_log columns)")
     parser.add_argument(
         "--overwrite", action="store_true",
         help="replace an existing --record file (default: refuse and leave it untouched)")
