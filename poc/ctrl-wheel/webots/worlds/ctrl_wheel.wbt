@@ -78,10 +78,17 @@ DEF CTRL_WHEEL Robot {
         axis 0 0 1
         anchor 0 0 0.026
       }
-      # maxVelocity and maxTorque are not set here; owner reads the Webots defaults then sets them (issue #458)
+      # Motor limits chosen by the owner for this simulation (issue #458), NOT servo specs.
+      # maxVelocity 3.5 rad/s is above the controller's 3 rad/s clamp, so it never limits a command.
+      # maxTorque 1e-3 N.m: the wheel inertia measured in this world is 2.25e-5 kg.m2, so a 1 rad/s
+      # step takes about 23 ms (two 16 ms steps). Smaller torques ramp linearly: 3e-4 gives about
+      # 75 ms, 1e-4 about 225 ms, 2e-5 about 1.1 s. The Webots defaults were maxVelocity 10, maxTorque 10.
+      # Sim only, UNVERIFIED against hardware.
       device [
         RotationalMotor {
           name "wheel_motor"
+          maxVelocity 3.5
+          maxTorque 1e-3
         }
         PositionSensor {
           name "wheel_sensor"
