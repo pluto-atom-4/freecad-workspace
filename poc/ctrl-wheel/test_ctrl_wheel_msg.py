@@ -119,7 +119,7 @@ class TestFormat:
         with pytest.raises(WhlError):
             format_whl(Whl(seq=0, t_us=0, model_rad_s=bad, raw=0, state=state))
 
-    def test_finite_extremes_still_format(self):
+    def test_finite_values_still_format(self):
         assert parse_line(format_whl(Whl(1, 0, 3.0, 125, 0))) == Whl(1, 0, 3.0, 125, 0)
         assert parse_line(format_whl(Whl(1, 0, -3.0, -125, 0))) == Whl(1, 0, -3.0, -125, 0)
         line = format_whl(Whl(1, 0, 1e-9, 0, 0))
@@ -235,7 +235,7 @@ class TestParse:
             parse_line(_with_checksum(body))
 
     @pytest.mark.parametrize("tok", ["nan", "NaN", "inf", "-inf", "Infinity"])
-    def test_non_finite_model_rejected(self, tok):
+    def test_non_finite_token_rejected(self, tok):
         body = f"WHL,1,20000,{tok},21,0"
         with pytest.raises(WhlError):
             parse_line(_with_checksum(body))

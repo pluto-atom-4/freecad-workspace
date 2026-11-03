@@ -7,7 +7,8 @@ SIM ONLY. The sign convention of the model and raw values is UNVERIFIED.
 The wire format is not validated against any real device or receiver.
 This module must stay in step with the BRC header lib/wheel_frame/wheel_frame.h
 (format, field order, limits, raw conversion). That header is on the main branch of
-pluto-atom-4/balancing-robot-controller (merged in PR #258, issue #240).
+pluto-atom-4/balancing-robot-controller (merged in PR #258, issue #240). The one exception is the non-finite rule below, until
+balancing-robot-controller PR #262 (issue #261) is merged.
 
 Line format (ASCII, one line per sample):
     WHL,<seq>,<t_us>,<model %.6f>,<raw>,<state>*<HH>\\n
@@ -15,7 +16,7 @@ Line format (ASCII, one line per sample):
 Protocol details:
 - seq: uint16 sequence number, wraps at 65536 (format takes seq mod 65536)
 - t_us: uint32 device microseconds (0 .. 2^32-1)
-- model: model wheel velocity in rad/s, %.6f; a non-finite value is rejected (format_whl raises WhlError, parse_line rejects the tokens nan/inf); the firmware drops such a line (BRC wheel_frame refuses it, issue #261) so the host sees a seq gap and its silence rule stops the wheel
+- model: model wheel velocity in rad/s, %.6f; a non-finite value is rejected (format_whl raises WhlError, parse_line rejects the tokens nan/inf); the BRC firmware formatter is changed to drop such a line too (balancing-robot-controller issue #261, PR #262; until that is merged BRC main still prints 0.000000), so the host then sees a seq gap and its silence rule stops the wheel
 - raw: Dynamixel goal velocity raw units (0.229 rpm per unit). The wire accepts
   any int32 value (-2^31 .. 2^31-1). The +-125 clamp (RAW_CAP) is the
   firmware's own step cap and is applied only by step_lines, not by the wire.
