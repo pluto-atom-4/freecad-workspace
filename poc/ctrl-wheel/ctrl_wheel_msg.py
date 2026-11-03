@@ -15,7 +15,7 @@ Line format (ASCII, one line per sample):
 Protocol details:
 - seq: uint16 sequence number, wraps at 65536 (format takes seq mod 65536)
 - t_us: uint32 device microseconds (0 .. 2^32-1)
-- model: model wheel velocity in rad/s, %.6f; non-finite formats as 0.000000
+- model: model wheel velocity in rad/s, %.6f; a non-finite value is rejected (format_whl raises WhlError, parse_line rejects the tokens nan/inf); the firmware drops such a line (BRC wheel_frame refuses it, issue #261) so the host sees a seq gap and its silence rule stops the wheel
 - raw: Dynamixel goal velocity raw units (0.229 rpm per unit). The wire accepts
   any int32 value (-2^31 .. 2^31-1). The +-125 clamp (RAW_CAP) is the
   firmware's own step cap and is applied only by step_lines, not by the wire.
@@ -143,7 +143,7 @@ def format_whl(w: Whl) -> str:
 
     model = _model_to_float(w.model_rad_s)
     if not math.isfinite(model):
-        model = 0.0
+        raise WhlError(f"model_rad_s must be finite, got {w.model_rad_s!r}")
     model_str = f"{model:.6f}"
     if model_str == "-0.000000":
         model_str = "0.000000"
