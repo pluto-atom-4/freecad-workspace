@@ -512,9 +512,8 @@ def test_csv_close_error_returns_2_after_summary(tmp_path, monkeypatch, capsys):
 def test_ctrl_c_on_a_real_serial_source_exits_0(tmp_path):
     """Regression: closing the port at shutdown made the reader thread fail and flipped a clean
     Ctrl-C into rc 2 about 40% of the time. A pyserial loop:// source stands in for the port."""
-    import signal as _signal
     for i in range(5):
-        timer = threading.Timer(0.3, lambda: os.kill(os.getpid(), _signal.SIGINT))
+        timer = threading.Timer(0.3, lambda: os.kill(os.getpid(), signal.SIGINT))
         timer.start()
         try:
             rc = cwb.main(["--port", "loop://", "--record", str(tmp_path / f"c{i}.csv"),
@@ -526,21 +525,23 @@ def test_ctrl_c_on_a_real_serial_source_exits_0(tmp_path):
 
 
 def _sigint_when_reader_runs(cancel: threading.Event) -> None:
-    """Send SIGINT once the bridge's line reader thread is live (no fixed timer)."""
+    """Wait (bounded, 3 s) until the bridge's line reader thread runs, then pause a fixed
+    0.05 s and send SIGINT unless cancel is set. SIGINT is sent at the deadline even if the
+    reader thread was never seen, so main always stops (a loop:// source never ends alone)."""
     deadline = time.monotonic() + 3.0
     while time.monotonic() < deadline and not cancel.is_set():
         if any(t.name == "ctrl_wheel_lines" and t.is_alive() for t in threading.enumerate()):
-            time.sleep(0.05)
-            if not cancel.is_set():
-                os.kill(os.getpid(), signal.SIGINT)
-            return
+            break
         time.sleep(0.01)
+    time.sleep(0.05)
+    if not cancel.is_set():
+        os.kill(os.getpid(), signal.SIGINT)
 
 
 def test_clean_ctrl_c_prints_nothing_after_the_summary(tmp_path, capsys):
-    """Regression (FW #477): after a clean stop on a real port, the reader thread's failed read
-    must not log 'line source stopped' after the summary. The SIGINT lands while the reader
-    thread is live, so the port is closed mid-read."""
+    """Regression (FW #477): after a clean stop on a pyserial loop:// loopback source, the reader
+    thread's failed read must not log 'line source stopped' after the summary. The SIGINT lands
+    while the reader thread is live, so the port is closed mid-read."""
     for i in range(8):
         cmd_port, echo_port = _two_free_ports()
         cancel = threading.Event()
@@ -549,7 +550,7 @@ def test_clean_ctrl_c_prints_nothing_after_the_summary(tmp_path, capsys):
         try:
             rc = cwb.main(["--port", "loop://", "--record", str(tmp_path / f"clean{i}.csv"),
                            "--cmd-port", str(cmd_port), "--echo-port", str(echo_port),
-                           "--echo-timeout", "0.05"])
+                           "--echo-timeout", "0.05", "--duration", "10"])
         finally:
             cancel.set()
             helper.join(timeout=5.0)

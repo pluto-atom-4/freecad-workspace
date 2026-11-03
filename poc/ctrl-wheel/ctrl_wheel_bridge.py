@@ -9,7 +9,7 @@ Command line (FW #454): build_parser() and main(argv) -> int. Run from poc/ctrl-
     python3 ctrl_wheel_bridge.py --port rfc2217://localhost:4001 --record ac1.csv
 Exactly one of --port / --stdin. --record is required; an existing file is refused
 unless --overwrite. Exit codes: 0 run finished (EOF or Ctrl-C), 2 usage error, a failed
-source (at open, or mid-run after the summary), a CSV write error or an echo socket error.
+source (at open, or mid-run: the 'line source stopped' line is logged BEFORE the summary), a CSV write error or an echo socket error.
 Ctrl-C ends the run through stop_event and prints the summary.
 An unreachable URL with --duration returns 2 on purpose: nothing was ever opened, so the
 run is a failed source, not a clean finish.
@@ -90,9 +90,10 @@ class BridgeStats:
         # Not dataclass fields: the pinned field list has no send-error or source-error column.
         self.send_errors = 0
         self.source_error: str | None = None  # text of a line source error that ended the run
-        # Set True by run_bridge on every exit path; a reader failure after that is a consequence
-        # of shutdown (the owner closes the port next).
+        # Set True in run_bridge's finally (every exit after the reader thread has started); a reader
+        # failure after that is a consequence of shutdown (the caller closes the port next).
         self.closing = False
+        self.closing_lock = threading.Lock()
 
 
 @dataclass
@@ -240,9 +241,10 @@ def _read_lines(lines: Iterable[str], out: queue.Queue, finished: threading.Even
     except KeyboardInterrupt:  # Ctrl-C ends the source like EOF
         pass
     except BaseException as exc:  # the line source ends the run; it does not crash the bridge
-        if not stats.closing:
-            stats.source_error = f"{type(exc).__name__}: {exc}"
-            _log(f"line source stopped: {exc}")
+        with stats.closing_lock:
+            if not stats.closing:
+                stats.source_error = f"{type(exc).__name__}: {exc}"
+                _log(f"line source stopped: {exc}")
     finally:
         finished.set()
 
@@ -397,8 +399,8 @@ def run_bridge(
     ends on duration_s, stop_event, or an exhausted line source (after draining).
     A line source that raises (other than KeyboardInterrupt) also ends the run; its
     error text is kept in BridgeStats.source_error. Once the run loop has ended (including
-    the final settle wait, and after run_bridge returns or raises) a failure of the line source is a
-    consequence of shutdown and is neither logged nor recorded; a failure before that still sets
+    the final settle wait, and after run_bridge returns or raises) a failure of the line source is
+    ignored (neither logged nor recorded); a failure before that still sets
     stats.source_error and is logged.
     A final stale command is sent unless the last command was already stale. It is
     not logged as a CSV row, so cmds_sent can exceed the row count by one.
@@ -425,9 +427,9 @@ def run_bridge(
     finished = threading.Event()
     reader = threading.Thread(
         target=_read_lines, args=(lines, lines_q, finished, stats), name="ctrl_wheel_lines", daemon=True)
-    reader.start()
     started = clock()
     try:
+        reader.start()
         while True:
             if stop_event is not None and stop_event.is_set():
                 break
@@ -446,7 +448,8 @@ def run_bridge(
             run.flush_timeouts()
             sleep(poll_s)
     finally:
-        stats.closing = True
+        with stats.closing_lock:
+            stats.closing = True
         try:
             run.finish()
             run.settle(poll_s, sleep)
@@ -663,8 +666,8 @@ def main(argv: list[str] | None = None) -> int:
             stats = run_bridge(
                 lines, relay, (_LOOPBACK, args.cmd_port), sock, log,
                 duration_s=args.duration, echo_timeout_s=args.echo_timeout, stop_event=stop)
-            # Decide NOW, before the port is closed below: closing it makes the reader thread
-            # fail its next read, and that late failure is a consequence of the shutdown.
+            # Snapshot is taken before the port is closed below; stats.closing is the real guard
+            # against the reader's late failure.
             source_error = stats.source_error
         except KeyboardInterrupt:
             _log("interrupted during shutdown; no summary")

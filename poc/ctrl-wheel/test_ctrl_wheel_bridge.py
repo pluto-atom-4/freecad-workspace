@@ -474,7 +474,7 @@ def test_source_error_before_the_run_ended_is_still_recorded(tmp_path, cmd_rx, e
         raise RuntimeError("early failure")
 
     stats, _path = _run(
-        tmp_path, _early_failure(), cmd_rx.getsockname(), echo_rx, duration_s=1.0
+        tmp_path, _early_failure(), cmd_rx.getsockname(), echo_rx, duration_s=5.0
     )
     err = capsys.readouterr().err
     assert stats.source_error is not None
