@@ -485,10 +485,6 @@ def test_script_help_runs_as_program():
         assert token in proc.stdout
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
 def test_csv_close_error_returns_2_after_summary(tmp_path, monkeypatch, capsys):
     """log.close() can fail on flush (disk full): rc 2, summary still printed, no traceback."""
     orig = CsvLog._release
@@ -590,3 +586,7 @@ def test_midrun_source_failure_line_comes_before_the_summary(tmp_path, monkeypat
     assert "read failed: injected" in lines[stopped[0]]
     assert stopped[0] < summaries[0]
     assert not [ln for ln in lines[summaries[0] + 1:] if ln.strip()]
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
