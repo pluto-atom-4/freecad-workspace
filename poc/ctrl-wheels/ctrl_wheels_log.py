@@ -1,12 +1,20 @@
 """
-CSV log writer for the ctrl-wheels proof of concept (issue FW #452).
+CSV log writer for the ctrl-wheels twin-wheel proof of concept (freecad-workspace
+#494, task F10, under umbrella FW #482). Contract: poc/ctrl-wheels/CONTRACT.md, S6.
 
-SIM ONLY. Not hardware-validated. The sign convention is UNVERIFIED.
-Latency UNMEASURED.
+SIM ONLY. Not hardware-validated. All signs are UNCONFIRMED (chip-side mirror,
+bridge sign and Webots sign). Latency UNMEASURED.
 
-One row per host tick. Columns are fixed by COLUMNS and written in that order,
-whatever the key order of the input mapping. A row is fully validated before
-anything is written, so a rejected row leaves no partial line.
+One row per host tick, 19 columns. Columns are fixed by COLUMNS and written in
+that order, whatever the key order of the input mapping. A row is fully
+validated before anything is written, so a rejected row leaves no partial line.
+
+whl_raw_l and whl_raw_r are the raw goal velocities the planned firmware writes
+to each chip, taken from the WHL2 line. They are not a servo readback. This log
+does not range-check whl_raw_l or whl_raw_r to int32: it accepts any Python int
+in an int column. The int32 range is enforced by the WHL2 parser,
+ctrl_wheels_msg.parse_line as rewritten by PR #511 (task F04), CONTRACT.md S1;
+this branch does not contain that change.
 
 Cell rules:
 - None or a missing key gives an empty cell.
@@ -32,15 +40,19 @@ COLUMNS = (
     "whl_seq",
     "whl_t_us",
     "whl_model_rad_s",
-    "whl_raw",
+    "whl_raw_l",
+    "whl_raw_r",
     "whl_state",
     "cmd_seq",
-    "cmd_rad_s",
+    "cmd_left_rad_s",
+    "cmd_right_rad_s",
     "stale",
     "echo_cmd_seq",
     "sim_t_s",
-    "angle_rad",
-    "vel_rad_s",
+    "angle_rad_l",
+    "angle_rad_r",
+    "vel_rad_s_l",
+    "vel_rad_s_r",
     "host_rtt_ms",
     "missed_whl",
 )
@@ -49,18 +61,22 @@ COLUMNS = (
 # so adding a column needs a description here. It is not used at run time.
 COLUMN_DOC = {
     "host_t_s": "host wall-clock seconds at the row, 3 decimals",
-    "whl_seq": "wheel telemetry sequence number from the device",
+    "whl_seq": "wheel telemetry sequence number from the device (WHL2 seq)",
     "whl_t_us": "wheel telemetry timestamp in microseconds, device clock",
-    "whl_model_rad_s": "wheel model velocity in rad/s (SIM)",
-    "whl_raw": "wheel raw velocity units as reported by the servo",
-    "whl_state": "wheel state code as reported by the device",
+    "whl_model_rad_s": "wheel model velocity in rad/s, one value for the pair (SIM, sign UNCONFIRMED)",
+    "whl_raw_l": "left raw goal velocity the firmware writes to the left chip; not a servo readback",
+    "whl_raw_r": "right raw goal velocity the firmware writes to the right chip; not a servo readback",
+    "whl_state": "pair state code from the WHL2 line: 0 run, 1 hold after a fall, 2 bus down",
     "cmd_seq": "sequence number of the command sent by the host",
-    "cmd_rad_s": "commanded wheel velocity in rad/s",
+    "cmd_left_rad_s": "commanded left wheel velocity in rad/s, after the host sign and clamp",
+    "cmd_right_rad_s": "commanded right wheel velocity in rad/s, after the host sign and clamp",
     "stale": "stale flag, 0 or 1, as supplied by the caller",
-    "echo_cmd_seq": "cmd_seq_echo from the echo JSON; empty when no echo",
+    "echo_cmd_seq": "cmd_seq_echo from the echo JSON; empty when no echo or the echo value is null",
     "sim_t_s": "Webots simulation time in seconds; empty when no echo",
-    "angle_rad": "simulated frame angle in rad; empty when no echo",
-    "vel_rad_s": "simulated frame velocity in rad/s; empty when no echo",
+    "angle_rad_l": "simulated left hinge angle in rad; empty when no echo",
+    "angle_rad_r": "simulated right hinge angle in rad; empty when no echo",
+    "vel_rad_s_l": "simulated left hinge velocity in rad/s; empty when no echo or the echo value is null",
+    "vel_rad_s_r": "simulated right hinge velocity in rad/s; empty when no echo or the echo value is null",
     "host_rtt_ms": "wall ms from sending cmd_seq to its echo (not link latency); empty when no echo",
     "missed_whl": "count of missed wheel telemetry frames as supplied by the caller",
 }
@@ -68,7 +84,8 @@ COLUMN_DOC = {
 _INT_COLUMNS = (
     "whl_seq",
     "whl_t_us",
-    "whl_raw",
+    "whl_raw_l",
+    "whl_raw_r",
     "whl_state",
     "cmd_seq",
     "stale",
