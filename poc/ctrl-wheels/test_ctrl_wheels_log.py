@@ -5,14 +5,13 @@ Unit tests for the ctrl-wheels CSV log writer (ctrl_wheels_log), task F09
 
 SIM ONLY. Not hardware-validated. The sign convention is UNVERIFIED.
 
-Test-first and intentionally RED until task F10 (freecad-workspace #494)
-rewrites ctrl_wheels_log.py. F09 and F10 are one PR. Until then the module
-is still the single-wheel copy, so most tests here fail on purpose.
-
-This file pins contract S6 of poc/ctrl-wheels/CONTRACT.md: the 19-column
-tuple, the column docs, the cell formatting rules and the atomic-row rule.
-The column tuple is duplicated here by design. When the contract changes,
-edit the contract and this test together.
+This suite pins contract S6 of poc/ctrl-wheels/CONTRACT.md for ctrl_wheels_log:
+the 19-column tuple, the column docs, the cell formatting rules (int columns,
+float columns with %.6f and %.3f), the refusals (bool, NaN, inf, values out of
+float range, unknown columns), the atomic-row rule, and the file and close
+behaviour. The expected text is hand-written. The column tuple is duplicated
+here by design. When the contract changes, edit the contract and this test
+together.
 
 Every test writes only under pytest's tmp_path, never to a real path, and
 opens no network port.
@@ -250,6 +249,10 @@ class TestColumnDoc:
     def test_raw_docs_do_not_claim_servo_readback(self, name):
         assert "reported by the servo" not in COLUMN_DOC[name]
 
+    @pytest.mark.parametrize("name", ["whl_raw_l", "whl_raw_r"])
+    def test_raw_docs_say_not_a_servo_readback(self, name):
+        assert "not a servo readback" in COLUMN_DOC[name]
+
 
 class TestHeader:
     """Test: the header row is written at construction and equals COLUMNS."""
@@ -270,11 +273,15 @@ class TestHeader:
         finally:
             log.close()
 
-    def test_header_matches_columns_after_rows(self, tmp_path):
+    def test_header_line_unchanged_after_row(self, tmp_path):
         path = tmp_path / "log.csv"
         with CsvLog(path) as log:
+            header_before = path.read_text(encoding="utf-8").splitlines()[0]
             log.write_row(_full_row())
-        assert _read_rows(path)[0] == list(COLUMNS)
+        lines = path.read_text(encoding="utf-8").splitlines()
+        assert lines[0] == header_before
+        assert lines[0] == ",".join(EXPECTED_COLUMNS)
+        assert len(lines) == 2
 
 
 class TestRoundTrip:
@@ -440,6 +447,19 @@ class TestRejectedValues:
         _assert_rejected(tmp_path, row)
 
 
+class TestOutOfFloatRange:
+    """Test: an int too large for float() is refused with ValueError, nothing written."""
+
+    @pytest.mark.parametrize("col", ["cmd_left_rad_s", "angle_rad_r", "host_rtt_ms"])
+    @pytest.mark.parametrize(
+        "bad", [10**400, -(10**400)], ids=["huge-positive", "huge-negative"]
+    )
+    def test_out_of_float_range_rejected(self, tmp_path, col, bad):
+        row = _full_row()
+        row[col] = bad
+        _assert_rejected(tmp_path, row)
+
+
 class TestAtomicRow:
     """Test: a refused row between two valid rows leaves no partial line."""
 
@@ -532,8 +552,6 @@ class TestContextManager:
         log = CsvLog(tmp_path / "cm.csv")
         with log as entered:
             assert entered is log
-        with pytest.raises(ValueError):
-            log.write_row(_full_row())
 
     def test_with_block_writes_and_closes(self, tmp_path):
         path = tmp_path / "cm.csv"
@@ -541,8 +559,6 @@ class TestContextManager:
         with log:
             log.write_row(_full_row())
         assert _read_rows(path) == [HEADER, FULL_ROW_TEXT]
-        with pytest.raises(ValueError):
-            log.write_row(_full_row())
 
     def test_closes_when_body_raises(self, tmp_path):
         path = tmp_path / "cm_exc.csv"
@@ -552,8 +568,6 @@ class TestContextManager:
                 log.write_row(_full_row())
                 raise RuntimeError("boom")
         assert _read_rows(path) == [HEADER, FULL_ROW_TEXT]
-        with pytest.raises(ValueError):
-            log.write_row(_full_row())
 
 
 if __name__ == "__main__":

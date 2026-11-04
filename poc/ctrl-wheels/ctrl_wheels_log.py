@@ -10,7 +10,10 @@ that order, whatever the key order of the input mapping. A row is fully
 validated before anything is written, so a rejected row leaves no partial line.
 
 whl_raw_l and whl_raw_r are the raw goal velocities the planned firmware writes
-to each chip, taken from the WHL2 line. They are not a servo readback.
+to each chip, taken from the WHL2 line. They are not a servo readback. This log
+does not range-check whl_raw_l or whl_raw_r to int32: it accepts any Python int
+in an int column. The int32 range is enforced by the WHL2 parser
+(ctrl_wheels_msg.parse_line, CONTRACT.md S1).
 
 Cell rules:
 - None or a missing key gives an empty cell.
