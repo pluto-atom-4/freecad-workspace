@@ -38,8 +38,10 @@ bytes fail the key-set check, so they are refused.
 Limits, as CONTRACT.md S3 states them: only the command wheels are clamped to
 +-3.0 rad/s. The echo velocities and angles are NOT clamped; they pass through
 unchanged. cmd_seq and cmd_seq_echo are non-negative ints with no explicit
-upper bound. A value too large for Python's int-to-text limit is refused with
-UdpMsgError on both encode and decode.
+upper bound. CONTRACT.md S3 says only "JSON integer, 0 or more" and is silent
+on huge values. This module refuses a value past Python's int-to-text limit
+with UdpMsgError on both encode and decode. That refusal is an implementation
+choice, not a contract rule.
 
 Usage (run from poc/ctrl-wheels):
     python3 -m pytest test_ctrl_wheels_udp.py -v

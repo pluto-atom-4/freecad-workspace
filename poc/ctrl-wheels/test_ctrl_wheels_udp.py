@@ -8,11 +8,20 @@ decoders, the loopback listener and the drain helper.
 What the suite pins: poc/ctrl-wheels/CONTRACT.md, section S3 (the v2 command
 and echo shapes, the exact-key-set rule at every level, the integer version
 tag v == 2, the +-3.0 clamp on the command wheels only, the nulls allowed in
-the echo, no explicit upper bound on cmd_seq, with an int too large for
-Python's int-to-text limit refused with UdpMsgError on both encode and decode)
-and section S4 (command port 5018, echo port 5017, asserted as values). The
-literal reserved port set of S4 belongs to the code that binds the ports, not
-to this module, so it is not tested here.
+the echo, no explicit upper bound on cmd_seq) and section S4 (command port
+5018, echo port 5017, asserted as values). The literal reserved port set of S4
+belongs to the code that binds the ports, not to this module, so it is not
+tested here.
+
+CONTRACT.md S3 says only "JSON integer, 0 or more" and is silent on huge values.
+The refusal of an int past Python's int-to-text limit with UdpMsgError, on
+encode and on decode, is an implementation choice of ctrl_wheels_udp, pinned
+here; it is not a contract rule.
+
+Assumption: the four int-to-text tests size their inputs from
+sys.get_int_max_str_digits() at import time (limit + 1 digits). They are
+skipped when that limit is 0 (unlimited) or when the interpreter has no such
+limit. The default CPython limit is 4300 digits.
 
 Stdlib plus pytest. Tests bind only 127.0.0.1 port 0
 (ephemeral). The production ports are asserted as values and never bound.
@@ -68,6 +77,16 @@ LEG_KEYS = {"angle_rad", "vel_rad_s"}
 NON_FINITE_TOKENS = [b"NaN", b"Infinity", b"-Infinity"]
 # Huge integer that overflows a float (401 digits, under the int-to-str limit).
 HUGE_INT = b"1" + b"0" * 400
+
+# CPython refuses int <-> text conversion past sys.get_int_max_str_digits() with
+# ValueError. The int-to-text tests size their inputs from the running interpreter:
+# limit + 1 digits. They are skipped when the limit is 0 (unlimited) or when the
+# interpreter has no such limit.
+INT_DIGIT_LIMIT = sys.get_int_max_str_digits() if hasattr(sys, "get_int_max_str_digits") else 0
+skip_without_int_limit = pytest.mark.skipif(
+    INT_DIGIT_LIMIT == 0,
+    reason="interpreter has no int-to-text digit limit, so no over-limit value exists",
+)
 
 # Values that must be refused for each integer or float field.
 V_BAD = [b"1", b"3", b"0", b"-2", b'"2"', b"2.0", b"true", b"false", b"null"]
@@ -354,11 +373,13 @@ class TestEncodeCmd:
         with pytest.raises(UdpMsgError):
             encode_cmd(1.0, 0.0, 0.0, 0)
 
+    @skip_without_int_limit
     def test_cmd_seq_too_large_for_text_rejected(self):
         # json.dumps raises ValueError for an int past the int-to-text limit; encode
-        # must turn that into UdpMsgError, as decode does.
+        # must turn that into UdpMsgError, as decode does. 10 ** limit has limit + 1 digits.
+        over_limit = 10 ** INT_DIGIT_LIMIT
         with pytest.raises(UdpMsgError):
-            encode_cmd(10**5000, 0.0, 0.0, 0)
+            encode_cmd(over_limit, 0.0, 0.0, 0)
 
     def test_negative_cmd_seq_rejected(self):
         with pytest.raises(UdpMsgError):
@@ -513,11 +534,12 @@ class TestDecodeCmd:
         other = "right" if side == "left" else "left"
         assert f"wheels.{other}" not in str(info.value)
 
+    @skip_without_int_limit
     def test_cmd_seq_too_many_digits_rejected(self):
-        # 5000 digits: json.loads refuses this with ValueError (int-to-text limit),
+        # limit + 1 digits: json.loads refuses this with ValueError (int-to-text limit),
         # which the module turns into UdpMsgError.
         with pytest.raises(UdpMsgError):
-            decode_cmd(_raw_cmd(cmd_seq=b"1" + b"0" * 5000))
+            decode_cmd(_raw_cmd(cmd_seq=b"1" + b"0" * INT_DIGIT_LIMIT))
 
 
 class TestEncodeEcho:
@@ -561,9 +583,11 @@ class TestEncodeEcho:
         with pytest.raises(UdpMsgError):
             encode_echo(**_echo_kwargs(cmd_seq_echo=bad))
 
+    @skip_without_int_limit
     def test_cmd_seq_echo_too_large_for_text_rejected(self):
+        over_limit = 10 ** INT_DIGIT_LIMIT  # limit + 1 digits
         with pytest.raises(UdpMsgError):
-            encode_echo(**_echo_kwargs(cmd_seq_echo=10**5000))
+            encode_echo(**_echo_kwargs(cmd_seq_echo=over_limit))
 
 
 class TestDecodeEcho:
@@ -704,9 +728,10 @@ class TestDecodeEcho:
         with pytest.raises(UdpMsgError):
             decode_echo(data)
 
+    @skip_without_int_limit
     def test_cmd_seq_echo_too_many_digits_rejected(self):
         with pytest.raises(UdpMsgError):
-            decode_echo(_raw_echo(seq=b"1" + b"0" * 5000))
+            decode_echo(_raw_echo(seq=b"1" + b"0" * INT_DIGIT_LIMIT))  # limit + 1 digits
 
 
 class TestRoundTrip:
