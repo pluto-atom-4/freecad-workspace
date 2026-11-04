@@ -2,7 +2,7 @@
 """
 WHL2 twin-wheel line protocol (ctrl_wheels_msg) for the ctrl-wheels POC:
 formatter and parser for the two-wheel line, the single-wheel Whl type it
-splits into, and (still single-wheel, pending F05/F06) a step-input generator.
+splits into, and a step-input generator that still emits single-wheel lines.
 
 SIM ONLY. This is a sim-only twin. Nothing here is validated on real hardware
 or against a real receiver. The sign conventions are UNCONFIRMED: the planned
@@ -26,13 +26,14 @@ Protocol details (WHL2):
 - state: 0 run, 1 hold after a fall, 2 bus down; one state for the pair
 - HH: 2-digit UPPERCASE hex XOR checksum of the body (from the leading W up to
   the *). The checksum is compared before the field count, prefix and tokens
-- Line terminator: \\n on output; the parser accepts a trailing \\n or \\r\\n
-  or none
+- Line terminator: \\n on output; the parser accepts exactly one trailing \\n,
+  \\r\\n, or no terminator
 
 Single-wheel names kept for the split: Whl (seq, t_us, model_rad_s, raw, state)
 and format_whl, which writes the single-wheel WHL v1 line (prefix WHL, 6 fields).
-step_lines and main still generate WHL v1 lines through format_whl; they are
-not yet moved to the twin (tasks F05 and F06). parse_line accepts WHL2 only.
+step_lines (the --step CLI) still generates single-wheel WHL v1 lines through
+format_whl; it is not yet moved to the twin (tasks F05 and F06). parse_line
+accepts WHL2 only.
 
 Usage (run from poc/ctrl-wheels; prints single-wheel WHL v1 lines until F05/F06):
     python3 -m ctrl_wheels_msg --step 1.0 --seconds 5
@@ -62,6 +63,9 @@ STATES = (0, 1, 2)
 # Firmware's own step cap (SIM ONLY). step_lines clamps to it; the wire does not.
 RAW_CAP = 125
 RAW_RPM_PER_UNIT = 0.229
+# Longest token the parser looks at. Longer tokens are refused before any
+# int() or float() call, so a huge digit string cannot reach Python's int limit.
+_MAX_TOKEN_LEN = 20
 
 _UINT_RE = re.compile(r"[0-9]+")
 _INT_RE = re.compile(r"[+-]?[0-9]+")
@@ -122,30 +126,47 @@ def _model_to_float(value: object) -> float:
         raise WhlError(f"model_rad_s out of float range, got {value!r}")
 
 
+def _show(tok: str) -> str:
+    """Repr of a token for an error message; a long token is shown by length only."""
+    if len(tok) > _MAX_TOKEN_LEN:
+        return f"<{len(tok)} chars>"
+    return repr(tok)
+
+
+def _check_token_len(name: str, tok: str) -> None:
+    if len(tok) > _MAX_TOKEN_LEN:
+        raise WhlError(
+            f"{name} token too long: {len(tok)} chars, limit {_MAX_TOKEN_LEN}"
+        )
+
+
 def _parse_uint(name: str, tok: str) -> int:
+    _check_token_len(name, tok)
     if not _UINT_RE.fullmatch(tok):
-        raise WhlError(f"{name} must be decimal digits, got {tok!r}")
+        raise WhlError(f"{name} must be decimal digits, got {_show(tok)}")
     return int(tok)
 
 
 def _parse_int(name: str, tok: str) -> int:
+    _check_token_len(name, tok)
     if not _INT_RE.fullmatch(tok):
-        raise WhlError(f"{name} must be a decimal integer, got {tok!r}")
+        raise WhlError(f"{name} must be a decimal integer, got {_show(tok)}")
     return int(tok)
 
 
 def _parse_float(name: str, tok: str) -> float:
+    _check_token_len(name, tok)
     # Reject any whitespace and underscores before float() sees the token.
     if any(c.isspace() for c in tok):
-        raise WhlError(f"{name} has embedded whitespace: {tok!r}")
+        raise WhlError(f"{name} has embedded whitespace: {_show(tok)}")
     if "_" in tok:
-        raise WhlError(f"{name} contains underscore: {tok!r}")
+        raise WhlError(f"{name} contains underscore: {_show(tok)}")
     try:
         val = float(tok)
     except ValueError:
-        raise WhlError(f"{name} is not a valid float: {tok!r}")
+        raise WhlError(f"{name} is not a valid float: {_show(tok)}")
     if not math.isfinite(val):
-        raise WhlError(f"{name} is not finite: {tok!r}")
+        raise WhlError(f"{name} is not finite: {_show(tok)}")
     return val
 
 
@@ -209,18 +230,26 @@ def format_whl(w: Whl) -> str:
 
 def parse_line(line: str) -> Whl2:
     """
-    Parse one WHL2 line. Accepts a trailing \\n, \\r\\n or no terminator.
+    Parse one WHL2 line. Accepts exactly one trailing \\n, one trailing \\r\\n,
+    or no terminator. Any other trailing characters (a doubled terminator or a
+    lone \\r) stay in the line and are refused by the checks below.
 
     The checksum is compared first, then the field count (7), the prefix
     (WHL2), then each token. A WHL v1 line (6 fields) is refused by the field
-    count. Float tokens must be finite and free of whitespace and underscores.
-    Integer tokens use explicit patterns, not int(), so "1_0" is rejected.
-    raw_l and raw_r must fit int32.
+    count. Integer tokens are checked against an explicit pattern before int()
+    is called, so "1_0" and "+" alone are refused, and "+5" is accepted only
+    for raw_l and raw_r (see the parser tests). Float tokens are checked for
+    whitespace and underscores, then float(), and must be finite. Every token
+    is refused above 20 characters before any conversion. raw_l and raw_r must
+    fit int32.
 
     Raises:
         WhlError: on any malformed, mis-checksummed or out-of-range line.
     """
-    line = line.rstrip("\r\n")
+    if line.endswith("\r\n"):
+        line = line[:-2]
+    elif line.endswith("\n"):
+        line = line[:-1]
 
     star = line.rfind("*")
     if star == -1:
@@ -243,7 +272,7 @@ def parse_line(line: str) -> Whl2:
     if len(fields) != FIELD_COUNT:
         raise WhlError(f"expected {FIELD_COUNT} fields, got {len(fields)}")
     if fields[0] != PREFIX:
-        raise WhlError(f"bad prefix: expected {PREFIX!r}, got {fields[0]!r}")
+        raise WhlError(f"bad prefix: expected {PREFIX!r}, got {_show(fields[0])}")
 
     seq = _parse_uint("seq", fields[1])
     if seq >= SEQ_MOD:
@@ -353,7 +382,10 @@ def step_lines(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Print a constant-step WHL stream (SIM ONLY, sign UNVERIFIED)."
+        description=(
+            "Print a constant-step single-wheel WHL v1 stream "
+            "(SIM ONLY, sign UNVERIFIED; the WHL2 twin is not wired here until F05/F06)."
+        )
     )
     parser.add_argument("--step", type=float, required=True, help="model value in rad/s")
     parser.add_argument("--seconds", type=float, required=True, help="duration in seconds")
