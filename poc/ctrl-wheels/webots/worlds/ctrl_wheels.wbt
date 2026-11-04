@@ -1,0 +1,212 @@
+#VRML_SIM R2025a utf8
+
+# Twin of ctrl_wheel.wbt for the ctrl-wheel relay sim (freecad-workspace issue #501, umbrella #482).
+# Two velocity-driven wheels on one fixed body, driven by the ctrl_wheels controller with setVelocity.
+# SIM ONLY. No balance claim.
+#
+# The body is fixed: the Robot has no Physics node, so it neither moves nor balances. Only the two
+# wheels spin about their axles. The wheel endPoint Solids have Physics (mass 0.05).
+#
+# The lookup names for the left and right motors and position sensors are the ones written in the
+# two HingeJoint device lists below. The controller looks them up exactly (case-sensitive).
+#
+# Frame: ENU (x East, y North, z Up).
+# A Webots Cylinder's axis is local Z, so do NOT add a `rotation` to a wheel Solid. For each wheel,
+# the HingeJoint anchor and the endPoint translation must stay identical
+# (0.026 = body face 0.02 + half the wheel height 0.006, with the sign set by the side).
+#
+# Orientation of the Robot (on paper, UNVERIFIED until the owner opens this world in Webots):
+# the Robot is rotated -90 degrees about x, so its local +z points to world +y. Both hinge axes are
+# therefore local 0 0 1 (world +y). The left wheel sits at local z +0.026 (world +y) and the right
+# wheel at local z -0.026 (world -y). This is the reason for the sign flip compared with the
+# single-wheel template, which uses +90 degrees.
+#
+# Direction (on paper, UNVERIFIED): with the Robot at -90 degrees about x, a positive velocity command
+# on a hinge turns that wheel about world +y. For such a wheel, the floor contact point moves toward
+# -x relative to the centre, so a free-rolling wheel with positive angular velocity moves toward +x.
+# Both wheels use the same sign, so a positive command rolls BOTH wheels toward +x. The single-wheel
+# world (ctrl_wheel.wbt, rotation +90 degrees) rolls toward -x. This twin differs on purpose.
+# The owner must confirm the sign by opening this world in Webots.
+#
+# Motor limits (both wheels, owner-chosen for this simulation, NOT servo specs). The maximum velocity
+# of 3.5 rad/s is above the controller's 3 rad/s clamp, so it does not limit a command. The maximum
+# torque of 1e-3 N.m is assumed the same per wheel. The template quoted a wheel inertia of
+# 2.25e-5 kg.m2 for one wheel. On paper, 1e-3 / 2.25e-5 is about 44 rad/s^2, so a step to 1 rad/s
+# takes about 23 ms (the template's figure). Not re-derived or measured here. Sim only, UNVERIFIED
+# against hardware.
+
+WorldInfo {
+  info [
+    "ctrl-wheels (freecad-workspace issue #501): twin of the single-wheel world. Two idealised velocity-driven wheels on a fixed body (generic RotationalMotor, no servo model) for the ctrl_wheels controller. Sim only."
+  ]
+  title "ctrl_wheels"
+  coordinateSystem "ENU"
+  basicTimeStep 16
+}
+
+Viewpoint {
+  orientation -0.3 0.3 0.9 1.2
+  position -0.25 -0.35 0.35
+}
+
+Background {
+  skyColor [0.6 0.75 0.95]
+}
+
+DirectionalLight {
+  direction -0.5 -0.5 -1.0
+  intensity 1.0
+  ambientIntensity 0.4
+}
+
+Solid {
+  translation 0 0 -0.01
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.75 0.75 0.75
+        }
+      }
+      geometry Box {
+        size 2.0 2.0 0.02
+      }
+    }
+  ]
+  name "floor"
+  boundingObject Box {
+    size 2.0 2.0 0.02
+  }
+}
+
+DEF CTRL_WHEELS Robot {
+  translation 0 0 0.03
+  rotation 1 0 0 -1.57079633
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.15 0.15 0.15
+        }
+      }
+      geometry Box {
+        size 0.04 0.02 0.04
+      }
+    }
+    HingeJoint {
+      jointParameters HingeJointParameters {
+        axis 0 0 1
+        anchor 0 0 0.026
+      }
+      device [
+        RotationalMotor {
+          name "wheel_motor_left"
+          maxVelocity 3.5
+          maxTorque 1e-3
+        }
+        PositionSensor {
+          name "wheel_sensor_left"
+        }
+      ]
+      endPoint Solid {
+        translation 0 0 0.026
+        children [
+          Transform {
+            translation 0.024 0 0
+            children [
+              Shape {
+                appearance Appearance {
+                  material Material {
+                    diffuseColor 1 0 0
+                  }
+                }
+                geometry Box {
+                  size 0.006 0.006 0.014
+                }
+              }
+            ]
+          }
+          Shape {
+            appearance Appearance {
+              material Material {
+                diffuseColor 0.05 0.05 0.05
+              }
+            }
+            geometry Cylinder {
+              radius 0.03
+              height 0.012
+            }
+          }
+        ]
+        name "wheel_left"
+        boundingObject Cylinder {
+          radius 0.03
+          height 0.012
+        }
+        physics Physics {
+          density -1
+          mass 0.05
+        }
+      }
+    }
+    HingeJoint {
+      jointParameters HingeJointParameters {
+        axis 0 0 1
+        anchor 0 0 -0.026
+      }
+      device [
+        RotationalMotor {
+          name "wheel_motor_right"
+          maxVelocity 3.5
+          maxTorque 1e-3
+        }
+        PositionSensor {
+          name "wheel_sensor_right"
+        }
+      ]
+      endPoint Solid {
+        translation 0 0 -0.026
+        children [
+          Transform {
+            translation 0.024 0 0
+            children [
+              Shape {
+                appearance Appearance {
+                  material Material {
+                    diffuseColor 0 0 1
+                  }
+                }
+                geometry Box {
+                  size 0.006 0.006 0.014
+                }
+              }
+            ]
+          }
+          Shape {
+            appearance Appearance {
+              material Material {
+                diffuseColor 0.05 0.05 0.05
+              }
+            }
+            geometry Cylinder {
+              radius 0.03
+              height 0.012
+            }
+          }
+        ]
+        name "wheel_right"
+        boundingObject Cylinder {
+          radius 0.03
+          height 0.012
+        }
+        physics Physics {
+          density -1
+          mass 0.05
+        }
+      }
+    }
+  ]
+  name "ctrl_wheels"
+  controller "ctrl_wheels"
+  supervisor TRUE
+}
