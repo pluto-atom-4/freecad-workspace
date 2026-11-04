@@ -1,31 +1,40 @@
 #!/usr/bin/env python3
 """
-WHL wheel-velocity line protocol (ctrl_wheels_msg): formatter, parser and a
-step-input generator for the ctrl-wheels POC.
+WHL2 twin-wheel line protocol (ctrl_wheels_msg) for the ctrl-wheels POC:
+formatter and parser for the two-wheel line, the single-wheel Whl type it
+splits into, and (still single-wheel, pending F05/F06) a step-input generator.
 
-SIM ONLY. The sign convention of the model and raw values is UNVERIFIED.
-The wire format is not validated against any real device or receiver.
-This module must stay in step with the BRC header lib/wheel_frame/wheel_frame.h
-(format, field order, limits, raw conversion). That header is on the main branch of
-pluto-atom-4/balancing-robot-controller (merged in PR #258, issue #240). The one exception is the non-finite rule below, until
-balancing-robot-controller PR #262 (issue #261) is merged.
+SIM ONLY. This is a sim-only twin. Nothing here is validated on real hardware
+or against a real receiver. The sign conventions are UNCONFIRMED: the planned
+firmware writes rawR already negated (chip side), the Webots mirror of the two
+wheels is UNVERIFIED, and "forward-positive" for model is the contract's
+definition only (CONTRACT.md S2 in this directory).
 
-Line format (ASCII, one line per sample):
-    WHL,<seq>,<t_us>,<model %.6f>,<raw>,<state>*<HH>\\n
+Line format of the twin (WHL2, ASCII, one line per sample, CONTRACT.md S1):
+    WHL2,<seq>,<t_us>,<model %.6f>,<rawL>,<rawR>,<state>*<HH>\\n
 
-Protocol details:
-- seq: uint16 sequence number, wraps at 65536 (format takes seq mod 65536)
+Protocol details (WHL2):
+- seq: uint16 sequence number, wraps at 65536 (format takes seq mod 65536);
+  the parser rejects 65536 or more
 - t_us: uint32 device microseconds (0 .. 2^32-1)
-- model: model wheel velocity in rad/s, %.6f; a non-finite value is rejected (format_whl raises WhlError, parse_line rejects the tokens nan/inf); the BRC firmware formatter will be changed to drop such a line too (balancing-robot-controller issue #261, PR #262; until that is merged BRC main still prints 0.000000), so the host then sees only a seq gap (the relay keeps the last good value and goes stale only if no good line arrives for 200 ms)
-- raw: Dynamixel goal velocity raw units (0.229 rpm per unit). The wire accepts
-  any int32 value (-2^31 .. 2^31-1). The +-125 clamp (RAW_CAP) is the
-  firmware's own step cap and is applied only by step_lines, not by the wire.
-- state: 0, 1 or 2
-- HH: 2-digit UPPERCASE hex XOR checksum of the body (WHL up to the *)
-- "-0.000000" is normalised to "0.000000"
-- Line terminator: \\n (parser also accepts \\r\\n)
+- model: model plant velocity in rad/s, %.6f; a non-finite value is refused by
+  the formatter (WhlError) and the parser rejects the tokens nan and inf;
+  "-0.000000" is normalised to "0.000000"
+- rawL, rawR: signed decimal integers, int32 range. The wire accepts any int32
+  value; the +-125 cap (RAW_CAP) is a firmware step cap and is applied only by
+  step_lines, not by the wire
+- state: 0 run, 1 hold after a fall, 2 bus down; one state for the pair
+- HH: 2-digit UPPERCASE hex XOR checksum of the body (from the leading W up to
+  the *). The checksum is compared before the field count, prefix and tokens
+- Line terminator: \\n on output; the parser accepts a trailing \\n or \\r\\n
+  or none
 
-Usage (run from poc/ctrl-wheels):
+Single-wheel names kept for the split: Whl (seq, t_us, model_rad_s, raw, state)
+and format_whl, which writes the single-wheel WHL v1 line (prefix WHL, 6 fields).
+step_lines and main still generate WHL v1 lines through format_whl; they are
+not yet moved to the twin (tasks F05 and F06). parse_line accepts WHL2 only.
+
+Usage (run from poc/ctrl-wheels; prints single-wheel WHL v1 lines until F05/F06):
     python3 -m ctrl_wheels_msg --step 1.0 --seconds 5
     python3 -m ctrl_wheels_msg --step 1.0 --seconds 5 --no-sleep
 """
@@ -41,13 +50,15 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 
-PREFIX = "WHL"
+PREFIX = "WHL2"
+FIELD_COUNT = 7
+# Prefix of the single-wheel WHL v1 line written by format_whl (6 fields).
+_V1_PREFIX = "WHL"
 SEQ_MOD = 65536
 T_US_MAX = 2**32 - 1
 INT32_MIN = -(2**31)
 INT32_MAX = 2**31 - 1
 STATES = (0, 1, 2)
-FIELD_COUNT = 6
 # Firmware's own step cap (SIM ONLY). step_lines clamps to it; the wire does not.
 RAW_CAP = 125
 RAW_RPM_PER_UNIT = 0.229
@@ -58,12 +69,12 @@ _HEX_DIGITS = "0123456789ABCDEF"
 
 
 class WhlError(ValueError):
-    """Raised when WHL formatting or parsing fails."""
+    """Raised when WHL2 or WHL v1 formatting or parsing fails."""
 
 
 @dataclass(frozen=True)
 class Whl:
-    """Parsed or to-be-formatted WHL sample."""
+    """Parsed or to-be-formatted single-wheel sample (WHL v1 shape)."""
     seq: int
     t_us: int
     model_rad_s: float
@@ -71,8 +82,19 @@ class Whl:
     state: int
 
 
+@dataclass(frozen=True)
+class Whl2:
+    """Parsed or to-be-formatted twin sample (WHL2): one model, two raws."""
+    seq: int
+    t_us: int
+    model_rad_s: float
+    raw_l: int
+    raw_r: int
+    state: int
+
+
 def checksum(body: str) -> int:
-    """XOR of ord values of an ASCII body (WHL up to the *, exclusive)."""
+    """XOR of ord values of an ASCII body (WHL2 up to the *, exclusive)."""
     result = 0
     for c in body:
         if not c.isascii():
@@ -127,8 +149,42 @@ def _parse_float(name: str, tok: str) -> float:
     return val
 
 
+def _model_text(model: float) -> str:
+    """Format a finite model with %.6f, normalising -0.000000 to 0.000000."""
+    model_str = f"{model:.6f}"
+    if model_str == "-0.000000":
+        model_str = "0.000000"
+    return model_str
+
+
+def format_whl2(w: Whl2) -> str:
+    """Format a Whl2 into one WHL2 line with checksum and newline."""
+    _check_int("seq", w.seq)
+    _check_int("t_us", w.t_us)
+    _check_int("raw_l", w.raw_l)
+    _check_int("raw_r", w.raw_r)
+    _check_int("state", w.state)
+
+    if not (0 <= w.t_us <= T_US_MAX):
+        raise WhlError(f"t_us out of range [0, {T_US_MAX}], got {w.t_us}")
+    _check_int32("raw_l", w.raw_l)
+    _check_int32("raw_r", w.raw_r)
+    if w.state not in STATES:
+        raise WhlError(f"state must be one of {STATES}, got {w.state}")
+
+    seq = w.seq % SEQ_MOD
+
+    model = _model_to_float(w.model_rad_s)
+    if not math.isfinite(model):
+        raise WhlError(f"model_rad_s must be finite, got {w.model_rad_s!r}")
+    model_str = _model_text(model)
+
+    body = f"{PREFIX},{seq},{w.t_us},{model_str},{w.raw_l},{w.raw_r},{w.state}"
+    return f"{body}*{checksum(body):02X}\n"
+
+
 def format_whl(w: Whl) -> str:
-    """Format a Whl into one protocol line with checksum and newline."""
+    """Format a single-wheel Whl into one WHL v1 line with checksum and newline."""
     _check_int("seq", w.seq)
     _check_int("t_us", w.t_us)
     _check_int("raw", w.raw)
@@ -145,21 +201,21 @@ def format_whl(w: Whl) -> str:
     model = _model_to_float(w.model_rad_s)
     if not math.isfinite(model):
         raise WhlError(f"model_rad_s must be finite, got {w.model_rad_s!r}")
-    model_str = f"{model:.6f}"
-    if model_str == "-0.000000":
-        model_str = "0.000000"
+    model_str = _model_text(model)
 
-    body = f"{PREFIX},{seq},{w.t_us},{model_str},{w.raw},{w.state}"
+    body = f"{_V1_PREFIX},{seq},{w.t_us},{model_str},{w.raw},{w.state}"
     return f"{body}*{checksum(body):02X}\n"
 
 
-def parse_line(line: str) -> Whl:
+def parse_line(line: str) -> Whl2:
     """
-    Parse one WHL line. Accepts a trailing \\n or \\r\\n.
+    Parse one WHL2 line. Accepts a trailing \\n, \\r\\n or no terminator.
 
-    Float tokens are lenient (exponent, leading '+') but must be finite and
-    free of whitespace and underscores. Integer tokens are checked with an
-    explicit pattern, not int(), so "1_0" is rejected. raw must fit int32.
+    The checksum is compared first, then the field count (7), the prefix
+    (WHL2), then each token. A WHL v1 line (6 fields) is refused by the field
+    count. Float tokens must be finite and free of whitespace and underscores.
+    Integer tokens use explicit patterns, not int(), so "1_0" is rejected.
+    raw_l and raw_r must fit int32.
 
     Raises:
         WhlError: on any malformed, mis-checksummed or out-of-range line.
@@ -198,14 +254,34 @@ def parse_line(line: str) -> Whl:
         raise WhlError(f"t_us out of range [0, {T_US_MAX}], got {t_us}")
 
     model = _parse_float("model_rad_s", fields[3])
-    raw = _parse_int("raw", fields[4])
-    _check_int32("raw", raw)
+    raw_l = _parse_int("raw_l", fields[4])
+    _check_int32("raw_l", raw_l)
+    raw_r = _parse_int("raw_r", fields[5])
+    _check_int32("raw_r", raw_r)
 
-    state = _parse_uint("state", fields[5])
+    state = _parse_uint("state", fields[6])
     if state not in STATES:
         raise WhlError(f"state must be one of {STATES}, got {state}")
 
-    return Whl(seq=seq, t_us=t_us, model_rad_s=model, raw=raw, state=state)
+    return Whl2(
+        seq=seq,
+        t_us=t_us,
+        model_rad_s=model,
+        raw_l=raw_l,
+        raw_r=raw_r,
+        state=state,
+    )
+
+
+def split(w: Whl2) -> tuple[Whl, Whl]:
+    """Split a twin sample into (left, right) single-wheel samples.
+
+    seq, t_us, model_rad_s and state are shared. The left Whl takes raw_l and
+    the right Whl takes raw_r, both as written (no clamp, no sign change).
+    """
+    left = Whl(seq=w.seq, t_us=w.t_us, model_rad_s=w.model_rad_s, raw=w.raw_l, state=w.state)
+    right = Whl(seq=w.seq, t_us=w.t_us, model_rad_s=w.model_rad_s, raw=w.raw_r, state=w.state)
+    return left, right
 
 
 def _raw_for(value_rad_s: float) -> int:
@@ -224,7 +300,8 @@ def step_lines(
     sleep: Callable[[float], object] = time.sleep,
 ) -> Iterator[str]:
     """
-    Yield WHL lines holding a constant model value for `seconds` at `rate_hz`.
+    Yield single-wheel WHL v1 lines holding a constant model value for `seconds`
+    at `rate_hz`. Not yet moved to the twin (task F05).
 
     State is 0. seq counts up from start_seq (format wraps it at 65536).
     t_us steps by round(1e6 / rate_hz) and wraps at 2^32 like the device.
