@@ -1,27 +1,31 @@
 #!/usr/bin/env python3
 """
-ctrl_wheels -- Webots controller for the ctrl-wheels relay simulation.
+ctrl_wheels -- Webots controller for the twin-wheel ctrl-wheels relay simulation.
 
 SIM ONLY. Nothing here is validated on hardware, and it makes no balance claim.
-The sign of the wheel against the firmware is UNVERIFIED.
+The sign of each wheel against the firmware is UNVERIFIED. This file has not been
+run in Webots by its author; runtime behaviour in Webots is NOT CHECKED.
 
-State after #457 (sub-issue of #446): this file is the copied servo_wheel_dof
-controller with the telemetry, overlay, odometry and upright-pose code removed.
-It binds UDP CMD_PORT, drains the command socket each step, keeps the latest
-valid command and drives the motor by setVelocity. It sends 0 rad/s when no
-command has arrived, when the latest command carries stale=1, or when the latest
-command is STALE_SIM_S or more old in simulated time. A non-finite sensor read
-also stops the motor (velocity 0) and skips that step's log line, echo and
-angle update. Each normal step it also sends ONE sensor echo datagram to 127.0.0.1:5007 (ECHO_ADDR). Send failures
-are ignored and counted, never raised. The echo sign is UNVERIFIED. Runtime
-behaviour in Webots is NOT CHECKED. No balance claim.
+State after tasks F18 to F20 (freecad-workspace #502 to #504, umbrella FW#482).
+The file was copied from the single-wheel controller and rewritten for the twin.
+It binds the UDP command port CMD_PORT (127.0.0.1:5018) and drains it every step,
+keeps the newest valid v2 command, and drives the two wheel motors with
+setVelocity. Both wheels get 0 rad/s when no valid command has arrived, when the
+newest command carries stale=1, or when the newest valid command is STALE_SIM_S
+or more old in simulated time. A failed or non-finite sensor read also stops both
+motors and skips that step's log line, echo and angle update. Each normal step it
+sends ONE echo datagram to 127.0.0.1:5017 (ECHO_ADDR). Send failures are ignored
+and counted, never raised. The wire format is contract v2 in
+poc/ctrl-wheels/CONTRACT.md (sections S3 and S4).
 
-Only Webots-specific import is `controller`; the sensor maths lives in
+Only the Webots-specific import is `controller`; the sensor maths lives in
 sensor_read.py so it stays importable outside Webots.
 
-Device names (must match ctrl_wheels.wbt, case-sensitive):
-    RotationalMotor: "wheel_motor"
-    PositionSensor:  "wheel_sensor"
+Device names (must match the twin world, case-sensitive). The twin world file was
+not present in the checkout this controller was written from, so the names are
+taken from the plan (discussion 266) and are UNVERIFIED against a world file:
+    RotationalMotor: "wheel_motor_left", "wheel_motor_right"
+    PositionSensor:  "wheel_sensor_left", "wheel_sensor_right"
 """
 
 import json
@@ -37,26 +41,45 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sensor_read import SensorReadError, read_sensor  # noqa: E402
 
 HOST = "127.0.0.1"
-CMD_PORT = 5008  # fixed command port; 5006 belongs to servo_wheel_dof, never use it
-ECHO_ADDR = ("127.0.0.1", 5007)  # sensor echo destination (bridge side); send only, no bind
-MOTOR_NAME = "wheel_motor"
-SENSOR_NAME = "wheel_sensor"
+CMD_PORT = 5018  # UDP command port, host -> sim. Never 5006; 5017 is the echo port.
+ECHO_ADDR = ("127.0.0.1", 5017)  # sensor echo destination (bridge side); send only, no bind
+MOTOR_LEFT_NAME = "wheel_motor_left"
+MOTOR_RIGHT_NAME = "wheel_motor_right"
+SENSOR_LEFT_NAME = "wheel_sensor_left"
+SENSOR_RIGHT_NAME = "wheel_sensor_right"
 TAG = "ctrl_wheels"
-CLAMP_RAD_S = 3.0  # UNVERIFIED: symmetric clamp on the commanded wheel velocity
-STALE_SIM_S = 0.2  # simulated seconds without a fresh command before v = 0
-SIGN = 1  # UNVERIFIED sign against the firmware; the flip lives ONLY in the bridge --sign flag, never flip both
+PROTOCOL_VERSION = 2  # the "v" value of both the command and the echo (CONTRACT.md S3)
+CLAMP_RAD_S = 3.0  # UNVERIFIED: symmetric clamp applied to each commanded wheel velocity
+STALE_SIM_S = 0.2  # simulated seconds without a fresh valid command before both wheels stop
+# UNVERIFIED sign for each wheel. The world is intended so that a positive command
+# rolls both wheels forward (discussion 266, world design). The firmware-side mirror
+# for the two servo chips is a separate sign path and is not checked against this.
+# The bridge applies its own per-wheel sign to the model before it sends a command;
+# do not flip the same wheel on both sides, because the two flips would cancel.
+SIGN_LEFT = 1
+SIGN_RIGHT = 1
+RECV_BUFSIZE = 65535
+
+# Wire key names. These are a contract with ctrl_wheels_udp.py in poc/ctrl-wheels,
+# which this controller cannot import (the controller directory is outside the
+# Python path in Webots). Change a key name in both files together or not at all.
+CMD_KEYS = frozenset({"v", "cmd_seq", "wheels", "stale"})
+WHEELS_KEYS = frozenset({"left", "right"})
 
 
 def _say(msg: str, err: bool = False) -> None:
-    # flush=True: Webots pipes stdout; without it lines can appear late/never.
+    # flush=True: Webots pipes stdout; without it lines can appear late or never.
     print(f"{TAG}: {msg}", file=sys.stderr if err else sys.stdout, flush=True)
 
 
-def _log(t_s: float, angle_rad: float, velocity_rad_s) -> None:
-    # flush=True: Webots pipes stdout; without it lines can appear late/never.
-    vel_str = "nan" if velocity_rad_s is None else f"{velocity_rad_s:.6f}"
-    print(f"{TAG}: t={t_s:.4f} angle_rad={angle_rad:.6f} velocity_rad_s={vel_str}",
-          flush=True)
+def _fmt(value) -> str:
+    return "nan" if value is None else f"{value:.6f}"
+
+
+def _log(t_s: float, angle_l: float, vel_l, angle_r: float, vel_r) -> None:
+    # flush=True: Webots pipes stdout; without it lines can appear late or never.
+    print(f"{TAG}: t={t_s:.4f} angle_rad_l={angle_l:.6f} velocity_rad_s_l={_fmt(vel_l)} "
+          f"angle_rad_r={angle_r:.6f} velocity_rad_s_r={_fmt(vel_r)}", flush=True)
 
 
 def _reject_constant(name: str):
@@ -64,7 +87,7 @@ def _reject_constant(name: str):
 
 
 def _no_duplicate_keys(pairs):
-    # Same strictness as the bridge decoder (ctrl_wheels_udp.py): a repeated key is invalid.
+    # Same strictness as ctrl_wheels_udp.py: a repeated key at any depth is invalid.
     obj = {}
     for key, value in pairs:
         if key in obj:
@@ -73,30 +96,58 @@ def _no_duplicate_keys(pairs):
     return obj
 
 
+def _is_int(value) -> bool:
+    # type() is used on purpose: bool is a subclass of int and must not pass.
+    return type(value) is int
+
+
+def _is_real(value) -> bool:
+    return type(value) in (int, float)
+
+
 def _parse_cmd(data: bytes):
-    """Return (cmd_seq, wheel_rad_s, stale) for a valid datagram, else None."""
+    """Return (cmd_seq, left_rad_s, right_rad_s, stale) for a valid v2 command, else None.
+
+    Checks match ctrl_wheels_udp.decode_cmd: exact key sets at the top level and
+    inside "wheels", "v" must be the JSON integer 2, booleans are refused where
+    numbers are expected, NaN and Infinity tokens are refused, ints must be JSON
+    ints, duplicate keys are refused. The wheel values are not clamped here; the
+    clamp is applied when the command is applied. Any malformed input returns None
+    and never raises.
+    """
     try:
         obj = json.loads(data.decode("utf-8"), parse_constant=_reject_constant,
                          object_pairs_hook=_no_duplicate_keys)
-    except (ValueError, RecursionError):
-        return None
-    if not isinstance(obj, dict) or set(obj.keys()) != {"cmd_seq", "wheel_rad_s", "stale"}:
-        return None
-    seq = obj["cmd_seq"]
-    wheel = obj["wheel_rad_s"]
-    stale = obj["stale"]
-    if type(seq) is not int or seq < 0:
-        return None
-    if type(wheel) not in (int, float):
-        return None
-    if type(stale) is not int or stale not in (0, 1):
-        return None
-    try:
-        if not math.isfinite(float(wheel)):
+        if not isinstance(obj, dict) or set(obj) != CMD_KEYS:
             return None
-    except OverflowError:
+        if not _is_int(obj["v"]) or obj["v"] != PROTOCOL_VERSION:
+            return None
+        seq = obj["cmd_seq"]
+        if not _is_int(seq) or seq < 0:
+            return None
+        wheels = obj["wheels"]
+        if not isinstance(wheels, dict) or set(wheels) != WHEELS_KEYS:
+            return None
+        left_raw = wheels["left"]
+        right_raw = wheels["right"]
+        if not _is_real(left_raw) or not _is_real(right_raw):
+            return None
+        stale = obj["stale"]
+        if not _is_int(stale) or stale not in (0, 1):
+            return None
+        # A huge JSON int raises OverflowError here, and a huge JSON float such as
+        # 1e400 parses to inf, so both are caught by the isfinite check below.
+        left = float(left_raw)
+        right = float(right_raw)
+        if not (math.isfinite(left) and math.isfinite(right)):
+            return None
+    except (ValueError, TypeError, OverflowError, RecursionError):
         return None
-    return seq, wheel, stale
+    return seq, left, right, stale
+
+
+def _clamp(value: float) -> float:
+    return max(-CLAMP_RAD_S, min(CLAMP_RAD_S, value))
 
 
 def _open_socket(port: int) -> socket.socket:
@@ -113,18 +164,25 @@ def _open_socket(port: int) -> socket.socket:
 
 
 def main() -> int:
-    # Plain Robot: nothing here needs Supervisor powers (expected to work with the
-    # world's supervisor flag either way; NOT CHECKED in Webots).
+    # Plain Robot: nothing here needs Supervisor powers (NOT CHECKED in Webots).
     robot = Robot()
     timestep = int(robot.getBasicTimeStep())
 
-    motor = robot.getDevice(MOTOR_NAME)
-    if motor is None:
-        _say(f"ERROR device '{MOTOR_NAME}' not found", err=True)
+    motor_left = robot.getDevice(MOTOR_LEFT_NAME)
+    if motor_left is None:
+        _say(f"ERROR device '{MOTOR_LEFT_NAME}' not found", err=True)
         return 1
-    sensor = robot.getDevice(SENSOR_NAME)
-    if sensor is None:
-        _say(f"ERROR device '{SENSOR_NAME}' not found", err=True)
+    motor_right = robot.getDevice(MOTOR_RIGHT_NAME)
+    if motor_right is None:
+        _say(f"ERROR device '{MOTOR_RIGHT_NAME}' not found", err=True)
+        return 1
+    sensor_left = robot.getDevice(SENSOR_LEFT_NAME)
+    if sensor_left is None:
+        _say(f"ERROR device '{SENSOR_LEFT_NAME}' not found", err=True)
+        return 1
+    sensor_right = robot.getDevice(SENSOR_RIGHT_NAME)
+    if sensor_right is None:
+        _say(f"ERROR device '{SENSOR_RIGHT_NAME}' not found", err=True)
         return 1
 
     try:
@@ -136,23 +194,33 @@ def main() -> int:
             err=True,
         )
         return 1
-    _say(f"listening on {HOST}:{CMD_PORT}")
+    _say(f"listening on {HOST}:{CMD_PORT} (protocol v{PROTOCOL_VERSION}), "
+         f"echo to {ECHO_ADDR[0]}:{ECHO_ADDR[1]}, "
+         f"motors {MOTOR_LEFT_NAME} and {MOTOR_RIGHT_NAME}, "
+         f"sensors {SENSOR_LEFT_NAME} and {SENSOR_RIGHT_NAME}")
 
     # PositionSensor must be enabled at the sim timestep, or getValue() -> nan.
-    sensor.enable(timestep)
+    sensor_left.enable(timestep)
+    sensor_right.enable(timestep)
 
     # Velocity mode. NOT CHECKED in Webots: the position-infinity then
     # setVelocity sequence is the standard RotationalMotor idiom, not run here.
-    motor.setPosition(float("inf"))
-    motor.setVelocity(0.0)
+    for motor in (motor_left, motor_right):
+        motor.setPosition(float("inf"))
+        motor.setVelocity(0.0)
 
-    angle_prev_rad = None
-    t_prev_s = None
+    # Newest valid command. All four stay None until the first valid datagram.
     last_cmd_seq = None
-    last_cmd_wheel = None
+    last_cmd_left = None
+    last_cmd_right = None
     last_cmd_stale = None
     last_msg_sim_t = None
     ignored_count = 0
+
+    # Previous sample per wheel and the shared previous timestamp for the velocity.
+    angle_prev_left = None
+    angle_prev_right = None
+    t_prev_s = None
 
     # Plain UDP socket for the sensor echo. No bind, non-blocking, send only.
     echo_sock = None
@@ -164,10 +232,11 @@ def main() -> int:
         while robot.step(timestep) != -1:
             t_s = robot.getTime()
 
-            # Drain every pending datagram; keep only the latest valid one.
+            # Drain every pending datagram; keep only the newest valid one. Invalid
+            # datagrams are counted and ignored, and they do not reset the watchdog.
             while True:
                 try:
-                    data, _addr = sock.recvfrom(4096)
+                    data, _addr = sock.recvfrom(RECV_BUFSIZE)
                 except OSError:  # includes BlockingIOError: nothing more pending
                     break
                 parsed = _parse_cmd(data)
@@ -177,43 +246,60 @@ def main() -> int:
                         _say(f"ignored invalid datagram #{ignored_count} "
                              f"({len(data)} bytes)")
                     continue
-                last_cmd_seq, last_cmd_wheel, last_cmd_stale = parsed
+                last_cmd_seq, last_cmd_left, last_cmd_right, last_cmd_stale = parsed
                 last_msg_sim_t = t_s
 
-            # Stale or missing command -> stop. Sim time, not wall time.
-            if (last_cmd_wheel is None or last_cmd_stale == 1
+            # Stale or missing command: both wheels stop. Watchdog time is simulation
+            # time, not wall time.
+            if (last_cmd_left is None or last_cmd_stale == 1
                     or (t_s - last_msg_sim_t) >= STALE_SIM_S):
-                v = 0.0
+                v_left = 0.0
+                v_right = 0.0
             else:
-                v = max(-CLAMP_RAD_S, min(CLAMP_RAD_S, SIGN * last_cmd_wheel))
-            motor.setVelocity(v)
+                v_left = _clamp(SIGN_LEFT * last_cmd_left)
+                v_right = _clamp(SIGN_RIGHT * last_cmd_right)
+            motor_left.setVelocity(v_left)
+            motor_right.setVelocity(v_right)
 
             try:
-                reading = read_sensor(
+                reading_l = read_sensor(
                     t_s=t_s,
-                    angle_source=sensor.getValue,
-                    angle_prev_rad=angle_prev_rad,
+                    angle_source=sensor_left.getValue,
+                    angle_prev_rad=angle_prev_left,
+                    t_prev_s=t_prev_s,
+                )
+                reading_r = read_sensor(
+                    t_s=t_s,
+                    angle_source=sensor_right.getValue,
+                    angle_prev_rad=angle_prev_right,
                     t_prev_s=t_prev_s,
                 )
             except SensorReadError as exc:
-                # Never leave the last velocity latched on a bad read.
-                motor.setVelocity(0.0)
-                _say(f"ERROR: sensor read failed ({exc}); velocity 0, step skipped",
+                # Never leave the last velocities latched on a bad read.
+                motor_left.setVelocity(0.0)
+                motor_right.setVelocity(0.0)
+                _say(f"ERROR: sensor read failed ({exc}); both velocities 0, step skipped",
                      err=True)
                 continue
-            _log(reading.t_s, reading.angle_rad, reading.velocity_rad_s)
+            _log(reading_l.t_s, reading_l.angle_rad, reading_l.velocity_rad_s,
+                 reading_r.angle_rad, reading_r.velocity_rad_s)
 
             # ONE echo datagram per step. KEY NAMES ARE A CONTRACT with
             # ctrl_wheels_udp.py in poc/ctrl-wheels (cannot be imported here):
-            # cmd_seq_echo, sim_t_s, angle_rad, vel_rad_s. Do not rename.
-            # Failures (ValueError from non-finite floats, OSError from send)
+            # v, cmd_seq_echo, sim_t_s, left/right with angle_rad and vel_rad_s.
+            # cmd_seq_echo is the seq of the newest valid command accepted so far
+            # (null before the first one), even if the watchdog has since stopped the
+            # wheels. Failures (ValueError from non-finite floats, OSError from send)
             # are counted and never raised, so Webots is never stalled.
             try:
                 payload = json.dumps(
-                    {"cmd_seq_echo": last_cmd_seq,
-                     "sim_t_s": reading.t_s,
-                     "angle_rad": reading.angle_rad,
-                     "vel_rad_s": reading.velocity_rad_s},
+                    {"v": PROTOCOL_VERSION,
+                     "cmd_seq_echo": last_cmd_seq,
+                     "sim_t_s": reading_l.t_s,
+                     "left": {"angle_rad": reading_l.angle_rad,
+                              "vel_rad_s": reading_l.velocity_rad_s},
+                     "right": {"angle_rad": reading_r.angle_rad,
+                               "vel_rad_s": reading_r.velocity_rad_s}},
                     allow_nan=False, separators=(",", ":")).encode("utf-8")
                 echo_sock.sendto(payload, ECHO_ADDR)
             except (ValueError, OSError):
@@ -221,8 +307,9 @@ def main() -> int:
                 if echo_fail_count <= 3:
                     _say(f"echo send failed #{echo_fail_count}", err=True)
 
-            angle_prev_rad = reading.angle_rad
-            t_prev_s = reading.t_s
+            angle_prev_left = reading_l.angle_rad
+            angle_prev_right = reading_r.angle_rad
+            t_prev_s = reading_l.t_s
     finally:
         if echo_sock is not None:
             echo_sock.close()
