@@ -8,12 +8,13 @@ decoders, the loopback listener and the drain helper.
 What the suite pins: poc/ctrl-wheels/CONTRACT.md, section S3 (the v2 command
 and echo shapes, the exact-key-set rule at every level, the integer version
 tag v == 2, the +-3.0 clamp on the command wheels only, the nulls allowed in
-the echo, the absence of an upper bound on cmd_seq) and section S4 (command
-port 5018, echo port 5017, asserted as values). The literal reserved port set
-of S4 belongs to the code that binds the ports, not to this module, so it is
-not tested here.
+the echo, no explicit upper bound on cmd_seq, with an int too large for
+Python's int-to-text limit refused with UdpMsgError on both encode and decode)
+and section S4 (command port 5018, echo port 5017, asserted as values). The
+literal reserved port set of S4 belongs to the code that binds the ports, not
+to this module, so it is not tested here.
 
-Pure Python / pytest, stdlib only. Tests bind only 127.0.0.1 port 0
+Stdlib plus pytest. Tests bind only 127.0.0.1 port 0
 (ephemeral). The production ports are asserted as values and never bound.
 
 The golden byte literals in TestGolden are hand-written. They follow the key
@@ -325,6 +326,17 @@ class TestEncodeCmd:
         with pytest.raises(UdpMsgError):
             encode_cmd(1, 0.0, bad, 0)
 
+    @pytest.mark.parametrize("side", ["left", "right"])
+    def test_error_names_the_wheel(self, side):
+        # The clamp label is the contract path, so the message says which wheel failed.
+        values = {"left": 0.0, "right": 0.0}
+        values[side] = float("nan")
+        with pytest.raises(UdpMsgError) as info:
+            encode_cmd(1, values["left"], values["right"], 0)
+        assert f"wheels.{side}" in str(info.value)
+        other = "right" if side == "left" else "left"
+        assert f"wheels.{other}" not in str(info.value)
+
     @pytest.mark.parametrize(
         "left, right",
         [(True, 0.0), (0.0, True), ("0.5", 0.0), (0.0, "0.5")],
@@ -341,6 +353,12 @@ class TestEncodeCmd:
     def test_float_cmd_seq_rejected(self):
         with pytest.raises(UdpMsgError):
             encode_cmd(1.0, 0.0, 0.0, 0)
+
+    def test_cmd_seq_too_large_for_text_rejected(self):
+        # json.dumps raises ValueError for an int past the int-to-text limit; encode
+        # must turn that into UdpMsgError, as decode does.
+        with pytest.raises(UdpMsgError):
+            encode_cmd(10**5000, 0.0, 0.0, 0)
 
     def test_negative_cmd_seq_rejected(self):
         with pytest.raises(UdpMsgError):
@@ -466,20 +484,40 @@ class TestDecodeCmd:
             decode_cmd(data)
 
     def test_deeply_nested_closed_json_rejected(self):
-        # Closed nesting, so the only failure is the depth: json raises RecursionError,
-        # and the module turns that into UdpMsgError ("not valid JSON").
-        with pytest.raises(UdpMsgError, match="not valid JSON"):
+        # Closed nesting. Whether the parser hits its recursion limit (refused as
+        # "not valid JSON") or parses the list and then refuses it as a non-object
+        # depends on the interpreter, so this test accepts any UdpMsgError.
+        with pytest.raises(UdpMsgError):
             decode_cmd(b"[" * 100000 + b"]" * 100000)
 
     def test_deeply_nested_wheels_value_rejected(self):
-        # A valid-looking command whose "wheels" value is a 100000-deep array.
+        # A command whose "wheels" value is a 100000-deep array. Refused either as
+        # "not valid JSON" (recursion limit) or as "wheels must be a JSON object";
+        # the test accepts any UdpMsgError for the same interpreter-dependence reason.
         data = (
             b'{"v":2,"cmd_seq":1,"wheels":'
             + b"[" * 100000 + b"]" * 100000
             + b',"stale":0}'
         )
-        with pytest.raises(UdpMsgError, match="not valid JSON"):
+        with pytest.raises(UdpMsgError):
             decode_cmd(data)
+
+    @pytest.mark.parametrize("side", ["left", "right"])
+    def test_error_names_the_wheel(self, side):
+        # A huge number overflows the float conversion inside clamp, which is where
+        # the wheel label is used. A NaN token is refused earlier, by the JSON parser,
+        # so that message names the token, not the wheel (not pinned here).
+        with pytest.raises(UdpMsgError) as info:
+            decode_cmd(_raw_cmd(**{side: HUGE_INT}))
+        assert f"wheels.{side}" in str(info.value)
+        other = "right" if side == "left" else "left"
+        assert f"wheels.{other}" not in str(info.value)
+
+    def test_cmd_seq_too_many_digits_rejected(self):
+        # 5000 digits: json.loads refuses this with ValueError (int-to-text limit),
+        # which the module turns into UdpMsgError.
+        with pytest.raises(UdpMsgError):
+            decode_cmd(_raw_cmd(cmd_seq=b"1" + b"0" * 5000))
 
 
 class TestEncodeEcho:
@@ -522,6 +560,10 @@ class TestEncodeEcho:
     def test_cmd_seq_echo_wrong_value_rejected(self, bad):
         with pytest.raises(UdpMsgError):
             encode_echo(**_echo_kwargs(cmd_seq_echo=bad))
+
+    def test_cmd_seq_echo_too_large_for_text_rejected(self):
+        with pytest.raises(UdpMsgError):
+            encode_echo(**_echo_kwargs(cmd_seq_echo=10**5000))
 
 
 class TestDecodeEcho:
@@ -646,18 +688,25 @@ class TestDecodeEcho:
             decode_echo(data)
 
     def test_deeply_nested_closed_json_rejected(self):
-        with pytest.raises(UdpMsgError, match="not valid JSON"):
+        # Closed nesting. Refused as "not valid JSON" (recursion limit) or as a
+        # non-object, depending on the interpreter; any UdpMsgError passes.
+        with pytest.raises(UdpMsgError):
             decode_echo(b"[" * 100000 + b"]" * 100000)
 
     def test_deeply_nested_leg_value_rejected(self):
-        # A valid-looking echo whose "left" value is a 100000-deep array.
+        # An echo whose "left" value is a 100000-deep array. Refused as "not valid
+        # JSON" or as "left must be a JSON object"; any UdpMsgError passes.
         data = (
             b'{"v":2,"cmd_seq_echo":1,"sim_t_s":1.0,"left":'
             + b"[" * 100000 + b"]" * 100000
             + b',"right":{"angle_rad":0.0,"vel_rad_s":0.0}}'
         )
-        with pytest.raises(UdpMsgError, match="not valid JSON"):
+        with pytest.raises(UdpMsgError):
             decode_echo(data)
+
+    def test_cmd_seq_echo_too_many_digits_rejected(self):
+        with pytest.raises(UdpMsgError):
+            decode_echo(_raw_echo(seq=b"1" + b"0" * 5000))
 
 
 class TestRoundTrip:

@@ -11,8 +11,10 @@ The wire format is not validated against any real device or receiver.
 
 The Webots controller (planned: tasks F18 to F20, #502 to #504) cannot import
 this module, so it duplicates the JSON key names on purpose. Change a key name
-in both places or not at all. Today the copied controller still speaks the v1
-wire format; this module describes v2 only.
+in both places or not at all. Today the copied controller,
+poc/ctrl-wheels/webots/controllers/ctrl_wheels/ctrl_wheels.py, still speaks the
+v1 wire format (cmd keys cmd_seq, wheel_rad_s and stale on port 5008); it is
+rewritten by tasks F18 to F20. This module describes v2 only.
 
 Ports: 5017 (echo, sim -> host) and 5018 (command, host -> sim) only.
 Port 5006 is never used by this module. The reserved port set of CONTRACT.md
@@ -35,8 +37,9 @@ bytes fail the key-set check, so they are refused.
 
 Limits, as CONTRACT.md S3 states them: only the command wheels are clamped to
 +-3.0 rad/s. The echo velocities and angles are NOT clamped; they pass through
-unchanged. cmd_seq and cmd_seq_echo are non-negative ints with no upper bound
-in this module (the JSON int is kept as Python's arbitrary-size int).
+unchanged. cmd_seq and cmd_seq_echo are non-negative ints with no explicit
+upper bound. A value too large for Python's int-to-text limit is refused with
+UdpMsgError on both encode and decode.
 
 Usage (run from poc/ctrl-wheels):
     python3 -m pytest test_ctrl_wheels_udp.py -v
@@ -179,7 +182,12 @@ def _parse_object(data: bytes, keys: frozenset[str]) -> dict[str, object]:
 
 
 def _dump(payload: dict[str, object]) -> bytes:
-    return json.dumps(payload, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    try:
+        text = json.dumps(payload, separators=(",", ":"), allow_nan=False)
+    except (ValueError, OverflowError) as exc:
+        # ValueError also covers CPython's int-to-text digit limit for huge ints.
+        raise UdpMsgError(f"message cannot be encoded: {exc}") from exc
+    return text.encode("utf-8")
 
 
 def _encode_leg(side: str, angle_rad: float, vel_rad_s: float | None) -> dict[str, object]:
