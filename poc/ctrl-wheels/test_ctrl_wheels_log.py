@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
 """
-Unit tests for the ctrl-wheels CSV log writer (ctrl_wheels_log), issue FW #452.
+Unit tests for the ctrl-wheels CSV log writer (ctrl_wheels_log), task F09
+(freecad-workspace #493, umbrella #482).
 
-Test-first: the module under test is a flat, stdlib-only module in poc/ctrl-wheels
-that exists alongside it. Every test writes only under pytest's tmp_path,
-never to a real path, and opens no network port. SIM ONLY. The sign convention
-is UNVERIFIED.
+SIM ONLY. Not hardware-validated. The sign convention is UNVERIFIED.
+
+Test-first and intentionally RED until task F10 (freecad-workspace #494)
+rewrites ctrl_wheels_log.py. F09 and F10 are one PR. Until then the module
+is still the single-wheel copy, so most tests here fail on purpose.
+
+This file pins contract S6 of poc/ctrl-wheels/CONTRACT.md: the 19-column
+tuple, the column docs, the cell formatting rules and the atomic-row rule.
+The column tuple is duplicated here by design. When the contract changes,
+edit the contract and this test together.
+
+Every test writes only under pytest's tmp_path, never to a real path, and
+opens no network port.
 
 Usage:
     cd poc/ctrl-wheels
@@ -31,30 +41,86 @@ EXPECTED_COLUMNS = (
     "whl_seq",
     "whl_t_us",
     "whl_model_rad_s",
-    "whl_raw",
+    "whl_raw_l",
+    "whl_raw_r",
     "whl_state",
     "cmd_seq",
-    "cmd_rad_s",
+    "cmd_left_rad_s",
+    "cmd_right_rad_s",
     "stale",
     "echo_cmd_seq",
     "sim_t_s",
-    "angle_rad",
-    "vel_rad_s",
+    "angle_rad_l",
+    "angle_rad_r",
+    "vel_rad_s_l",
+    "vel_rad_s_r",
     "host_rtt_ms",
     "missed_whl",
 )
 
+# Integer columns (contract S6, decimal integers, a float is refused).
+INT_COLUMNS = (
+    "whl_seq",
+    "whl_t_us",
+    "whl_raw_l",
+    "whl_raw_r",
+    "whl_state",
+    "cmd_seq",
+    "stale",
+    "echo_cmd_seq",
+    "missed_whl",
+)
+
+# Float columns (contract S6, %.6f except host_t_s and host_rtt_ms, %.3f).
 FLOAT_COLUMNS = (
     "host_t_s",
     "whl_model_rad_s",
-    "cmd_rad_s",
+    "cmd_left_rad_s",
+    "cmd_right_rad_s",
     "sim_t_s",
-    "angle_rad",
-    "vel_rad_s",
+    "angle_rad_l",
+    "angle_rad_r",
+    "vel_rad_s_l",
+    "vel_rad_s_r",
+    "host_rtt_ms",
+)
+
+# Columns that are empty when the row has no echo (contract S6).
+NO_ECHO_KEYS = (
+    "echo_cmd_seq",
+    "sim_t_s",
+    "angle_rad_l",
+    "angle_rad_r",
+    "vel_rad_s_l",
+    "vel_rad_s_r",
     "host_rtt_ms",
 )
 
 HEADER = list(EXPECTED_COLUMNS)
+
+# One row with every column set. Values are hand-chosen; the expected text
+# is written out below, not derived from the implementation.
+FULL_ROW_VALUES = {
+    "host_t_s": 1.5,
+    "whl_seq": 7,
+    "whl_t_us": 4000000000,
+    "whl_model_rad_s": 0.5,
+    "whl_raw_l": -12,
+    "whl_raw_r": 12,
+    "whl_state": 0,
+    "cmd_seq": 3,
+    "cmd_left_rad_s": 0.25,
+    "cmd_right_rad_s": -0.25,
+    "stale": 0,
+    "echo_cmd_seq": 3,
+    "sim_t_s": 2.0,
+    "angle_rad_l": -0.1,
+    "angle_rad_r": 0.1,
+    "vel_rad_s_l": 1 / 3,
+    "vel_rad_s_r": -1 / 3,
+    "host_rtt_ms": 12.5,
+    "missed_whl": 0,
+}
 
 FULL_ROW_TEXT = [
     "1.500",
@@ -62,75 +128,78 @@ FULL_ROW_TEXT = [
     "4000000000",
     "0.500000",
     "-12",
+    "12",
     "0",
     "3",
     "0.250000",
+    "-0.250000",
     "0",
     "3",
     "2.000000",
     "-0.100000",
+    "0.100000",
     "0.333333",
+    "-0.333333",
     "12.500",
     "0",
 ]
 
-
-def _full_row():
-    """Build a full row whose text is FULL_ROW_TEXT."""
-    return {
-        "host_t_s": 1.5,
-        "whl_seq": 7,
-        "whl_t_us": 4000000000,
-        "whl_model_rad_s": 0.5,
-        "whl_raw": -12,
-        "whl_state": 0,
-        "cmd_seq": 3,
-        "cmd_rad_s": 0.25,
-        "stale": 0,
-        "echo_cmd_seq": 3,
-        "sim_t_s": 2.0,
-        "angle_rad": -0.1,
-        "vel_rad_s": 1 / 3,
-        "host_rtt_ms": 12.5,
-        "missed_whl": 0,
-    }
-
-
-def _no_echo_row(missing):
-    """Command with no echo: echo_*, sim_t_s, angle_rad, vel_rad_s, host_rtt_ms empty.
-
-    missing=True omits those keys; missing=False sets them to None.
-    """
-    row = {
-        "host_t_s": 2.0,
-        "cmd_seq": 4,
-        "cmd_rad_s": 0.5,
-        "stale": 1,
-        "missed_whl": 0,
-    }
-    if not missing:
-        for name in COLUMNS:
-            row.setdefault(name, None)
-    return row
-
+# A command with no echo: the seven NO_ECHO_KEYS are empty.
+NO_ECHO_VALUES = {
+    "host_t_s": 2.0,
+    "whl_seq": 8,
+    "whl_t_us": 4000100000,
+    "whl_model_rad_s": 0.5,
+    "whl_raw_l": 10,
+    "whl_raw_r": -10,
+    "whl_state": 0,
+    "cmd_seq": 4,
+    "cmd_left_rad_s": 0.5,
+    "cmd_right_rad_s": -0.5,
+    "stale": 1,
+    "missed_whl": 0,
+}
 
 NO_ECHO_TEXT = [
     "2.000",
-    "",
-    "",
-    "",
-    "",
-    "",
+    "8",
+    "4000100000",
+    "0.500000",
+    "10",
+    "-10",
+    "0",
     "4",
     "0.500000",
+    "-0.500000",
     "1",
     "",
     "",
     "",
     "",
     "",
+    "",
+    "",
     "0",
 ]
+
+ALL_EMPTY_TEXT = [""] * 19
+
+
+def _full_row():
+    """Build a full row whose text is FULL_ROW_TEXT."""
+    return dict(FULL_ROW_VALUES)
+
+
+def _no_echo_row(missing):
+    """Command with no echo.
+
+    missing=True omits the NO_ECHO_KEYS; missing=False sets them to None.
+    """
+    row = dict(NO_ECHO_VALUES)
+    if not missing:
+        for name in NO_ECHO_KEYS:
+            row[name] = None
+    return row
 
 
 def _read_rows(path):
@@ -155,12 +224,14 @@ def _assert_rejected(tmp_path, row):
 
 
 class TestColumns:
-    """Test: COLUMNS is the pinned 15-name tuple in order."""
+    """Test: COLUMNS is the pinned 19-name tuple in contract order."""
 
-    def test_columns_exact(self):
+    def test_columns_is_tuple_of_19(self):
         assert isinstance(COLUMNS, tuple)
+        assert len(COLUMNS) == 19
+
+    def test_columns_exact_order(self):
         assert COLUMNS == EXPECTED_COLUMNS
-        assert len(COLUMNS) == 15
 
 
 class TestColumnDoc:
@@ -174,6 +245,10 @@ class TestColumnDoc:
             assert isinstance(text, str), name
             assert text.strip(), name
             assert "\n" not in text and "\r" not in text, name
+
+    @pytest.mark.parametrize("name", ["whl_raw_l", "whl_raw_r"])
+    def test_raw_docs_do_not_claim_servo_readback(self, name):
+        assert "reported by the servo" not in COLUMN_DOC[name]
 
 
 class TestHeader:
@@ -221,6 +296,80 @@ class TestRoundTrip:
         assert _read_rows(path) == [HEADER, FULL_ROW_TEXT]
 
 
+class TestIntegerFormat:
+    """Test: integer columns are decimal integers, and a float is refused."""
+
+    def test_int_extremes_exact_text(self, tmp_path):
+        path = tmp_path / "ints.csv"
+        row = _full_row()
+        row.update(
+            whl_seq=65535,
+            whl_t_us=4294967295,
+            whl_raw_l=-2147483648,
+            whl_raw_r=2147483647,
+            whl_state=2,
+            cmd_seq=0,
+            stale=1,
+            echo_cmd_seq=0,
+            missed_whl=0,
+        )
+        log = CsvLog(path)
+        log.write_row(row)
+        log.close()
+        expected = [
+            "1.500",
+            "65535",
+            "4294967295",
+            "0.500000",
+            "-2147483648",
+            "2147483647",
+            "2",
+            "0",
+            "0.250000",
+            "-0.250000",
+            "1",
+            "0",
+            "2.000000",
+            "-0.100000",
+            "0.100000",
+            "0.333333",
+            "-0.333333",
+            "12.500",
+            "0",
+        ]
+        assert _read_rows(path) == [HEADER, expected]
+
+    @pytest.mark.parametrize("col", INT_COLUMNS)
+    def test_float_refused_for_int_column(self, tmp_path, col):
+        row = _full_row()
+        row[col] = 7.0
+        _assert_rejected(tmp_path, row)
+
+
+class TestFloatFormat:
+    """Test: float columns use %.6f, host_t_s and host_rtt_ms use %.3f."""
+
+    @pytest.mark.parametrize(
+        "col, value, text",
+        [
+            ("cmd_left_rad_s", 0.1234567, "0.123457"),
+            ("host_t_s", 1.0, "1.000"),
+            ("host_rtt_ms", 12.3456, "12.346"),
+        ],
+        ids=["six-decimals", "host-t-three-decimals", "rtt-three-decimals"],
+    )
+    def test_float_cell_text(self, tmp_path, col, value, text):
+        path = tmp_path / "fmt.csv"
+        row = _full_row()
+        row[col] = value
+        expected = list(FULL_ROW_TEXT)
+        expected[EXPECTED_COLUMNS.index(col)] = text
+        log = CsvLog(path)
+        log.write_row(row)
+        log.close()
+        assert _read_rows(path) == [HEADER, expected]
+
+
 class TestMissingAndNone:
     """Test: None and missing keys both give empty cells."""
 
@@ -237,7 +386,7 @@ class TestMissingAndNone:
         log = CsvLog(path)
         log.write_row({name: None for name in COLUMNS})
         log.close()
-        assert _read_rows(path) == [HEADER, [""] * len(COLUMNS)]
+        assert _read_rows(path) == [HEADER, ALL_EMPTY_TEXT]
 
 
 class TestColumnOrder:
@@ -254,9 +403,16 @@ class TestColumnOrder:
 
 
 class TestUnknownKey:
-    """Test: an unknown key is refused and nothing is written."""
+    """Test: an unknown key is refused and nothing is written.
 
-    @pytest.mark.parametrize("key", ["bogus", "whl_model", "WHL_SEQ"])
+    The single-wheel names are included as a drift guard: they must not be
+    accepted by the twin writer.
+    """
+
+    @pytest.mark.parametrize(
+        "key",
+        ["bogus", "whl_raw", "cmd_rad_s", "angle_rad", "vel_rad_s"],
+    )
     def test_unknown_key_raises_value_error(self, tmp_path, key):
         row = _full_row()
         row[key] = 1
@@ -267,7 +423,7 @@ class TestRejectedValues:
     """Test: bool, NaN and inf are refused and nothing is written."""
 
     @pytest.mark.parametrize(
-        "col", ["whl_seq", "stale", "missed_whl", "cmd_rad_s", "host_rtt_ms"]
+        "col", ["whl_seq", "cmd_left_rad_s", "whl_raw_l", "whl_raw_r"]
     )
     def test_bool_rejected(self, tmp_path, col):
         row = _full_row()
@@ -275,11 +431,31 @@ class TestRejectedValues:
         _assert_rejected(tmp_path, row)
 
     @pytest.mark.parametrize("col", FLOAT_COLUMNS)
-    @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf], ids=["nan", "inf", "-inf"])
+    @pytest.mark.parametrize(
+        "bad", [math.nan, math.inf, -math.inf], ids=["nan", "inf", "-inf"]
+    )
     def test_non_finite_rejected(self, tmp_path, col, bad):
         row = _full_row()
         row[col] = bad
         _assert_rejected(tmp_path, row)
+
+
+class TestAtomicRow:
+    """Test: a refused row between two valid rows leaves no partial line."""
+
+    def test_refused_row_leaves_no_partial_line(self, tmp_path):
+        path = tmp_path / "atomic.csv"
+        bad = _full_row()
+        # missed_whl is the last column: every earlier cell is valid and
+        # would be written if the row were not validated before writing.
+        bad["missed_whl"] = 1.5
+        log = CsvLog(path)
+        log.write_row(_full_row())
+        with pytest.raises(ValueError):
+            log.write_row(bad)
+        log.write_row(_full_row())
+        log.close()
+        assert _read_rows(path) == [HEADER, FULL_ROW_TEXT, FULL_ROW_TEXT]
 
 
 class TestOverwrite:
