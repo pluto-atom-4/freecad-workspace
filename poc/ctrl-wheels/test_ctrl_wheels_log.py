@@ -446,6 +446,23 @@ class TestRejectedValues:
         row[col] = bad
         _assert_rejected(tmp_path, row)
 
+    @pytest.mark.parametrize(
+        "col",
+        [
+            "whl_seq",
+            "whl_raw_l",
+            "missed_whl",
+            "cmd_left_rad_s",
+            "host_t_s",
+            "whl_model_rad_s",
+        ],
+    )
+    @pytest.mark.parametrize("text", ["7", "1.5", ""], ids=["digits", "decimal", "empty"])
+    def test_str_rejected(self, tmp_path, col, text):
+        row = _full_row()
+        row[col] = text
+        _assert_rejected(tmp_path, row)
+
 
 class TestOutOfFloatRange:
     """Test: an int too large for float() is refused with ValueError, nothing written."""
