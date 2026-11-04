@@ -42,6 +42,7 @@ from ctrl_wheels_msg import (
     Whl2,
     WhlError,
     checksum,
+    format_whl,
     format_whl2,
     parse_line,
     split,
@@ -104,9 +105,11 @@ GOLDEN_ACCEPT_IDS = [
 
 # Reject goldens that apply to the WHL2 parser. Four entries (six_fields,
 # eight_fields, state_3, nan_model) are altered WHL2 bodies whose HH is correct
-# over the altered body. bad_hh is the only entry with a wrong HH. whl_v1_line
-# is a whole single-wheel WHL v1 line (prefix WHL, 6 fields) with its own HH,
-# not an altered WHL2 body; it is refused by the prefix and field count.
+# over the altered body. bad_hh is the only entry with a wrong HH, on purpose:
+# its body is the same as the reverse-direction case in CONTRACT.md S7, whose
+# correct HH is 56, and this literal uses 57. whl_v1_line is a whole
+# single-wheel WHL v1 line (prefix WHL, 6 fields) with its own HH, not an
+# altered WHL2 body; it is refused by the prefix and field count.
 # The checksum is compared first, so a wrong HH would hide the rule under test.
 # The reverse case (WHL2 line against the single-wheel v1 parser) is not tested
 # here; see the module docstring.
@@ -206,6 +209,35 @@ class TestFormat:
         # Implementation: an int model (not bool) is converted by float() and
         # printed with %.6f, so 5 prints as 5.000000.
         assert format_whl2(Whl2(0, 0, 5, 0, 0, 0)).startswith("WHL2,0,0,5.000000,0,0,0*")
+
+    @pytest.mark.parametrize(
+        "model",
+        [-999999999999.0, 9999999999999.0],
+        ids=["neg_20_chars", "pos_20_chars"],
+    )
+    def test_model_text_of_20_chars_round_trips(self, model):
+        assert len(f"{model:.6f}") == 20
+        line = format_whl2(Whl2(0, 0, model, 0, 0, 0))
+        assert parse_line(line).model_rad_s == model
+
+    @pytest.mark.parametrize(
+        "model",
+        [-1e12, 1e13],
+        ids=["neg_21_chars", "pos_21_chars"],
+    )
+    def test_model_text_of_21_chars_refused(self, model):
+        assert len(f"{model:.6f}") == 21
+        with pytest.raises(WhlError):
+            format_whl2(Whl2(0, 0, model, 0, 0, 0))
+
+    def test_huge_model_refused_in_twin_format(self):
+        with pytest.raises(WhlError):
+            format_whl2(Whl2(0, 0, 1e300, 0, 0, 0))
+
+    def test_huge_model_refused_in_v1_format(self):
+        # format_whl shares _model_text, so the same length guard applies.
+        with pytest.raises(WhlError):
+            format_whl(Whl(0, 0, 1e300, 0, 0))
 
     @pytest.mark.parametrize("field", ["raw_l", "raw_r"])
     @pytest.mark.parametrize("bad", [True, False, 1.0, "5", None])
@@ -415,6 +447,13 @@ class TestParse:
         with pytest.raises(WhlError):
             parse_line(_with_checksum(f"WHL2,1,1000000,{tok},10,12,0"))
 
+    def test_model_token_over_20_chars_rejected(self):
+        # A finite model whose token is 21 characters is refused by the length cap.
+        tok = "-1000000000000.000000"
+        assert len(tok) == 21
+        with pytest.raises(WhlError):
+            parse_line(_with_checksum(f"WHL2,1,1000000,{tok},10,12,0"))
+
     @pytest.mark.parametrize(
         "body",
         [
@@ -427,14 +466,20 @@ class TestParse:
         with pytest.raises(WhlError):
             parse_line(_with_checksum(body))
 
-    @pytest.mark.parametrize("pos", ["seq", "t_us", "raw_l", "raw_r"])
+    @pytest.mark.parametrize("pos", ["seq", "t_us", "model", "raw_l", "raw_r"])
     def test_five_thousand_digit_token_raises_whl_error(self, pos):
         # A checksum-valid line with a 5000-digit token must raise WhlError,
-        # not ValueError from int(), and the message must not carry the digits.
-        fields = {"seq": "1", "t_us": "1000000", "raw_l": "10", "raw_r": "12"}
+        # not ValueError from int() or float(), and the message must not carry the digits.
+        fields = {
+            "seq": "1",
+            "t_us": "1000000",
+            "model": "0.500000",
+            "raw_l": "10",
+            "raw_r": "12",
+        }
         fields[pos] = "9" * 5000
         body = (
-            f"WHL2,{fields['seq']},{fields['t_us']},0.500000,"
+            f"WHL2,{fields['seq']},{fields['t_us']},{fields['model']},"
             f"{fields['raw_l']},{fields['raw_r']},0"
         )
         with pytest.raises(WhlError) as excinfo:

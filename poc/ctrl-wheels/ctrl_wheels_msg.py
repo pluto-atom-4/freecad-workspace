@@ -17,8 +17,9 @@ Protocol details (WHL2):
 - seq: uint16 sequence number, wraps at 65536 (format takes seq mod 65536);
   the parser rejects 65536 or more
 - t_us: uint32 device microseconds (0 .. 2^32-1)
-- model: model plant velocity in rad/s, %.6f; a non-finite value is refused by
-  the formatter (WhlError) and the parser rejects the tokens nan and inf;
+- model: model plant velocity in rad/s, %.6f. The formatter refuses a
+  non-finite value (WhlError). The parser rejects any non-finite model token
+  (nan, inf, -inf, an overflowing exponent such as 1e400).
   "-0.000000" is normalised to "0.000000"
 - rawL, rawR: signed decimal integers, int32 range. The wire accepts any int32
   value; the +-125 cap (RAW_CAP) is a firmware step cap and is applied only by
@@ -28,6 +29,13 @@ Protocol details (WHL2):
   the *). The checksum is compared before the field count, prefix and tokens
 - Line terminator: \\n on output; the parser accepts exactly one trailing \\n,
   \\r\\n, or no terminator
+
+Supported range: every token is at most 20 characters (_MAX_TOKEN_LEN), and
+the formatter refuses a model whose %.6f text is longer than that. So the
+formatter and parser round-trip a model whose text is at most 20 characters:
+positive values below 1e13 and negative values above -1e12. A value outside
+that range is refused by the formatter and by the parser. This is a simulation
+wheel velocity in rad/s, far inside the range.
 
 Single-wheel names kept for the split: Whl (seq, t_us, model_rad_s, raw, state)
 and format_whl, which writes the single-wheel WHL v1 line (prefix WHL, 6 fields).
@@ -78,7 +86,7 @@ class WhlError(ValueError):
 
 @dataclass(frozen=True)
 class Whl:
-    """Parsed or to-be-formatted single-wheel sample (WHL v1 shape)."""
+    """Single-wheel sample (WHL v1 shape), built by split() and written by format_whl."""
     seq: int
     t_us: int
     model_rad_s: float
@@ -171,10 +179,19 @@ def _parse_float(name: str, tok: str) -> float:
 
 
 def _model_text(model: float) -> str:
-    """Format a finite model with %.6f, normalising -0.000000 to 0.000000."""
+    """Format a finite model with %.6f, normalising -0.000000 to 0.000000.
+
+    Refuses a text longer than _MAX_TOKEN_LEN, because the parser would refuse
+    that token. The message names the length, not the value.
+    """
     model_str = f"{model:.6f}"
     if model_str == "-0.000000":
         model_str = "0.000000"
+    if len(model_str) > _MAX_TOKEN_LEN:
+        raise WhlError(
+            f"model_rad_s magnitude exceeds the supported range: "
+            f"text is {len(model_str)} chars, limit {_MAX_TOKEN_LEN}"
+        )
     return model_str
 
 
