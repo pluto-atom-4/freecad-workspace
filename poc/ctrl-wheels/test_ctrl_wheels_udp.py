@@ -2,16 +2,16 @@
 """
 Unit tests for the UDP v2 JSON messages of the ctrl-wheels bridge (ctrl_wheels_udp).
 
-SIM ONLY. These tests are test-first and intentionally RED until task F08
-(freecad-workspace #492) rewrites ctrl_wheels_udp.py. The module on disk still
-has the copied single-wheel v1 API (wheel_rad_s, no "v" key, ports 5008 and
-5007), so most of these tests fail against it. F07 and F08 land as one PR.
+SIM ONLY. Tests for the UDP v2 messages of ctrl_wheels_udp: encoders, strict
+decoders, the loopback listener and the drain helper.
 
-Pinned by these tests: poc/ctrl-wheels/CONTRACT.md, section S3 (UDP v2 command
-and echo, the exact-key-set rule for nested objects, the +-3.0 clamp on encode
-and decode, the integer version tag v == 2) and section S4 (command port 5018,
-echo port 5017). The literal reserved port set of S4 belongs to the fake wheel,
-not to this module, so it is not tested here.
+What the suite pins: poc/ctrl-wheels/CONTRACT.md, section S3 (the v2 command
+and echo shapes, the exact-key-set rule at every level, the integer version
+tag v == 2, the +-3.0 clamp on the command wheels only, the nulls allowed in
+the echo, the absence of an upper bound on cmd_seq) and section S4 (command
+port 5018, echo port 5017, asserted as values). The literal reserved port set
+of S4 belongs to the code that binds the ports, not to this module, so it is
+not tested here.
 
 Pure Python / pytest, stdlib only. Tests bind only 127.0.0.1 port 0
 (ephemeral). The production ports are asserted as values and never bound.
@@ -73,7 +73,6 @@ V_BAD = [b"1", b"3", b"0", b"-2", b'"2"', b"2.0", b"true", b"false", b"null"]
 CMD_SEQ_BAD = [b"-1", b"true", b"false", b"1.0", b"2.0", b'"1"', b"null"]
 STALE_BAD = [b"2", b"-1", b"true", b"false", b"1.0", b"0.0", b'"0"', b"null"]
 WHEEL_BAD = [b"true", b"false", b'"0.5"', b"null"] + NON_FINITE_TOKENS
-NUMBER_BAD = [b"true", b'"0.0"']
 
 
 def _raw_cmd(v=b"2", cmd_seq=b"1", left=b"0.5", right=b"-0.5", stale=b"0"):
@@ -368,13 +367,6 @@ class TestDecodeCmd:
     def test_stale_one_accepted(self):
         assert decode_cmd(_raw_cmd(stale=b"1")).stale == 1
 
-    @pytest.mark.parametrize("token", [b"NaN", b"Infinity", b"-Infinity"],
-                             ids=["nan", "inf", "neg_inf"])
-    @pytest.mark.parametrize("side", ["left", "right"])
-    def test_non_finite_wheel_token_rejected(self, side, token):
-        with pytest.raises(UdpMsgError):
-            decode_cmd(_raw_cmd(**{side: token}))
-
     @pytest.mark.parametrize("token", V_BAD)
     def test_v_not_integer_two_rejected(self, token):
         with pytest.raises(UdpMsgError):
@@ -384,10 +376,6 @@ class TestDecodeCmd:
     def test_cmd_seq_wrong_type_or_negative_rejected(self, token):
         with pytest.raises(UdpMsgError):
             decode_cmd(_raw_cmd(cmd_seq=token))
-
-    def test_negative_cmd_seq_rejected(self):
-        with pytest.raises(UdpMsgError):
-            decode_cmd(_raw_cmd(cmd_seq=b"-1"))
 
     @pytest.mark.parametrize("token", STALE_BAD)
     def test_stale_out_of_set_or_wrong_type_rejected(self, token):
@@ -477,9 +465,21 @@ class TestDecodeCmd:
         with pytest.raises(UdpMsgError):
             decode_cmd(data)
 
-    def test_deeply_nested_json_rejected(self):
-        with pytest.raises(UdpMsgError):
-            decode_cmd(b"[" * 100000)
+    def test_deeply_nested_closed_json_rejected(self):
+        # Closed nesting, so the only failure is the depth: json raises RecursionError,
+        # and the module turns that into UdpMsgError ("not valid JSON").
+        with pytest.raises(UdpMsgError, match="not valid JSON"):
+            decode_cmd(b"[" * 100000 + b"]" * 100000)
+
+    def test_deeply_nested_wheels_value_rejected(self):
+        # A valid-looking command whose "wheels" value is a 100000-deep array.
+        data = (
+            b'{"v":2,"cmd_seq":1,"wheels":'
+            + b"[" * 100000 + b"]" * 100000
+            + b',"stale":0}'
+        )
+        with pytest.raises(UdpMsgError, match="not valid JSON"):
+            decode_cmd(data)
 
 
 class TestEncodeEcho:
@@ -645,9 +645,19 @@ class TestDecodeEcho:
         with pytest.raises(UdpMsgError):
             decode_echo(data)
 
-    def test_deeply_nested_json_rejected(self):
-        with pytest.raises(UdpMsgError):
-            decode_echo(b"[" * 100000)
+    def test_deeply_nested_closed_json_rejected(self):
+        with pytest.raises(UdpMsgError, match="not valid JSON"):
+            decode_echo(b"[" * 100000 + b"]" * 100000)
+
+    def test_deeply_nested_leg_value_rejected(self):
+        # A valid-looking echo whose "left" value is a 100000-deep array.
+        data = (
+            b'{"v":2,"cmd_seq_echo":1,"sim_t_s":1.0,"left":'
+            + b"[" * 100000 + b"]" * 100000
+            + b',"right":{"angle_rad":0.0,"vel_rad_s":0.0}}'
+        )
+        with pytest.raises(UdpMsgError, match="not valid JSON"):
+            decode_echo(data)
 
 
 class TestRoundTrip:
@@ -689,6 +699,23 @@ class TestRoundTrip:
         _deliver(sender, listener, [payload])
         got = drain_all(listener)
         assert decode_echo(got[0]) == Echo(None, 2.0, -0.5, 0.0, 0.0, 0.0)
+
+    def test_echo_velocity_not_clamped_round_trip(self, listener, sender):
+        # CONTRACT.md S3 clamps only the command wheels. An echo velocity of
+        # 12.5 rad/s (above the 3.0 command clamp) must pass through unchanged.
+        payload = encode_echo(4, 1.0, 0.0, 12.5, 0.0, -12.5)
+        _deliver(sender, listener, [payload])
+        got = drain_all(listener)
+        assert len(got) == 1
+        assert decode_echo(got[0]) == Echo(4, 1.0, 0.0, 12.5, 0.0, -12.5)
+
+    def test_cmd_seq_has_no_upper_bound_round_trip(self, listener, sender):
+        # CONTRACT.md S3: cmd_seq is an int >= 0 with no upper bound.
+        payload = encode_cmd(2**40, 0.0, 0.0, 0)
+        _deliver(sender, listener, [payload])
+        got = drain_all(listener)
+        assert len(got) == 1
+        assert decode_cmd(got[0]) == Cmd(2**40, 0.0, 0.0, 0)
 
 
 class TestOpenListener:

@@ -9,9 +9,10 @@ wheels (left and right). The sim side echoes both wheels' angle and velocity.
 SIM ONLY. The wheel sign convention and the model values are UNVERIFIED.
 The wire format is not validated against any real device or receiver.
 
-Wire contract with webots/controllers/ctrl_wheels/ctrl_wheels.py. That controller
-cannot import this module, so the JSON key names are duplicated there on
-purpose. Change a key name in both places or not at all.
+The Webots controller (planned: tasks F18 to F20, #502 to #504) cannot import
+this module, so it duplicates the JSON key names on purpose. Change a key name
+in both places or not at all. Today the copied controller still speaks the v1
+wire format; this module describes v2 only.
 
 Ports: 5017 (echo, sim -> host) and 5018 (command, host -> sim) only.
 Port 5006 is never used by this module. The reserved port set of CONTRACT.md
@@ -32,6 +33,11 @@ NaN / Infinity tokens rejected, int fields must be JSON ints (not floats), and
 nulls allowed only for cmd_seq_echo and the two vel_rad_s. Single-wheel v1
 bytes fail the key-set check, so they are refused.
 
+Limits, as CONTRACT.md S3 states them: only the command wheels are clamped to
++-3.0 rad/s. The echo velocities and angles are NOT clamped; they pass through
+unchanged. cmd_seq and cmd_seq_echo are non-negative ints with no upper bound
+in this module (the JSON int is kept as Python's arbitrary-size int).
+
 Usage (run from poc/ctrl-wheels):
     python3 -m pytest test_ctrl_wheels_udp.py -v
 """
@@ -45,6 +51,8 @@ from dataclasses import dataclass
 
 
 HOST = "127.0.0.1"
+# Contract constants (CONTRACT.md S4). Not referenced in this module; the bridge
+# (task F14) imports them.
 PORT_CMD = 5018
 PORT_ECHO = 5017
 # SIM ONLY. Per-wheel speed clamp in rad/s, applied on encode and on decode.
@@ -115,9 +123,12 @@ def _check_version(value: object) -> int:
     return value
 
 
-def clamp(value: float) -> float:
-    """Limit one wheel speed to +-WHEEL_CLAMP_RAD_S. Rejects bool and non-finite input."""
-    v = _finite_real("wheel_rad_s", value)
+def clamp(value: float, name: str = "wheel") -> float:
+    """Limit one wheel speed to +-WHEEL_CLAMP_RAD_S. Rejects bool and non-finite input.
+
+    name only labels the error message (for example "wheels.left").
+    """
+    v = _finite_real(name, value)
     return max(-WHEEL_CLAMP_RAD_S, min(WHEEL_CLAMP_RAD_S, v))
 
 
@@ -192,8 +203,8 @@ def encode_cmd(cmd_seq: int, left_rad_s: float, right_rad_s: float, stale: int) 
         "v": VERSION,
         "cmd_seq": _check_seq("cmd_seq", cmd_seq),
         "wheels": {
-            "left": clamp(left_rad_s),
-            "right": clamp(right_rad_s),
+            "left": clamp(left_rad_s, "wheels.left"),
+            "right": clamp(right_rad_s, "wheels.right"),
         },
         "stale": _check_stale(stale),
     }
@@ -207,8 +218,8 @@ def decode_cmd(data: bytes) -> Cmd:
     wheels = _check_keys("wheels", obj["wheels"], WHEELS_KEYS)
     return Cmd(
         cmd_seq=_check_seq("cmd_seq", obj["cmd_seq"]),
-        left_rad_s=clamp(wheels["left"]),
-        right_rad_s=clamp(wheels["right"]),
+        left_rad_s=clamp(wheels["left"], "wheels.left"),
+        right_rad_s=clamp(wheels["right"], "wheels.right"),
         stale=_check_stale(obj["stale"]),
     )
 
