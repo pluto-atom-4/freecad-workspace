@@ -43,6 +43,10 @@ on huge values. This module refuses a value past Python's int-to-text limit
 with UdpMsgError on both encode and decode. That refusal is an implementation
 choice, not a contract rule.
 
+Error messages never print a huge int in full: _show describes it by sign and
+an estimated digit count, so formatting a bad value cannot raise a bare
+ValueError past UdpMsgError.
+
 Usage (run from poc/ctrl-wheels):
     python3 -m pytest test_ctrl_wheels_udp.py -v
 """
@@ -96,35 +100,61 @@ class Echo:
     vel_rad_s_r: float | None
 
 
+# Ints wider than this many bits are shown by size only. 1024 bits is about 309
+# decimal digits, well under CPython's int-to-text limit (never below 640 when set),
+# so repr() of anything at or below this width cannot raise.
+_SHOW_MAX_BITS = 1024
+
+
+def _show(value: object) -> str:
+    """Describe a user value for an error message without ever raising.
+
+    A huge int is described by its sign and an estimated digit count, because
+    str() of it raises ValueError past the int-to-text limit. Other values use
+    repr(), or only the type name when the value is neither a number nor a string.
+    """
+    if isinstance(value, bool) or value is None:
+        return repr(value)
+    if isinstance(value, int):
+        if value.bit_length() > _SHOW_MAX_BITS:
+            sign = "-" if value < 0 else ""
+            digits = int(value.bit_length() * 0.30103) + 1
+            return f"{sign}int of about {digits} digits"
+        return repr(value)
+    if isinstance(value, (float, str)):
+        return repr(value)
+    return f"<{type(value).__name__}>"
+
+
 def _finite_real(name: str, value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise UdpMsgError(f"{name} must be a real number, got {value!r}")
+        raise UdpMsgError(f"{name} must be a real number, got {_show(value)}")
     try:
         result = float(value)
     except OverflowError as exc:
-        raise UdpMsgError(f"{name} out of float range, got {value!r}") from exc
+        raise UdpMsgError(f"{name} out of float range, got {_show(value)}") from exc
     if not math.isfinite(result):
-        raise UdpMsgError(f"{name} is not finite, got {value!r}")
+        raise UdpMsgError(f"{name} is not finite, got {_show(value)}")
     return result
 
 
 def _check_seq(name: str, value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
-        raise UdpMsgError(f"{name} must be int, got {value!r}")
+        raise UdpMsgError(f"{name} must be int, got {_show(value)}")
     if value < 0:
-        raise UdpMsgError(f"{name} must be >= 0, got {value}")
+        raise UdpMsgError(f"{name} must be >= 0, got {_show(value)}")
     return value
 
 
 def _check_stale(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value not in STALE_SET:
-        raise UdpMsgError(f"stale must be one of {STALE_SET}, got {value!r}")
+        raise UdpMsgError(f"stale must be one of {STALE_SET}, got {_show(value)}")
     return value
 
 
 def _check_version(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value != VERSION:
-        raise UdpMsgError(f"v must be the JSON integer {VERSION}, got {value!r}")
+        raise UdpMsgError(f"v must be the JSON integer {VERSION}, got {_show(value)}")
     return value
 
 

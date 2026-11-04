@@ -381,6 +381,26 @@ class TestEncodeCmd:
         with pytest.raises(UdpMsgError):
             encode_cmd(over_limit, 0.0, 0.0, 0)
 
+    @skip_without_int_limit
+    def test_negative_huge_cmd_seq_rejected_with_udp_msg_error(self):
+        # Formatting this value into the "must be >= 0" message must not raise.
+        with pytest.raises(UdpMsgError) as info:
+            encode_cmd(-(10 ** INT_DIGIT_LIMIT), 0.0, 0.0, 0)  # limit + 1 digits
+        assert type(info.value) is UdpMsgError
+
+    @skip_without_int_limit
+    def test_huge_stale_rejected_with_udp_msg_error(self):
+        with pytest.raises(UdpMsgError) as info:
+            encode_cmd(1, 0.0, 0.0, 10 ** INT_DIGIT_LIMIT)  # limit + 1 digits
+        assert type(info.value) is UdpMsgError
+
+    @skip_without_int_limit
+    @pytest.mark.parametrize("sign", [1, -1], ids=["positive", "negative"])
+    def test_huge_wheel_rejected_with_udp_msg_error(self, sign):
+        with pytest.raises(UdpMsgError) as info:
+            encode_cmd(1, sign * 10 ** INT_DIGIT_LIMIT, 0.0, 0)  # limit + 1 digits
+        assert type(info.value) is UdpMsgError
+
     def test_negative_cmd_seq_rejected(self):
         with pytest.raises(UdpMsgError):
             encode_cmd(-1, 0.0, 0.0, 0)
@@ -588,6 +608,18 @@ class TestEncodeEcho:
         over_limit = 10 ** INT_DIGIT_LIMIT  # limit + 1 digits
         with pytest.raises(UdpMsgError):
             encode_echo(**_echo_kwargs(cmd_seq_echo=over_limit))
+
+    # The error message describes a huge value without str() of it (see _show in the
+    # module). Each case must raise UdpMsgError itself, not a bare ValueError from
+    # the message formatting; pytest.raises(UdpMsgError) alone would let a bare
+    # ValueError propagate and fail, and the explicit type check makes that visible.
+    @skip_without_int_limit
+    @pytest.mark.parametrize("slot", ["sim_t_s", "angle_rad_l"])
+    def test_huge_echo_float_rejected_with_udp_msg_error(self, slot):
+        over_limit = 10 ** INT_DIGIT_LIMIT  # limit + 1 digits
+        with pytest.raises(UdpMsgError) as info:
+            encode_echo(**_echo_kwargs(**{slot: over_limit}))
+        assert type(info.value) is UdpMsgError
 
 
 class TestDecodeEcho:
