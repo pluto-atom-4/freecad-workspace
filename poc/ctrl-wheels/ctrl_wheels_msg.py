@@ -32,10 +32,13 @@ Protocol details (WHL2):
 
 Supported range: every token is at most 20 characters (_MAX_TOKEN_LEN), and
 the formatter refuses a model whose %.6f text is longer than that. So the
-formatter and parser round-trip a model whose text is at most 20 characters:
-positive values below 1e13 and negative values above -1e12. A value outside
-that range is refused by the formatter and by the parser. This is a simulation
-wheel velocity in rad/s, far inside the range.
+formatter and parser round-trip a model whose %.6f text is at most 20
+characters: positive values up to 9999999999999.999999 and negative values down
+to -999999999999.999999. A value whose text is longer (including one that
+rounds up to a longer text) is refused by the formatter and by the parser.
+This is a simulation wheel velocity in rad/s, far inside the range. The v1
+formatter (format_whl) shares the guard; the single-wheel module in
+poc/ctrl-wheel has no such cap.
 
 Single-wheel names kept for the split: Whl (seq, t_us, model_rad_s, raw, state)
 and format_whl, which writes the single-wheel WHL v1 line (prefix WHL, 6 fields).
