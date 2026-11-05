@@ -418,19 +418,33 @@ def test_run_background_starts_and_stops_within_1s(make_wheel, echo_rx, tx):
     _send(tx, wheel, encode_cmd(1, 1.0, 1.0, 0))
     stop = threading.Event()
     thread = wheel.run_background(stop)
-    assert isinstance(thread, threading.Thread)
-    assert thread.name == "fake_wheels"
-    assert thread.daemon
-    assert thread.is_alive()
-    time.sleep(0.2)
-    echoes = _echoes(echo_rx)
-    assert len(echoes) >= 2
-    assert any(e.cmd_seq_echo == 1 for e in echoes)
-    t0 = time.monotonic()
-    stop.set()
-    thread.join(timeout=1.0)
-    assert not thread.is_alive()
-    assert time.monotonic() - t0 < 1.0
+    try:
+        assert isinstance(thread, threading.Thread)
+        assert thread.name == "fake_wheels"
+        assert thread.daemon
+        assert thread.is_alive()
+        time.sleep(0.2)
+        echoes = _echoes(echo_rx)
+        assert len(echoes) >= 2
+        assert any(e.cmd_seq_echo == 1 for e in echoes)
+        t0 = time.monotonic()
+        stop.set()
+        thread.join(timeout=1.0)
+        assert not thread.is_alive()
+        assert time.monotonic() - t0 < 1.0
+    finally:
+        stop.set()
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.5"])
+def test_non_loopback_host_is_refused(echo_rx, host):
+    with pytest.raises(ValueError):
+        FakeWheel(echo_rx.getsockname(), host=host)
+
+
+def test_loopback_host_is_accepted(make_wheel):
+    wheel = make_wheel(host="127.0.0.1")
+    assert wheel.cmd_addr[0] == "127.0.0.1"
 
 
 def test_stop_event_can_be_set_again_after_the_thread_ends(make_wheel):

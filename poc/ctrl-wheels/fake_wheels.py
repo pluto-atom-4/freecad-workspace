@@ -40,8 +40,9 @@ S5 defines the age on the host clock, so this is a deliberate difference.
 Ports (CONTRACT.md S4): the reserved set is the literal set {5005, 5006, 5007,
 5008, 5017, 5018}. This module refuses to bind a reserved command port, and it
 refuses a reserved echo port in echo_addr. It must not be derived from a range.
-Ports must be ints in 0..65535. Port 0 (ephemeral) is meant for tests and
-loopback by convention; this is not enforced.
+Ports must be ints in 0..65535. Port 0 (ephemeral) is meant for tests.
+The command port is unauthenticated, so host must be "127.0.0.1" or "localhost"
+(the default is 127.0.0.1); any other host raises ValueError before binding.
 
 Usage (run from poc/ctrl-wheels):
     python3 -m pytest test_ctrl_wheels_fake.py -v
@@ -68,6 +69,8 @@ from ctrl_wheels_udp import (
 _RESERVED_PORTS = frozenset({5005, 5006, 5007, 5008, 5017, 5018})
 # Stale window of CONTRACT.md S5, in sim seconds.
 STALE_S = 0.200
+# The command port is unauthenticated (CONTRACT.md S4 default is 127.0.0.1): loopback only.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
 
 
 class FakeWheel:
@@ -86,6 +89,8 @@ class FakeWheel:
         for name, port in (("cmd_port", cmd_port), ("echo port", echo_addr[1])):
             if isinstance(port, bool) or not isinstance(port, int) or not (0 <= port <= 65535):
                 raise ValueError(f"{name} {port!r} must be an int in 0..65535")
+        if host not in _LOOPBACK_HOSTS:
+            raise ValueError(f"host {host!r} must be one of {sorted(_LOOPBACK_HOSTS)}")
         if cmd_port in _RESERVED_PORTS:
             raise ValueError(f"cmd_port {cmd_port} is reserved (CONTRACT.md S4)")
         if echo_addr[1] in _RESERVED_PORTS:
@@ -149,7 +154,10 @@ class FakeWheel:
         return max(-self._limit, min(self._limit, wheel_rad_s))
 
     def step(self) -> None:
-        """Advance one dt_s tick and send one echo. Never raises."""
+        """Advance one dt_s tick and send one echo. Never raises.
+
+        An echo can be dropped if the encode or send fails.
+        """
         self._accept_commands()
         if self._stopped():
             target_l = 0.0
@@ -181,8 +189,9 @@ class FakeWheel:
             )
             self._echo_tx.sendto(payload, self._echo_addr)
         except (OSError, UdpMsgError):
-            # By design: step() never raises. Inputs are finite and clamped, so
-            # the encode error path is not reachable today; a send error is dropped.
+            # By design: step() never raises, a failed echo is dropped. The encode
+            # cannot fail today: cmd_seq is the decoded int (not clamped), and
+            # json encode and decode share the same int-to-text digit limit.
             pass
 
     def close(self) -> None:
