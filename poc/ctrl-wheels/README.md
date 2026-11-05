@@ -43,7 +43,7 @@ Open:
 | `ctrl_wheels_relay.py` | `Relay`, one per wheel, no sockets. A state other than 0 gives 0.0 and stale 1. An age of 200 ms or more on the host clock gives 0.0 and stale 1. The sign is applied before the symmetric clamp. |
 | `ctrl_wheels_log.py` | CSV writer with 19 columns (`COLUMNS`) and `COLUMN_DOC`. Cell rules: None or a missing key gives an empty cell, bool, NaN and inf are refused, and a row is validated before anything is written. A path target is opened with mode `x` unless overwrite is set. |
 | `ctrl_wheels_bridge.py` | Bridge. Reads WHL2 lines from a serial URL, a device path or stdin, runs one relay per wheel, sends one UDP command per accepted line and writes one CSV row per WHL2 line plus one per silence episode. CLI in `build_parser()` and `main()`. |
-| `fake_wheels.py` | `FakeWheel`, a headless library stand-in for the Webots controller. First-order lag with guessed `tau_s` 0.05 and `dt_s` 0.016. Refuses binding the reserved ports (the literal set 5005, 5006, 5007, 5008, 5017, 5018). Has no CLI; used by the tests only. |
+| `fake_wheels.py` | `FakeWheel`, a headless library stand-in for the Webots controller. First-order lag with guessed `tau_s` 0.05 and `dt_s` 0.016. Refuses a reserved `cmd_port` and a reserved `echo_addr` port (the literal set 5005, 5006, 5007, 5008, 5017, 5018). It binds only the command port; the echo is sent to `echo_addr`. Has no CLI; used by the tests only. |
 | `test_ctrl_wheels_msg.py` | WHL2 format, parse, reject and split tests. Golden lines copied from CONTRACT.md S7. |
 | `test_ctrl_wheels_msg_steps.py` | Tests for `step_lines` and the `ctrl_wheels_msg` CLI. |
 | `test_ctrl_wheels_udp.py` | Tests for the UDP v2 encoders, decoders and listener. |
@@ -85,16 +85,17 @@ The only sign flags are `--sign-left` and `--sign-right`. No unsuffixed sign opt
 
 ## Run
 
-Tests. Run them from this directory only:
+All commands in this section run from the `poc/ctrl-wheels` directory. Run `cd poc/ctrl-wheels` once, then the commands below. The bridge commands use the `esp32-dof` env through `mamba run -n esp32-dof`, because pyserial is imported when the bridge loads.
+
+Tests:
 
 ```
-cd poc/ctrl-wheels
 mamba run -n esp32-dof python3 -m pytest -q
 ```
 
 Keep one pytest run to one poc directory. The module name `sensor_read` exists in more than one poc directory.
 
-Stdin pipeline (no simulator needed for the bridge itself):
+Stdin pipeline (no simulator needed for the bridge itself). The generator imports only the standard library, so it runs under the default `python3`:
 
 ```
 python3 -m ctrl_wheels_msg --step 0.5 --seconds 5 | mamba run -n esp32-dof python3 ctrl_wheels_bridge.py --stdin --record ac1.csv
@@ -130,7 +131,7 @@ Bridge flags:
 | `--baud N` | 115200 | Serial baud rate. Not used by `--stdin`. |
 | `--echo-timeout SECONDS` | 0.5 | Wait for an echo before writing the row without one, 0 to 10. |
 
-Exit codes: 0 when the run finishes (EOF, duration or Ctrl-C). 2 for a usage error, a failed source (at open or mid-run) or a `--record` error.
+Exit codes: 0 when the run finishes (EOF, duration or Ctrl-C). 2 for a usage error, a failed source (at open or mid-run) or a `--record` error. 2 also covers a failed bind of the echo port (`--echo-port`), which the bridge logs as `cannot listen for echoes on UDP port N`; that bind is tried before the `--record` file is created.
 
 `fake_wheels` is a library only. It has no CLI and is used by the tests.
 
@@ -147,7 +148,7 @@ Exit codes: 0 when the run finishes (EOF, duration or Ctrl-C). 2 for a usage err
 ## Notes
 
 - Firmware text on the serial stream: any line that is not WHL2 fails `parse_line`, is counted in `bad_lines` and does not stop the run. Such lines carry no WHL2 fields, so the count is benign.
-- Firmware restart: the firmware's WHL2 seq restarts from a low value. The bridge treats a backward seq as neither a gap nor a new highest seq (`handle_line` in `ctrl_wheels_bridge.py`). So after a restart `missed_whl` stays 0 until seq climbs past the highest value seen before it. This is read from the code and was not run. The CSV shows it as a seq gap or a reorder.
+- Firmware restart (read from the code, not run; no test covers it; a known limitation, not fixed here): the firmware's WHL2 seq restarts from a low value, which is a backward jump. In `handle_line` (`ctrl_wheels_bridge.py`, lines 332-336) the gap is `(seq - last_whl_seq - 1) % 65536`. A gap below 32768 counts as forward: it is added to `missed_whl` and `last_whl_seq` moves to the new seq. Any other gap is a repeat or reorder: nothing is counted and `last_whl_seq` keeps the highest seq seen. So for a restart to seq `s` with old highest seq `H`: if `H - s` is below 32768, the jump is not counted and `missed_whl` stays 0 until seq climbs past `H`. This is the case of the owner run, which restarted with a low highest seq. If `H - s` is 32768 or more, the jump is counted as `65536 - (H - s + 1)` missed frames on that line, which inflates `missed_whl_total`.
 - One command per WHL2 line: each accepted line gives one UDP command to both wheels and one CSV row with its own `whl_*` cells.
 - Stops are not latches. A state other than 0, or a stale relay, sends 0.0 to both wheels with stale 1. A fresh state-0 line resumes. The bridge's stale rule uses the host clock (200 ms). The Webots controller also stops both wheels after 0.2 s of sim time without a valid command. A Webots pause stops sim time, so that watchdog does not fire during a pause (the controller header, known limit (a)).
 - `unmatched_echoes`: the sibling README expected a non-zero count from the echo cadence. That expectation has not been checked for this twin.
