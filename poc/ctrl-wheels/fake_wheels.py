@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Headless twin fake of the Webots ctrl_wheels controller (freecad-workspace
-FW#495 / FW#496, umbrella FW#482).
+Headless twin fake of the Webots ctrl_wheels controller.
 
 SIM ONLY. Headless stand-in for the twin Webots controller at
 poc/ctrl-wheels/webots/controllers/ctrl_wheels/ctrl_wheels.py, which is the real
-counterpart and is rewritten by tasks F18 to F20 (FW#502 to FW#504). This file
+counterpart. Per the header of ctrl_wheels_udp.py, that controller may still
+speak the v1 wire format until its v2 version lands; this fake speaks v2 only,
+and no run against the real controller is claimed. This file
 is not a Webots model and makes no physics claim. The wheel sign convention is
 UNCONFIRMED (CONTRACT.md S2) and the fake applies each wheel's command as given,
 so any sign belongs to the bridge. The model values (tau, dt, clamp, stale
@@ -30,18 +31,19 @@ Two independent first-order wheels, left and right. Each step (dt_s of sim time)
     angle    += velocity * dt_s
     sim time += dt_s
     vel_rad_s is the finite difference of angle, None on the first step (no
-    previous angle yet), per CONTRACT.md S3 and S6.
+    previous angle yet); a None velocity is allowed by CONTRACT.md S3.
+
+The stale window uses sim time on purpose, so tests are deterministic. CONTRACT.md
+S5 defines the age on the host clock, so this is a deliberate difference.
 
 Ports (CONTRACT.md S4): the reserved set is the literal set {5005, 5006, 5007,
 5008, 5017, 5018}. This module refuses to bind a reserved command port, and it
 refuses a reserved echo port in echo_addr. It must not be derived from a range.
-Ephemeral ports (0) are allowed for tests and loopback only.
+Ports must be ints in 0..65535. Port 0 (ephemeral) is meant for tests and
+loopback by convention; this is not enforced.
 
 Usage (run from poc/ctrl-wheels):
     python3 -m pytest test_ctrl_wheels_fake.py -v
-
-Test-first state: test_ctrl_wheels_fake.py (FW#495) pins this module. Until
-FW#496 lands, those tests are expected to fail.
 
 step() is not thread-safe: drive it from one thread only.
 """
@@ -63,8 +65,7 @@ from ctrl_wheels_udp import (
 
 # CONTRACT.md S4, written out as a literal set on purpose. Do not derive it from a range.
 _RESERVED_PORTS = frozenset({5005, 5006, 5007, 5008, 5017, 5018})
-# Stale window of CONTRACT.md S5, in sim seconds. Kept local so this module does not
-# depend on the single-wheel relay module.
+# Stale window of CONTRACT.md S5, in sim seconds.
 STALE_S = 0.200
 
 
@@ -81,6 +82,9 @@ class FakeWheel:
         clamp: float = WHEEL_CLAMP_RAD_S,
         host: str = "127.0.0.1",
     ) -> None:
+        for name, port in (("cmd_port", cmd_port), ("echo port", echo_addr[1])):
+            if isinstance(port, bool) or not isinstance(port, int) or not (0 <= port <= 65535):
+                raise ValueError(f"{name} {port!r} must be an int in 0..65535")
         if cmd_port in _RESERVED_PORTS:
             raise ValueError(f"cmd_port {cmd_port} is reserved (CONTRACT.md S4)")
         if echo_addr[1] in _RESERVED_PORTS:
@@ -91,6 +95,8 @@ class FakeWheel:
             raise ValueError(f"dt_s {dt_s} must be finite and > 0")
         if not (tau_s > 0.0 and tau_s != float("inf")):
             raise ValueError(f"tau_s {tau_s} must be finite and > 0")
+        if not (stale_s > 0.0 and stale_s != float("inf")):
+            raise ValueError(f"stale_s {stale_s} must be finite and > 0")
         self._echo_addr = echo_addr
         self._dt = dt_s
         self._lag = dt_s / (tau_s + dt_s)

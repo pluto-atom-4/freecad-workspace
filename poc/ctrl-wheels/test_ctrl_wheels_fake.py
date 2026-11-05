@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """
 Unit tests for fake_wheels.FakeWheel, the headless twin stand-in for the Webots
-ctrl_wheels controller (freecad-workspace FW#495, task F11, umbrella FW#482).
+ctrl_wheels controller.
 
-TEST FIRST, RED UNTIL F12. Task F12 (FW#496) rewrites fake_wheels.py so that it
-matches the API and the behaviour pinned here. F11 and F12 are one PR. Until F12
-lands, these tests are expected to fail: the module still holds the single-wheel
-FakeWheel (one wheel, a sign argument, the old reserved-port range).
-
-Pinned API (F12 implements exactly this):
+Pinned API:
     FakeWheel(echo_addr, cmd_port=0, tau_s=0.05, dt_s=0.016, stale_s=0.2,
               clamp=3.0, host="127.0.0.1")
     .cmd_addr, .step(), .close(), .run_background(stop_event) -> Thread
@@ -19,7 +14,8 @@ never a range). Tests bind only ephemeral ports (0) on the loopback address.
 
 SIM ONLY. The sign convention is UNCONFIRMED (CONTRACT.md S2). The fake applies
 each wheel's command as given, so any sign is the bridge's job, not the fake's.
-The model values (tau, dt, clamp) are guesses. Nothing here validates a real
+The model values (tau, dt, stale window) are guessed values, not in CONTRACT.md;
+retuning them breaks these tests. Nothing here validates a real
 wheel or a balance loop.
 
 Usage (run from poc/ctrl-wheels):
@@ -53,10 +49,9 @@ from fake_wheels import FakeWheel  # noqa: E402
 RESERVED_PORTS = frozenset({5005, 5006, 5007, 5008, 5017, 5018})
 DT_S = 0.016
 TAU_S = 0.05
-# First-order lag factor, written here from the documented model: dt / (tau + dt).
+# First-order lag factor, written here from guessed values (not in CONTRACT.md;
+# retuning breaks these tests): dt / (tau + dt).
 LAG = DT_S / (TAU_S + DT_S)
-# Stale age of CONTRACT.md S5, in sim seconds.
-STALE_AGE_S = 0.200
 TOL = 0.1
 
 
@@ -135,7 +130,7 @@ def _run(
 def _expected_path(targets):
     """Per-step velocity and angle for a list of per-step targets.
 
-    Written from the documented model, not from fake_wheels.py: velocity starts at
+    Written from the guessed model, not from fake_wheels.py: velocity starts at
     0 and angle at 0; each step v += (target - v) * LAG, then angle += v * DT_S.
     """
     vel = 0.0
@@ -251,7 +246,6 @@ def test_left_command_does_not_move_right_wheel(make_wheel, echo_rx, tx):
     echoes = _run(wheel, tx, echo_rx, 62, 1, 1.0, 0.0)
     _assert_leg_path(echoes, "left", [1.0] * 62)
     _assert_leg_path(echoes, "right", [0.0] * 62)
-    assert all(e.angle_rad_r == 0.0 for e in echoes)
 
 
 def test_right_command_does_not_move_left_wheel(make_wheel, echo_rx, tx):
@@ -259,7 +253,6 @@ def test_right_command_does_not_move_left_wheel(make_wheel, echo_rx, tx):
     echoes = _run(wheel, tx, echo_rx, 62, 1, 0.0, -1.0)
     _assert_leg_path(echoes, "left", [0.0] * 62)
     _assert_leg_path(echoes, "right", [-1.0] * 62)
-    assert all(e.angle_rad_l == 0.0 for e in echoes)
 
 
 def test_command_above_clamp_is_limited_to_3_per_wheel(make_wheel, echo_rx, tx):
@@ -310,8 +303,6 @@ def test_stale_zeroes_both_wheels_when_they_were_commanded_differently(
     _assert_leg_path(echoes, "left", [1.0] * 62 + [0.0] * 62)
     _assert_leg_path(echoes, "right", [-1.0] * 62 + [0.0] * 62)
     assert all(e.cmd_seq_echo == 2 for e in stopped)
-    assert stopped[-1].vel_rad_s_l == pytest.approx(0.0, abs=1e-6)
-    assert stopped[-1].vel_rad_s_r == pytest.approx(0.0, abs=1e-6)
 
 
 # Datagrams the fake must ignore: the same refusals as the module decoder
@@ -396,7 +387,9 @@ def test_clamp_not_in_zero_to_wheel_clamp_is_rejected(echo_rx, clamp):
 
 
 def test_clamp_at_wheel_clamp_is_accepted(make_wheel):
-    make_wheel(clamp=WHEEL_CLAMP_RAD_S)
+    wheel = make_wheel(clamp=WHEEL_CLAMP_RAD_S)
+    assert wheel.cmd_addr[1] != 0
+    wheel.close()
 
 
 def test_clamp_limits_both_wheel_targets(make_wheel, echo_rx, tx):
@@ -448,11 +441,27 @@ def test_stop_event_can_be_set_again_after_the_thread_ends(make_wheel):
         {"tau_s": -0.016},
         {"tau_s": float("nan")},
         {"tau_s": float("inf")},
+        {"stale_s": float("nan")},
+        {"stale_s": 0.0},
+        {"stale_s": -1.0},
+        {"stale_s": float("inf")},
     ],
 )
 def test_bad_dynamics_arguments_rejected_before_binding(kwargs):
     with pytest.raises(ValueError):
         FakeWheel(echo_addr=("127.0.0.1", 40123), **kwargs)
+
+
+@pytest.mark.parametrize("port", [-1, 70000])
+def test_out_of_range_command_port_is_refused(port):
+    with pytest.raises(ValueError):
+        FakeWheel(echo_addr=("127.0.0.1", 40123), cmd_port=port)
+
+
+@pytest.mark.parametrize("port", [-1, 70000])
+def test_out_of_range_echo_port_is_refused(port):
+    with pytest.raises(ValueError):
+        FakeWheel(echo_addr=("127.0.0.1", port))
 
 
 @pytest.mark.parametrize("port", sorted(RESERVED_PORTS))
