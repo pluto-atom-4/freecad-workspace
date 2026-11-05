@@ -20,8 +20,11 @@ unless --overwrite. Exit codes: 0 run finished (EOF or Ctrl-C), 2 usage error, a
 source (at open, or mid-run: the 'line source stopped' line is logged BEFORE the summary)
 or a --record error. A failure to receive echoes silently stops echo draining and the run
 still ends normally.
-Ctrl-C ends the run through stop_event and prints the summary on the normal path; a Ctrl-C
-during shutdown returns 0 without a summary.
+Ctrl-C while run_bridge is running ends the run through stop_event, prints the summary and
+returns 0. Ctrl-C while waiting to open the source returns 0 without a summary. A KeyboardInterrupt
+raised inside run_bridge's shutdown returns 0 without a summary. A Ctrl-C during startup (after the
+source opens, before the SIGINT handler is installed) or during the final cleanup (after the handler
+is restored) is not handled and ends with a traceback and a non-zero exit.
 An unreachable URL with --duration returns 2 on purpose: nothing was ever opened, so the
 run is a failed source, not a clean finish.
 

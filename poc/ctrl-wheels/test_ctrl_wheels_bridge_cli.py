@@ -698,9 +698,10 @@ def test_clean_ctrl_c_prints_nothing_after_the_summary(tmp_path, capsys):
             if not _reader_threads():
                 break
             time.sleep(0.01)
+        assert not _reader_threads(), f"run {i}: a reader from an earlier run is still alive"
         cmd_port, echo_port = _two_free_ports()
         cancel = threading.Event()
-        seen = threading.Event()
+        seen =threading.Event()
         helper = threading.Thread(
             target=_sigint_when_reader_runs, args=(cancel, seen), daemon=True)
         helper.start()
