@@ -198,7 +198,7 @@ Nothing in this file has been verified, tested or validated on hardware. In part
 - Timing: the 20 ms tick with two writes and two blocking reads is an estimate of about 9.4 ms for the writes only. It is not measured. The reads add more. OWN1 is the owner step that would measure it (discussion 266, Risks and unverified items; Task table row OWN1).
 - The firmware raw cap value in the twin and its position before the write were not re-read for this file (S2).
 - The WHL2 parser's handling of a leading `+` in tokens is inherited from the single-wheel parser and is not decided here (`ctrl_wheel_msg.py:56`, `122`).
-- The merge status of the non-finite refusal (BRC PR #262, FW PR #476) was reported by the main session and was not re-checked against GitHub for this file. The `ctrl_wheel_msg.py` docstring at `:10-11` and `:19` is stale relative to the code at `:145-147`.
+- The non-finite refusal is merged on both sides: BRC PR #262 and FW PR #476 both show state MERGED on GitHub (2026-11-03), checked with `gh pr view`. The single-wheel `ctrl_wheel_msg.py` docstring at `:10-12` and `:19` still says PR #262 is not merged, which is stale relative to the code at `:145-147`; that file is not changed here.
 - The copied clamp (3.0 rad/s) and reserved-port checks in the twin copies are duplicated by design and may drift (discussion 266, Task table row F01; Assessment, row Q6).
 - The v2 `v` rule, the nested `left`/`right` echo layout and the `wheels` object, and the nested exact-key-set rule, are decided for this contract. The single-wheel sources do not define them, so they are not yet built or tested.
 - The 5006 never-used rule for the twin is a decision of this contract; the single-wheel source states it only for its own module (S4).
