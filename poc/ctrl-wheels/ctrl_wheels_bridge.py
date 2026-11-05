@@ -25,8 +25,8 @@ An unreachable URL with --duration returns 2 on purpose: nothing was ever opened
 run is a failed source, not a clean finish.
 
 SIM ONLY. The bridge is a relay, not a control loop, and makes no balance claim.
-The wheel sign is UNVERIFIED; it is flipped only through the Relay sign argument,
-which the CLI exposes as --sign (the only sign flip in the CLI).
+The wheel signs are UNVERIFIED; they are flipped only through the Relay sign argument,
+which the CLI exposes as --sign-left and --sign-right (the only sign flips in the CLI).
 Latency is UNMEASURED: host_rtt_ms is wall time, not link latency.
 
 The serial helpers (DofSerialError, _is_url, _open_first, _open_url_waiting,
@@ -485,7 +485,7 @@ def run_bridge(
 
 
 # ---------------------------------------------------------------------------
-# Command line. SIM ONLY. The sign flip is only --sign, through Relay.
+# Command line. SIM ONLY. The sign flips are only --sign-left and --sign-right, through Relay.
 # ---------------------------------------------------------------------------
 
 # The CLI refuses only 5006 (the single-wheel servo_wheel_dof port), for either port.
@@ -594,9 +594,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--overwrite", action="store_true",
         help="replace an existing --record file (default: refuse and leave it untouched)")
     parser.add_argument(
-        "--sign", type=int, choices=(1, -1), default=1,
-        help="wheel sign, 1 or -1 (default 1). This is the ONLY place the sign is flipped "
-             "(Relay). UNVERIFIED.")
+        "--sign-left", type=int, choices=(1, -1), default=1,
+        help="Webots-side sign, 1 or -1 (default 1), applied to the model value for the left "
+             "wheel (Relay). UNVERIFIED. Not the chip raw sign of the generator "
+             "ctrl_wheels_msg (its --sign-left/--sign-right default +1/-1)")
+    parser.add_argument(
+        "--sign-right", type=int, choices=(1, -1), default=1,
+        help="Webots-side sign, 1 or -1 (default 1), applied to the model value for the right "
+             "wheel (Relay). UNVERIFIED. Not the chip raw sign of the generator "
+             "ctrl_wheels_msg (its --sign-left/--sign-right default +1/-1)")
     parser.add_argument(
         "--duration", type=_positive_finite, default=None, metavar="SECONDS",
         help="stop after SECONDS (> 0); default: run until the source ends")
@@ -693,8 +699,8 @@ def main(argv: list[str] | None = None) -> int:
             _log(f"cannot write --record {args.record!r}: {exc}{hint}")
             return 2
 
-        relay_l = Relay(sign=args.sign)
-        relay_r = Relay(sign=args.sign)
+        relay_l = Relay(sign=args.sign_left)
+        relay_r = Relay(sign=args.sign_right)
         stop = threading.Event()
         source_error = None
         close_error = None
