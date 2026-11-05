@@ -10,7 +10,11 @@ Webots controller for the twin-wheel ctrl-wheels simulation. It speaks the v2 wi
 format of poc/ctrl-wheels/CONTRACT.md (sections S3 and S4).
 It binds the UDP command port CMD_PORT (127.0.0.1:5018) and drains it every step,
 keeps the newest valid v2 command, and drives the two wheel motors with
-setVelocity. Both wheels get 0 rad/s when no valid command has arrived, when the
+setVelocity. The drain is capped at MAX_DATAGRAMS_PER_STEP per step and the rest of
+the backlog is discarded unprocessed. The watchdog age is measured in simulated
+time from the step in which the newest command was processed. This differs from
+CONTRACT.md S5 (host clock, bridge side) on purpose, same as the single-wheel
+controller; not verified in Webots at faster-than-real-time. Both wheels get 0 rad/s when no valid command has arrived, when the
 newest command carries stale=1, or when the newest valid command is STALE_SIM_S
 or more old in simulated time. A failed or non-finite sensor read also stops both
 motors and skips that step's log line, echo and angle update. Each normal step it
@@ -59,7 +63,8 @@ STALE_SIM_S = 0.2  # simulated seconds without a fresh valid command before both
 SIGN_LEFT = 1
 SIGN_RIGHT = 1
 RECV_BUFSIZE = 65535
-MAX_DATAGRAMS_PER_STEP = 64  # drain cap per simulation step; leftovers are read on later steps
+MAX_DATAGRAMS_PER_STEP = 64  # drain cap per simulation step; any backlog beyond it is discarded
+MAX_DISCARD_READS_PER_STEP = 1024  # bound on unprocessed discard reads after the cap is hit
 
 # Wire key names. These are a contract with ctrl_wheels_udp.py in poc/ctrl-wheels,
 # which this controller cannot import (the controller directory is outside the
@@ -256,6 +261,17 @@ def main() -> int:
                 last_cmd_seq, last_cmd_left, last_cmd_right, last_cmd_stale = parsed
                 last_msg_sim_t = t_s
 
+            # Cap hit: the kernel queue may hold a backlog. Reading it on later steps would
+            # refresh last_msg_sim_t with old commands and keep the wheels running past
+            # the watchdog. Discard the rest unprocessed (bounded), so only datagrams
+            # already processed above count and the newest processed one wins.
+            if drained == MAX_DATAGRAMS_PER_STEP:
+                for _ in range(MAX_DISCARD_READS_PER_STEP):
+                    try:
+                        sock.recvfrom(RECV_BUFSIZE)
+                    except OSError:  # includes BlockingIOError: queue empty
+                        break
+
             # Stale or missing command: both wheels stop. Watchdog time is simulation
             # time, not wall time.
             if (last_cmd_left is None or last_cmd_stale == 1
@@ -318,6 +334,14 @@ def main() -> int:
             angle_prev_right = reading_r.angle_rad
             t_prev_s = reading_l.t_s
     finally:
+        # Best effort: never leave the last velocities latched on exit or on an exception.
+        for name, motor in (("left", motor_left), ("right", motor_right)):
+            if motor is None:
+                continue
+            try:
+                motor.setVelocity(0.0)
+            except Exception as exc:  # noqa: BLE001 - shutdown path, must not raise
+                _say(f"ERROR: could not zero {name} motor on exit ({exc})", err=True)
         if echo_sock is not None:
             echo_sock.close()
         sock.close()
