@@ -18,6 +18,16 @@ measured; not verified in Webots. The watchdog age is measured in simulated
 time from the step in which the newest command was processed. This differs from
 CONTRACT.md S5 (host clock, bridge side) on purpose, same as the single-wheel
 controller; not verified in Webots at faster-than-real-time.
+Known limits (documented only, no code change, owner decision):
+(a) A Webots pause stops simulated time, so the 0.2 s sim-time watchdog does not
+fire during a pause.
+(b) The command socket is a plain Linux UDP socket with no SO_RCVBUF tuning and no
+timestamps. If its receive buffer fills, the kernel drops the NEWEST datagrams, so
+a stop (stale=1) sent during a stall can be lost, and the controller may apply a
+command from before the stall for up to STALE_SIM_S of simulated time after resume.
+(c) The intended guard during a pause is the bridge's host-clock stale=1
+(CONTRACT.md S5), not this controller. The single-wheel controller behaves the
+same. Sim-only, the bound is unmeasured, not verified in Webots.
 Both wheels get 0 rad/s when no valid command has arrived, when the
 newest command carries stale=1, or when the newest valid command is STALE_SIM_S
 or more old in simulated time. A failed or non-finite sensor read also stops both
