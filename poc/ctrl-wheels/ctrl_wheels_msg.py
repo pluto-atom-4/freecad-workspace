@@ -2,7 +2,8 @@
 """
 WHL2 twin-wheel line protocol (ctrl_wheels_msg) for the ctrl-wheels POC:
 formatter and parser for the two-wheel line, the single-wheel Whl type it
-splits into, and a step-input generator that still emits single-wheel lines.
+splits into, and a step-input generator (step_lines) that yields WHL2 lines via
+format_whl2 (whl and format_whl are kept for the bridge tests).
 
 SIM ONLY. This is a sim-only twin. Nothing here is validated on real hardware
 or against a real receiver. The sign conventions are UNCONFIRMED: the planned
@@ -20,7 +21,7 @@ Protocol details (WHL2):
 - model: model plant velocity in rad/s, %.6f. The formatter refuses a
   non-finite value (WhlError). The parser rejects any non-finite model token
   (nan, inf, -inf, an overflowing exponent such as 1e400).
-  "-0.000000" is normalised to "0.000000"
+  The formatter writes 0.000000 for a -0 model; the parser accepts -0.000000
 - rawL, rawR: signed decimal integers, int32 range. The wire accepts any int32
   value; the +-125 cap (RAW_CAP) is a firmware step cap and is applied only by
   step_lines, not by the wire
@@ -38,12 +39,12 @@ to -999999999999.999999. A value whose text is longer (including one that
 rounds up to a longer text) is refused by the formatter and by the parser.
 This is a simulation wheel velocity in rad/s, far inside the range. The v1
 formatter (format_whl) shares the guard; the single-wheel module in
-poc/ctrl-wheel has no such cap.
+poc/ctrl-wheel has no 20-character model-text guard.
 
 Single-wheel names kept for the split: Whl (seq, t_us, model_rad_s, raw, state)
 and format_whl, which writes the single-wheel WHL v1 line (prefix WHL, 6 fields).
 Both stay because split() returns Whl and the bridge tests still use format_whl.
-step_lines (the --step CLI) yields WHL2 lines through format_whl2 (task F06).
+step_lines (the --step CLI) yields WHL2 lines through format_whl2.
 Its left and right raws are the clamped raw with the sign applied: sign_l and
 sign_r, default +1 and -1, SIM ONLY, UNCONFIRMED. parse_line accepts WHL2 only.
 
@@ -75,6 +76,7 @@ INT32_MAX = 2**31 - 1
 STATES = (0, 1, 2)
 # Firmware's own step cap (SIM ONLY). step_lines clamps to it; the wire does not.
 RAW_CAP = 125
+# UNVERIFIED against the XL330 e-Manual (BRC lib/dxl_units marks it the same way).
 RAW_RPM_PER_UNIT = 0.229
 # Longest token the parser looks at. Longer tokens are refused before any
 # int() or float() call, so a huge digit string cannot reach Python's int limit.
@@ -86,7 +88,7 @@ _HEX_DIGITS = "0123456789ABCDEF"
 
 
 class WhlError(ValueError):
-    """Raised when WHL2 or WHL v1 formatting or parsing fails."""
+    """Raised when WHL2 parsing or formatting, or WHL v1 formatting, fails."""
 
 
 @dataclass(frozen=True)
@@ -111,7 +113,7 @@ class Whl2:
 
 
 def checksum(body: str) -> int:
-    """XOR of ord values of an ASCII body (WHL2 up to the *, exclusive)."""
+    """XOR of ord values of an ASCII body (WHL or WHL2 body, up to the *, exclusive)."""
     result = 0
     for c in body:
         if not c.isascii():
@@ -259,8 +261,9 @@ def parse_line(line: str) -> Whl2:
     The checksum is compared first, then the field count (7), the prefix
     (WHL2), then each token. A WHL v1 line (6 fields) is refused by the field
     count. Integer tokens are checked against an explicit pattern before int()
-    is called, so "1_0" and "+" alone are refused, and "+5" is accepted only
-    for raw_l and raw_r (see the parser tests). Float tokens are checked for
+    is called, so "1_0" and "+" alone are refused. A leading "+" on raw and
+    model is inherited from the single-wheel parser and is not decided
+    (CONTRACT.md S1, S8). Float tokens are checked for
     whitespace and underscores, then float(), and must be finite. Every token
     is refused above 20 characters before any conversion. raw_l and raw_r must
     fit int32.

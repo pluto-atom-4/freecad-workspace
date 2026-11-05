@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-Tests for the WHL2 twin step generator step_lines in ctrl_wheels_msg (task F05,
-freecad-workspace #489, umbrella FW#482; implementation is task F06, #490).
+Tests for the WHL2 twin step generator step_lines and the main CLI in
+ctrl_wheels_msg.
 
-SIM ONLY. Test-first: these tests are expected to FAIL until F06 lands, because
-the current step_lines still yields single-wheel WHL v1 lines and has no
-sign_l, sign_r or state parameters. F05 and F06 ship as one PR.
+SIM ONLY. These tests pin the WHL2 step generator (line format, counts, seq and
+t_us counters, raw mapping and clamp, pacing), its sign and state defaults, its
+refusals (WhlError for bad arguments) and the main() option handling.
 
-The signs are UNCONFIRMED. The sign_l=+1 and sign_r=-1 defaults pinned here
-follow the plan in discussion 266 (chip-side mirror); they are not verified
-against hardware or against the Webots world (CONTRACT.md S2).
+The signs are UNCONFIRMED. The sign_l=+1 and sign_r=-1 defaults pinned here are
+not verified against hardware or against the Webots world (CONTRACT.md S2).
 
 Expected values are written by hand from the contract and from _raw_for
 (rad/s * 60 / (2 pi) / 0.229, clamped to +-125, then rounded). They are not
@@ -31,7 +30,7 @@ import pytest
 # Add the script directory to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ctrl_wheels_msg import Whl2, WhlError, parse_line, step_lines
+from ctrl_wheels_msg import Whl2, WhlError, main, parse_line, step_lines
 
 
 # Default signs pinned by this test file (UNCONFIRMED, see the module docstring).
@@ -133,6 +132,14 @@ class TestStepLinesTwinContents:
         w = parse_line(lines[0])
         assert w.raw_l == raw_l
         assert w.raw_r == raw_r
+
+    def test_default_signs_and_state_without_kwargs(self):
+        lines = list(step_lines(1.0, 0.02))
+        assert len(lines) == 1
+        w = parse_line(lines[0])
+        assert w.raw_l == 42
+        assert w.raw_r == -42
+        assert w.state == 0
 
     @pytest.mark.parametrize("state", [0, 1, 2])
     def test_state_on_every_line(self, state):
@@ -254,6 +261,44 @@ class TestStepLinesTwinRefusals:
     def test_sign_r_must_be_plus_or_minus_one_int(self, bad):
         with pytest.raises(WhlError):
             _run(1.0, 0.1, sign_r=bad)
+
+
+class TestMainCli:
+    """Test: main(argv) option handling, with pacing off (--no-sleep)."""
+
+    def test_default_run_prints_whl2_line(self, capsys):
+        rc = main(["--step", "1.0", "--seconds", "0.02", "--no-sleep"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        lines = out.splitlines(keepends=True)
+        assert len(lines) == 1
+        w = parse_line(lines[0])
+        assert w.raw_l == 42
+        assert w.raw_r == -42
+        assert w.state == 0
+
+    def test_sign_options_swap_raws(self, capsys):
+        rc = main(
+            ["--step", "1.0", "--seconds", "0.02", "--no-sleep",
+             "--sign-left", "-1", "--sign-right", "1"]
+        )
+        assert rc == 0
+        w = parse_line(capsys.readouterr().out)
+        assert w.raw_l == -42
+        assert w.raw_r == 42
+
+    def test_state_out_of_choices_exits_2(self):
+        # argparse rejects --state 3 (choices 0, 1, 2) with SystemExit(2).
+        with pytest.raises(SystemExit) as exc:
+            main(["--step", "1.0", "--seconds", "0.02", "--no-sleep", "--state", "3"])
+        assert exc.value.code == 2
+
+    def test_non_finite_step_returns_2_with_stderr(self, capsys):
+        rc = main(["--step", "nan", "--seconds", "0.02", "--no-sleep"])
+        assert rc == 2
+        cap = capsys.readouterr()
+        assert cap.out == ""
+        assert cap.err.startswith("ctrl_wheels_msg:")
 
 
 if __name__ == "__main__":
