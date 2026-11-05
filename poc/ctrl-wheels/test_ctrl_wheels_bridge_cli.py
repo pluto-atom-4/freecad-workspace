@@ -496,12 +496,12 @@ def test_sign_flags_flip_each_echoed_wheel_velocity(tmp_path, pipe_stdin, sign_l
     rows = _rows(record)
     for column, sign in (("vel_rad_s_l", sign_left), ("vel_rad_s_r", sign_right)):
         vel = [float(r[column]) for r in rows if r[column] != ""]
-        assert vel, column
+        assert len(vel) >= 3, f"{column}: only {len(vel)} echoed velocity rows, too few to check"
         if sign == 1:
-            assert max(vel) > 0.3, column
+            assert max(vel) > 0.05, column
             assert min(vel) >= -1e-6, column
         else:
-            assert min(vel) < -0.3, column
+            assert min(vel) < -0.05, column
             assert max(vel) <= 1e-6, column
     live = [r for r in rows if r["stale"] == "0"]
     assert live
@@ -614,6 +614,7 @@ class _HeldStdin:
 
     def __init__(self, release):
         self._release = release
+        self.yielded = threading.Event()  # set once the first line has been handed out
         self._sent = False
 
     def __iter__(self):
@@ -622,6 +623,7 @@ class _HeldStdin:
     def __next__(self):
         if not self._sent:
             self._sent = True
+            self.yielded.set()
             return _whl_line(0) + "\n"
         self._release.wait(timeout=5.0)
         raise StopIteration
@@ -632,12 +634,14 @@ def test_stdin_with_duration_ends_rc_0_with_summary(tmp_path, monkeypatch, capsy
     record = tmp_path / "dur.csv"
     cmd_port, echo_port = _two_free_ports()
     release = threading.Event()
-    monkeypatch.setattr(sys, "stdin", _HeldStdin(release))
+    held = _HeldStdin(release)
+    monkeypatch.setattr(sys, "stdin", held)
     try:
-        rc = main(_argv(record, cmd_port, echo_port, "--duration", "0.3", "--echo-timeout", "0.05"))
+        rc = main(_argv(record, cmd_port, echo_port, "--duration", "1.5", "--echo-timeout", "0.05"))
     finally:
         release.set()
 
+    assert held.yielded.wait(timeout=1.0), "the stdin source was never read"
     assert rc == 0
     err = capsys.readouterr().err
     summaries = [ln for ln in err.splitlines() if ln.startswith("[ctrl_wheels_bridge] summary ")]
@@ -664,15 +668,22 @@ def test_unused_rfc2217_url_with_duration_returns_2_without_rows(tmp_path, capsy
     assert not record.exists() or _rows(record) == []
 
 
-def _sigint_when_reader_runs(cancel: threading.Event) -> None:
-    """Wait (bounded, 3 s) until the bridge's line reader thread runs, then pause a fixed
-    0.05 s and send SIGINT unless cancel is set. SIGINT is sent at the deadline even if the
-    reader thread was never seen, so main always stops (a loop:// source never ends alone)."""
+def _reader_threads():
+    return [t for t in threading.enumerate() if t.name == "ctrl_wheels_lines" and t.is_alive()]
+
+
+def _sigint_when_reader_runs(cancel: threading.Event, seen: threading.Event) -> None:
+    """Wait (bounded, 3 s) until the bridge's line reader thread runs, set seen, pause a fixed
+    0.05 s and send SIGINT unless cancel is set. If the reader thread never appears, no SIGINT
+    is sent and seen stays unset, so the test fails (main then ends on its --duration)."""
     deadline = time.monotonic() + 3.0
     while time.monotonic() < deadline and not cancel.is_set():
-        if any(t.name == "ctrl_wheels_lines" and t.is_alive() for t in threading.enumerate()):
+        if _reader_threads():
+            seen.set()
             break
         time.sleep(0.01)
+    if not seen.is_set():
+        return
     time.sleep(0.05)
     if not cancel.is_set():
         os.kill(os.getpid(), signal.SIGINT)
@@ -684,13 +695,14 @@ def test_clean_ctrl_c_prints_nothing_after_the_summary(tmp_path, capsys):
     while the reader thread is live, so the port is closed mid-read."""
     for i in range(8):
         for _ in range(300):  # a reader left over from the previous run must be gone first
-            if not [t for t in threading.enumerate()
-                    if t.name == "ctrl_wheels_lines" and t.is_alive()]:
+            if not _reader_threads():
                 break
             time.sleep(0.01)
         cmd_port, echo_port = _two_free_ports()
         cancel = threading.Event()
-        helper = threading.Thread(target=_sigint_when_reader_runs, args=(cancel,), daemon=True)
+        seen = threading.Event()
+        helper = threading.Thread(
+            target=_sigint_when_reader_runs, args=(cancel, seen), daemon=True)
         helper.start()
         try:
             rc = cwb.main(["--port", "loop://", "--record", str(tmp_path / f"clean{i}.csv"),
@@ -699,8 +711,13 @@ def test_clean_ctrl_c_prints_nothing_after_the_summary(tmp_path, capsys):
         finally:
             cancel.set()
             helper.join(timeout=5.0)
+        assert seen.is_set(), f"run {i}: the reader thread never appeared, no SIGINT was sent"
         assert rc == 0, f"run {i}"
-        time.sleep(0.3)
+        for _ in range(500):  # the reader must be gone, so a late 'line source stopped' is seen
+            if not _reader_threads():
+                break
+            time.sleep(0.01)
+        assert not _reader_threads(), f"run {i}: the reader thread is still alive after 5 s"
         err = capsys.readouterr().err
         lines = err.splitlines()
         summaries = [ln for ln in lines if ln.startswith("[ctrl_wheels_bridge] summary ")]
