@@ -31,7 +31,8 @@ Two independent first-order wheels, left and right. Each step (dt_s of sim time)
     angle    += velocity * dt_s
     sim time += dt_s
     vel_rad_s is the finite difference of angle, None on the first step (no
-    previous angle yet); a None velocity is allowed by CONTRACT.md S3.
+    previous angle yet). CONTRACT.md S3 allows a null vel_rad_s; the first-step
+    null is this fake's choice.
 
 The stale window uses sim time on purpose, so tests are deterministic. CONTRACT.md
 S5 defines the age on the host clock, so this is a deliberate difference.
@@ -180,6 +181,8 @@ class FakeWheel:
             )
             self._echo_tx.sendto(payload, self._echo_addr)
         except (OSError, UdpMsgError):
+            # By design: step() never raises. Inputs are finite and clamped, so
+            # the encode error path is not reachable today; a send error is dropped.
             pass
 
     def close(self) -> None:

@@ -155,8 +155,9 @@ def _leg(echo, side: str):
 def _assert_leg_path(echoes, side: str, targets) -> None:
     """Check one wheel of every echo against the first-order path.
 
-    The velocity on the first step is None (no previous angle, CONTRACT.md S3
-    note and S6), so index 0 checks for None and the rest compare numbers.
+    The velocity on the first step is None: CONTRACT.md S3 allows a null
+    vel_rad_s, and the first-step null is this fake's choice (no previous
+    angle). Index 0 checks for None and the rest compare numbers.
     """
     assert len(echoes) == len(targets), f"expected {len(targets)} echoes"
     vels, angles = _expected_path(targets)
@@ -278,6 +279,19 @@ def test_single_cmd_goes_stale_after_0_2_s_sim_on_both_wheels(make_wheel, echo_r
     # of (k - 1) * DT_S, so the age first reaches 0.2 s on step 14:
     # 12 * 0.016 = 0.192 (not stale), 13 * 0.016 = 0.208 (stale).
     targets = [1.0] * 13 + [0.0] * 67
+    _assert_leg_path(echoes, "left", targets)
+    _assert_leg_path(echoes, "right", targets)
+    assert all(e.cmd_seq_echo == 1 for e in echoes)
+
+
+def test_single_cmd_goes_stale_after_custom_stale_s_0_1(make_wheel, echo_rx, tx):
+    wheel = make_wheel(stale_s=0.1)
+    _send(tx, wheel, encode_cmd(1, 1.0, 1.0, 0))
+    echoes = [_step_one(wheel, echo_rx) for _ in range(40)]
+    # ceil(0.1 / 0.016) = 7. Step k (1-based) sees an age of (k - 1) * DT_S, so
+    # the age first reaches 0.1 s on step 8: 6 * 0.016 = 0.096 (not stale),
+    # 7 * 0.016 = 0.112 (stale).
+    targets = [1.0] * 7 + [0.0] * 33
     _assert_leg_path(echoes, "left", targets)
     _assert_leg_path(echoes, "right", targets)
     assert all(e.cmd_seq_echo == 1 for e in echoes)
@@ -452,13 +466,13 @@ def test_bad_dynamics_arguments_rejected_before_binding(kwargs):
         FakeWheel(echo_addr=("127.0.0.1", 40123), **kwargs)
 
 
-@pytest.mark.parametrize("port", [-1, 70000])
+@pytest.mark.parametrize("port", [-1, 70000, True, 5018.0, "5018"])
 def test_out_of_range_command_port_is_refused(port):
     with pytest.raises(ValueError):
         FakeWheel(echo_addr=("127.0.0.1", 40123), cmd_port=port)
 
 
-@pytest.mark.parametrize("port", [-1, 70000])
+@pytest.mark.parametrize("port", [-1, 70000, True, 5018.0, "5018"])
 def test_out_of_range_echo_port_is_refused(port):
     with pytest.raises(ValueError):
         FakeWheel(echo_addr=("127.0.0.1", port))
