@@ -42,13 +42,15 @@ poc/ctrl-wheel has no such cap.
 
 Single-wheel names kept for the split: Whl (seq, t_us, model_rad_s, raw, state)
 and format_whl, which writes the single-wheel WHL v1 line (prefix WHL, 6 fields).
-step_lines (the --step CLI) still generates single-wheel WHL v1 lines through
-format_whl; it is not yet moved to the twin (tasks F05 and F06). parse_line
-accepts WHL2 only.
+Both stay because split() returns Whl and the bridge tests still use format_whl.
+step_lines (the --step CLI) yields WHL2 lines through format_whl2 (task F06).
+Its left and right raws are the clamped raw with the sign applied: sign_l and
+sign_r, default +1 and -1, SIM ONLY, UNCONFIRMED. parse_line accepts WHL2 only.
 
-Usage (run from poc/ctrl-wheels; prints single-wheel WHL v1 lines until F05/F06):
+Usage (run from poc/ctrl-wheels):
     python3 -m ctrl_wheels_msg --step 1.0 --seconds 5
     python3 -m ctrl_wheels_msg --step 1.0 --seconds 5 --no-sleep
+    python3 -m ctrl_wheels_msg --step 1.0 --seconds 5 --sign-left 1 --sign-right -1 --state 0
 """
 
 from __future__ import annotations
@@ -339,6 +341,13 @@ def _raw_for(value_rad_s: float) -> int:
     return round(max(-RAW_CAP, min(RAW_CAP, raw_f)))
 
 
+def _check_sign(name: str, value: object) -> int:
+    """Accept only the int +1 or -1 (bool, float, None and str are refused)."""
+    if isinstance(value, bool) or not isinstance(value, int) or value not in (1, -1):
+        raise WhlError(f"{name} must be the int +1 or -1, got {value!r}")
+    return value
+
+
 def step_lines(
     value_rad_s: float,
     seconds: float,
@@ -347,15 +356,19 @@ def step_lines(
     start_seq: int = 0,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], object] = time.sleep,
+    sign_l: int = 1,
+    sign_r: int = -1,
+    state: int = 0,
 ) -> Iterator[str]:
     """
-    Yield single-wheel WHL v1 lines holding a constant model value for `seconds`
-    at `rate_hz`. Not yet moved to the twin (task F05).
+    Yield WHL2 twin lines holding a constant model value for `seconds` at `rate_hz`.
 
-    State is 0. seq counts up from start_seq (format wraps it at 65536).
-    t_us steps by round(1e6 / rate_hz) and wraps at 2^32 like the device.
-    A step below 1 us is rejected (WhlError). raw is the model value converted
-    to raw units and clamped to +-RAW_CAP (firmware cap).
+    Every line carries the same state (0, 1 or 2). seq counts up from start_seq
+    (taken mod 65536). t_us steps by round(1e6 / rate_hz) and wraps at 2^32 like
+    the device. A step below 1 us is refused (WhlError). model is value_rad_s
+    as given. raw is the value converted to raw units, clamped to +-RAW_CAP
+    before the sign is applied, then rounded. raw_l = sign_l * raw and
+    raw_r = sign_r * raw. The signs are SIM ONLY and UNCONFIRMED.
     When realtime is True, each line is released against the injected clock
     by sleeping with the injected sleep.
     """
@@ -368,6 +381,11 @@ def step_lines(
         raise WhlError(f"rate must be a positive finite number, got {rate_hz!r}")
     if not (math.isfinite(seconds) and seconds >= 0):
         raise WhlError(f"seconds must be a non-negative finite number, got {seconds!r}")
+    _check_sign("sign_l", sign_l)
+    _check_sign("sign_r", sign_r)
+    _check_int("state", state)
+    if state not in STATES:
+        raise WhlError(f"state must be one of {STATES}, got {state}")
 
     count_f = seconds * rate_hz
     if not math.isfinite(count_f):
@@ -382,6 +400,8 @@ def step_lines(
     t_step = round(t_step_f)
     period = 1.0 / rate_hz
     raw = _raw_for(value)
+    raw_l = sign_l * raw
+    raw_r = sign_r * raw
 
     t0 = clock() if realtime else 0.0
     for i in range(count):
@@ -389,13 +409,14 @@ def step_lines(
             delay = (t0 + i * period) - clock()
             if delay > 0:
                 sleep(delay)
-        yield format_whl(
-            Whl(
+        yield format_whl2(
+            Whl2(
                 seq=(start_seq + i) % SEQ_MOD,
                 t_us=(i * t_step) % (T_US_MAX + 1),
                 model_rad_s=value,
-                raw=raw,
-                state=0,
+                raw_l=raw_l,
+                raw_r=raw_r,
+                state=state,
             )
         )
 
@@ -403,13 +424,34 @@ def step_lines(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Print a constant-step single-wheel WHL v1 stream "
-            "(SIM ONLY, sign UNVERIFIED; the WHL2 twin is not wired here until F05/F06)."
+            "Print a constant-step WHL2 twin stream "
+            "(SIM ONLY, signs UNCONFIRMED)."
         )
     )
     parser.add_argument("--step", type=float, required=True, help="model value in rad/s")
     parser.add_argument("--seconds", type=float, required=True, help="duration in seconds")
     parser.add_argument("--rate", type=float, default=50.0, help="lines per second (default 50)")
+    parser.add_argument(
+        "--sign-left",
+        type=int,
+        choices=[1, -1],
+        default=1,
+        help="sign applied to the left raw (default 1)",
+    )
+    parser.add_argument(
+        "--sign-right",
+        type=int,
+        choices=[1, -1],
+        default=-1,
+        help="sign applied to the right raw (default -1)",
+    )
+    parser.add_argument(
+        "--state",
+        type=int,
+        choices=list(STATES),
+        default=0,
+        help="state on every line: 0 run, 1 hold after a fall, 2 bus down (default 0)",
+    )
     parser.add_argument(
         "--no-sleep",
         action="store_true",
@@ -423,6 +465,9 @@ def main(argv: list[str] | None = None) -> int:
             args.seconds,
             rate_hz=args.rate,
             realtime=not args.no_sleep,
+            sign_l=args.sign_left,
+            sign_r=args.sign_right,
+            state=args.state,
         ):
             sys.stdout.write(line)
             sys.stdout.flush()

@@ -103,14 +103,22 @@ class TestStepLinesTwinContents:
         lines = _run(100.0, 0.02)
         assert parse_line(lines[0]).model_rad_s == 100.0
 
-    @pytest.mark.parametrize("value", [1e308, -1e308])
-    def test_huge_finite_value_clamps_without_overflow(self, value):
-        # value * 60 overflows to inf; the clamp must happen before round().
+    @pytest.mark.parametrize("value", [1e11, -1e11])
+    def test_large_value_in_model_range_clamps_raw(self, value):
+        # The raw clamp (+-125) happens before the sign; the model text of these
+        # values is still within the 20-character supported range.
         expected_l = 125 if value > 0 else -125
         lines = _run(value, 0.02)
         w = parse_line(lines[0])
         assert w.raw_l == expected_l
         assert w.raw_r == -expected_l
+
+    @pytest.mark.parametrize("value", [1e308, -1e308, 1e13, -1e12])
+    def test_value_outside_model_range_is_refused(self, value):
+        # The formatter refuses a model whose %.6f text exceeds 20 characters
+        # (ctrl_wheels_msg supported range); the raw clamp cannot hide that.
+        with pytest.raises(WhlError):
+            _run(value, 0.02)
 
     @pytest.mark.parametrize(
         "sign_l,sign_r,raw_l,raw_r",
