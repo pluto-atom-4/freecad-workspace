@@ -1,34 +1,49 @@
 #!/usr/bin/env python3
 """
-Headless fake of the Webots ctrl_wheels controller (issue FW #451).
+Headless twin fake of the Webots ctrl_wheels controller (freecad-workspace
+FW#495 / FW#496, umbrella FW#482).
 
-SIM ONLY. Headless stand-in for webots/controllers/ctrl_wheels/ctrl_wheels.py
-(stacked PRs #460-#465, not in this tree). It is not a Webots model. The wheel
-sign convention is UNVERIFIED and the model values (tau, dt, clamp, stale
+SIM ONLY. Headless stand-in for the twin Webots controller at
+poc/ctrl-wheels/webots/controllers/ctrl_wheels/ctrl_wheels.py, which is the real
+counterpart and is rewritten by tasks F18 to F20 (FW#502 to FW#504). This file
+is not a Webots model and makes no physics claim. The wheel sign convention is
+UNCONFIRMED (CONTRACT.md S2) and the fake applies each wheel's command as given,
+so any sign belongs to the bridge. The model values (tau, dt, clamp, stale
 window) are guesses. For tests only. Nothing here validates a real wheel or a
 balance loop.
 
-Controller law (imitates ctrl_wheels.py, which calls motor.setVelocity(v)
-directly with the clamped, stale-gated target):
-    target = 0 if no command yet, cmd.stale == 1, or simulated age since the
-             last accepted command >= stale_s; else clamp(sign * wheel_rad_s).
-    Each step sends one echo to echo_addr: cmd_seq_echo (last accepted cmd_seq,
-    None before the first), sim_t_s, angle_rad, vel_rad_s.
-    The fake has NO sensor-failure path. The controller skips the echo on a
-    bad read; this fake always echoes.
+Wire (CONTRACT.md S3, UDP v2, one compact JSON datagram per message):
+    cmd  in  on the command port (default 5018 in the real setup):
+         {"v":2,"cmd_seq":<int>,"wheels":{"left":<float>,"right":<float>},"stale":<0|1>}
+    echo out to echo_addr (default port 5017 in the real setup):
+         {"v":2,"cmd_seq_echo":<int or null>,"sim_t_s":<float>,
+          "left":{"angle_rad":<float>,"vel_rad_s":<float or null>},
+          "right":{"angle_rad":<float>,"vel_rad_s":<float or null>}}
+    Decoding and encoding go through ctrl_wheels_udp. A datagram that fails to
+    decode (including any v1 command) is skipped without a reply.
 
-Plant model (a GUESS for the Webots motor response, not controller law):
-    velocity += (target - velocity) * (dt / (tau + dt))     first-order lag
-    angle += velocity * dt
-    sim time += dt, dt = 16 ms per step
-    vel_rad_s is the finite difference of angle (None on the first sample).
+Two independent first-order wheels, left and right. Each step (dt_s of sim time):
+    target = 0 if no command has been accepted yet, if the accepted command has
+             stale == 1, or if the sim age since it was accepted is at least
+             stale_s; otherwise the command for that wheel, limited to +-clamp.
+    velocity += (target - velocity) * (dt_s / (tau_s + dt_s))    first-order lag
+    angle    += velocity * dt_s
+    sim time += dt_s
+    vel_rad_s is the finite difference of angle, None on the first step (no
+    previous angle yet), per CONTRACT.md S3 and S6.
 
-Ports: cmd_port 5005-5008 is refused and echo_addr port 5006 is refused.
-clamp must be in (0, WHEEL_CLAMP_RAD_S].
-step() is not thread-safe: drive it from one thread only.
+Ports (CONTRACT.md S4): the reserved set is the literal set {5005, 5006, 5007,
+5008, 5017, 5018}. This module refuses to bind a reserved command port, and it
+refuses a reserved echo port in echo_addr. It must not be derived from a range.
+Ephemeral ports (0) are allowed for tests and loopback only.
 
 Usage (run from poc/ctrl-wheels):
     python3 -m pytest test_ctrl_wheels_fake.py -v
+
+Test-first state: test_ctrl_wheels_fake.py (FW#495) pins this module. Until
+FW#496 lands, those tests are expected to fail.
+
+step() is not thread-safe: drive it from one thread only.
 """
 
 from __future__ import annotations
@@ -37,9 +52,7 @@ import socket
 import threading
 import time
 
-from ctrl_wheels_relay import STALE_S
 from ctrl_wheels_udp import (
-    PORT_CMD,
     WHEEL_CLAMP_RAD_S,
     UdpMsgError,
     decode_cmd,
@@ -47,14 +60,16 @@ from ctrl_wheels_udp import (
     encode_echo,
     open_listener,
 )
-from ctrl_wheels_udp import clamp as _clamp_rad_s
 
-_RESERVED_CMD_PORTS = frozenset(range(5005, PORT_CMD + 1))
-_RESERVED_ECHO_PORT = 5006
+# CONTRACT.md S4, written out as a literal set on purpose. Do not derive it from a range.
+_RESERVED_PORTS = frozenset({5005, 5006, 5007, 5008, 5017, 5018})
+# Stale window of CONTRACT.md S5, in sim seconds. Kept local so this module does not
+# depend on the single-wheel relay module.
+STALE_S = 0.200
 
 
 class FakeWheel:
-    """SIM ONLY headless ctrl_wheels stand-in. UNVERIFIED sign and model values."""
+    """SIM ONLY headless twin ctrl_wheels stand-in. UNVERIFIED sign and model values."""
 
     def __init__(
         self,
@@ -62,39 +77,43 @@ class FakeWheel:
         cmd_port: int = 0,
         tau_s: float = 0.05,
         dt_s: float = 0.016,
-        sign: int = 1,
         stale_s: float = STALE_S,
         clamp: float = WHEEL_CLAMP_RAD_S,
         host: str = "127.0.0.1",
     ) -> None:
-        if cmd_port in _RESERVED_CMD_PORTS:
-            raise ValueError(f"cmd_port {cmd_port} is reserved (5005-5008)")
-        if echo_addr[1] == _RESERVED_ECHO_PORT:
-            raise ValueError(f"echo_addr port {_RESERVED_ECHO_PORT} is reserved")
+        if cmd_port in _RESERVED_PORTS:
+            raise ValueError(f"cmd_port {cmd_port} is reserved (CONTRACT.md S4)")
+        if echo_addr[1] in _RESERVED_PORTS:
+            raise ValueError(f"echo_addr port {echo_addr[1]} is reserved (CONTRACT.md S4)")
         if not (0.0 < clamp <= WHEEL_CLAMP_RAD_S):
             raise ValueError(f"clamp {clamp} must be in (0, {WHEEL_CLAMP_RAD_S}]")
         if not (dt_s > 0.0 and dt_s != float("inf")):
             raise ValueError(f"dt_s {dt_s} must be finite and > 0")
         if not (tau_s > 0.0 and tau_s != float("inf")):
             raise ValueError(f"tau_s {tau_s} must be finite and > 0")
-        if type(sign) is not int or sign not in (1, -1):
-            raise ValueError(f"sign {sign!r} must be the int +1 or -1")
         self._echo_addr = echo_addr
         self._dt = dt_s
         self._lag = dt_s / (tau_s + dt_s)
-        self._sign = sign
         self._stale_s = stale_s
         self._limit = clamp
-        self._cmd_sock = open_listener(cmd_port, host)
-        self._cmd_addr = self._cmd_sock.getsockname()[:2]
         self._echo_tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            self._cmd_sock = open_listener(cmd_port, host)
+        except OSError:
+            self._echo_tx.close()
+            raise
+        self._cmd_addr = self._cmd_sock.getsockname()[:2]
         self._closed = False
         self._sim_t = 0.0
-        self._angle = 0.0
-        self._velocity = 0.0
-        self._prev_angle: float | None = None
+        self._angle_l = 0.0
+        self._angle_r = 0.0
+        self._vel_l = 0.0
+        self._vel_r = 0.0
+        self._prev_angle_l: float | None = None
+        self._prev_angle_r: float | None = None
         self._cmd_seq: int | None = None
-        self._cmd_wheel = 0.0
+        self._cmd_left = 0.0
+        self._cmd_right = 0.0
         self._cmd_stale = 0
         self._cmd_t = 0.0
 
@@ -109,31 +128,50 @@ class FakeWheel:
             except (UdpMsgError, RecursionError):
                 continue
             self._cmd_seq = cmd.cmd_seq
-            self._cmd_wheel = cmd.wheel_rad_s
+            self._cmd_left = cmd.left_rad_s
+            self._cmd_right = cmd.right_rad_s
             self._cmd_stale = cmd.stale
             self._cmd_t = self._sim_t
 
-    def _target(self) -> float:
+    def _stopped(self) -> bool:
         if self._cmd_seq is None or self._cmd_stale == 1:
-            return 0.0
-        if self._sim_t - self._cmd_t >= self._stale_s:
-            return 0.0
-        raw = _clamp_rad_s(self._sign * self._cmd_wheel)
-        return max(-self._limit, min(self._limit, raw))
+            return True
+        return self._sim_t - self._cmd_t >= self._stale_s
+
+    def _limited(self, wheel_rad_s: float) -> float:
+        return max(-self._limit, min(self._limit, wheel_rad_s))
 
     def step(self) -> None:
         """Advance one dt_s tick and send one echo. Never raises."""
         self._accept_commands()
-        self._velocity += (self._target() - self._velocity) * self._lag
-        self._angle += self._velocity * self._dt
-        self._sim_t += self._dt
-        if self._prev_angle is None:
-            vel: float | None = None
+        if self._stopped():
+            target_l = 0.0
+            target_r = 0.0
         else:
-            vel = (self._angle - self._prev_angle) / self._dt
-        self._prev_angle = self._angle
+            target_l = self._limited(self._cmd_left)
+            target_r = self._limited(self._cmd_right)
+        self._vel_l += (target_l - self._vel_l) * self._lag
+        self._vel_r += (target_r - self._vel_r) * self._lag
+        self._angle_l += self._vel_l * self._dt
+        self._angle_r += self._vel_r * self._dt
+        self._sim_t += self._dt
+        if self._prev_angle_l is None or self._prev_angle_r is None:
+            vel_l: float | None = None
+            vel_r: float | None = None
+        else:
+            vel_l = (self._angle_l - self._prev_angle_l) / self._dt
+            vel_r = (self._angle_r - self._prev_angle_r) / self._dt
+        self._prev_angle_l = self._angle_l
+        self._prev_angle_r = self._angle_r
         try:
-            payload = encode_echo(self._cmd_seq, self._sim_t, self._angle, vel)
+            payload = encode_echo(
+                self._cmd_seq,
+                self._sim_t,
+                self._angle_l,
+                vel_l,
+                self._angle_r,
+                vel_r,
+            )
             self._echo_tx.sendto(payload, self._echo_addr)
         except (OSError, UdpMsgError):
             pass
