@@ -191,7 +191,7 @@ Nothing in this file has been verified, tested or validated on hardware. In part
 
 - All signs are UNCONFIRMED: the chip-side `rawL = +raw` and `rawR = -raw`, the bridge defaults of +1/+1 on `model`, and the sign of the model against Webots (discussion 266, Risks and unverified items; Assessment, row Q2).
 - The chip-side mirror and the Webots-side mirror are two independent sign paths (S2). Nothing proves that they agree. The mirror of the two wheels in Webots is UNVERIFIED.
-- Two servo chips on one DATA bus: electrical sharing, the chip ID attribute (ID 1 and ID 2) and the diagram attribute form are UNVERIFIED (discussion 266, Risks and unverified items; Not verified list of the web research section). The Wokwi chip attribute API is not confirmed.
+- Two servo chips on one DATA bus: owner-reported VS Code Wokwi runs show ID 1 and ID 2 answering on one bus in the sim (BRC `docs/CTRL_WHEELS.md`; not re-run for this file). Still UNVERIFIED: real electrical sharing on hardware, that the `servoId` attribute values "1" (left) and "2" (right) are the IDs the real chips would use (BRC CLAUDE.md: unconfirmed), and the Wokwi chip attribute API itself (discussion 266, Risks and unverified items; Not verified list of the web research section).
 - Port 4002 behaviour: the bind address is not checked, the VS Code listener may stay open after the run (observed for 4000 only, CLAUDE.md), and three RFC2217 listeners at once have never been tried (discussion 266, Risks and unverified items).
 - UDP port 5017 and 5018 binding: the single-wheel bridge's bind call was not re-read for this file.
 - Webots limits `maxVelocity` and `maxTorque` may stall the twin. These values are not read here (discussion 266, Risks and unverified items).
