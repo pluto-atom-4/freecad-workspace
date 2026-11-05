@@ -3,7 +3,7 @@
 WHL2 twin-wheel line protocol (ctrl_wheels_msg) for the ctrl-wheels POC:
 formatter and parser for the two-wheel line, the single-wheel Whl type it
 splits into, and a step-input generator (step_lines) that yields WHL2 lines via
-format_whl2 (whl and format_whl are kept for the bridge tests).
+format_whl2 (Whl and format_whl are kept for the bridge tests).
 
 SIM ONLY. This is a sim-only twin. Nothing here is validated on real hardware
 or against a real receiver. The sign conventions are UNCONFIRMED: the planned
