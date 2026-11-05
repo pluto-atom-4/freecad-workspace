@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Tests for the ctrl-wheels bridge command line (ctrl_wheels_bridge.main and
-build_parser), issue FW #454, WHL2 twin form (FW #499). These tests pin its contract.
+build_parser), WHL2 twin form. These tests pin its contract.
 
 CLI contract pinned here:
     exactly one of --port PORT / --stdin; --record CSV (required);
@@ -9,7 +9,7 @@ CLI contract pinned here:
     --duration SECONDS (> 0);
     --cmd-port N (default 5018); --echo-port N (default 5017);
     --baud N (default 115200); --echo-timeout SECONDS (default 0.5).
-There is no --sign: the old name is an ambiguous prefix of the two new flags.
+--sign alone is refused: it is an ambiguous prefix of --sign-left and --sign-right.
 --sign-left and --sign-right are Webots-side signs applied to the model velocity
 (Relay sign). They are not the chip raw signs of the generator ctrl_wheels_msg
 (--sign-left/--sign-right there default +1/-1). The bridge ignores the raw columns.
@@ -231,8 +231,8 @@ def test_sign_other_than_plus_or_minus_one_refused(tmp_path, flag, text):
 
 
 def test_old_sign_flag_refused_as_ambiguous_prefix(tmp_path):
-    """--sign was removed. argparse abbreviation matching sees it as a prefix of both
-    --sign-left and --sign-right, so it is an ambiguous option, not a silent alias."""
+    """--sign is a prefix of both --sign-left and --sign-right, so argparse abbreviation
+    matching refuses it as ambiguous; it is not a silent alias."""
     record = tmp_path / "out.csv"
     _assert_usage_error(_argv(record, 40001, 40002, "--sign", "1"), record)
 
@@ -434,8 +434,8 @@ def test_csv_write_error_returns_2_and_closes_run(tmp_path, monkeypatch, capsys)
 
 def test_stdin_end_to_end_logs_rows_and_summary(tmp_path, monkeypatch, capsys):
     record = tmp_path / "e2e.csv"
-    echo_port = _free_port()
-    wheel = FakeWheel(("127.0.0.1", echo_port))  # cmd_port 0: ephemeral, read back below
+    cmd_port, echo_port = _two_free_ports()
+    wheel = FakeWheel(("127.0.0.1", echo_port), cmd_port=cmd_port)
     stop = threading.Event()
     thread = wheel.run_background(stop)
     lines = step_lines(0.5, 0.6, realtime=False)
@@ -444,7 +444,7 @@ def test_stdin_end_to_end_logs_rows_and_summary(tmp_path, monkeypatch, capsys):
         rc = main([
             "--stdin",
             "--record", str(record),
-            "--cmd-port", str(wheel.cmd_addr[1]),
+            "--cmd-port", str(cmd_port),
             "--echo-port", str(echo_port),
         ])
     finally:
@@ -455,7 +455,7 @@ def test_stdin_end_to_end_logs_rows_and_summary(tmp_path, monkeypatch, capsys):
     assert rc == 0
     with open(record, newline="", encoding="utf-8") as fh:
         assert next(csv.reader(fh)) == list(COLUMNS)
-    assert len(_rows(record)) > 20
+    assert len(_rows(record)) >= 30
 
     err_lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.strip()]
     assert len(err_lines) == 1
@@ -473,8 +473,8 @@ def test_sign_flags_flip_each_echoed_wheel_velocity(tmp_path, pipe_stdin, sign_l
     UNVERIFIED. The input uses the generator's default raws (+1 left, -1 right); the bridge
     ignores raw, so each echoed wheel follows its own sign flag alone."""
     record = tmp_path / "sign.csv"
-    echo_port = _free_port()
-    wheel = FakeWheel(("127.0.0.1", echo_port))
+    cmd_port, echo_port = _two_free_ports()
+    wheel = FakeWheel(("127.0.0.1", echo_port), cmd_port=cmd_port)
     stop = threading.Event()
     thread = wheel.run_background(stop)
     pipe_stdin(step_lines(0.5, 1.0, realtime=True))
@@ -484,7 +484,7 @@ def test_sign_flags_flip_each_echoed_wheel_velocity(tmp_path, pipe_stdin, sign_l
             "--record", str(record),
             "--sign-left", str(sign_left),
             "--sign-right", str(sign_right),
-            "--cmd-port", str(wheel.cmd_addr[1]),
+            "--cmd-port", str(cmd_port),
             "--echo-port", str(echo_port),
         ])
     finally:
@@ -512,8 +512,8 @@ def test_sign_flags_flip_each_echoed_wheel_velocity(tmp_path, pipe_stdin, sign_l
 
 def _run_stdin_with_wheel(tmp_path, monkeypatch, lines, name):
     record = tmp_path / name
-    echo_port = _free_port()
-    wheel = FakeWheel(("127.0.0.1", echo_port))
+    cmd_port, echo_port = _two_free_ports()
+    wheel = FakeWheel(("127.0.0.1", echo_port), cmd_port=cmd_port)
     stop = threading.Event()
     thread = wheel.run_background(stop)
     monkeypatch.setattr(sys, "stdin", io.StringIO("".join(lines)))
@@ -521,7 +521,7 @@ def _run_stdin_with_wheel(tmp_path, monkeypatch, lines, name):
         rc = main([
             "--stdin",
             "--record", str(record),
-            "--cmd-port", str(wheel.cmd_addr[1]),
+            "--cmd-port", str(cmd_port),
             "--echo-port", str(echo_port),
         ])
     finally:
@@ -599,10 +599,9 @@ def test_csv_close_error_returns_2_after_summary(tmp_path, monkeypatch, capsys):
         raise OSError(28, "No space left on device (injected at close)")
 
     monkeypatch.setattr(CsvLog, "_release", bad)
-    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
     out = tmp_path / "close.csv"
-    echo_port = _free_port()
-    rc = cwb.main(["--stdin", "--record", str(out), "--cmd-port", str(_free_port()),
+    cmd_port, echo_port = _two_free_ports()
+    rc = cwb.main(["--stdin", "--record", str(out), "--cmd-port", str(cmd_port),
                    "--echo-port", str(echo_port), "--echo-timeout", "0.05"])
     err = capsys.readouterr().err
     assert rc == 2
@@ -610,19 +609,59 @@ def test_csv_close_error_returns_2_after_summary(tmp_path, monkeypatch, capsys):
     assert "cannot finish --record" in err
 
 
-def test_ctrl_c_on_a_real_serial_source_exits_0(tmp_path):
-    """Regression: closing the port at shutdown made the reader thread fail and flipped a clean
-    Ctrl-C into rc 2 about 40% of the time. A pyserial loop:// source stands in for the port."""
-    for i in range(5):
-        timer = threading.Timer(0.3, lambda: os.kill(os.getpid(), signal.SIGINT))
-        timer.start()
-        try:
-            rc = cwb.main(["--port", "loop://", "--record", str(tmp_path / f"c{i}.csv"),
-                           "--cmd-port", str(_free_port()), "--echo-port", str(_free_port()),
-                           "--echo-timeout", "0.05"])
-        finally:
-            timer.cancel()
-        assert rc == 0, f"run {i}"
+class _HeldStdin:
+    """One good line, then blocks until released (or 5 s), then ends: a stdin that does not end."""
+
+    def __init__(self, release):
+        self._release = release
+        self._sent = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if not self._sent:
+            self._sent = True
+            return _whl_line(0) + "\n"
+        self._release.wait(timeout=5.0)
+        raise StopIteration
+
+
+def test_stdin_with_duration_ends_rc_0_with_summary(tmp_path, monkeypatch, capsys):
+    """--duration stops a stdin source that has not ended: rc 0 and a summary."""
+    record = tmp_path / "dur.csv"
+    cmd_port, echo_port = _two_free_ports()
+    release = threading.Event()
+    monkeypatch.setattr(sys, "stdin", _HeldStdin(release))
+    try:
+        rc = main(_argv(record, cmd_port, echo_port, "--duration", "0.3", "--echo-timeout", "0.05"))
+    finally:
+        release.set()
+
+    assert rc == 0
+    err = capsys.readouterr().err
+    summaries = [ln for ln in err.splitlines() if ln.startswith("[ctrl_wheels_bridge] summary ")]
+    assert len(summaries) == 1
+    assert re.search(r"whl_lines=1\b", summaries[0])
+
+
+def test_unused_rfc2217_url_with_duration_returns_2_without_rows(tmp_path, capsys):
+    """Nothing listens on the URL: the source never opens, so the run is a failed source."""
+    record = tmp_path / "url.csv"
+    cmd_port, echo_port = _two_free_ports()
+    url_port = _free_port()
+
+    rc = main([
+        "--port", f"rfc2217://127.0.0.1:{url_port}",
+        "--record", str(record),
+        "--cmd-port", str(cmd_port),
+        "--echo-port", str(echo_port),
+        "--duration", "0.2",
+    ])
+
+    assert rc == 2
+    assert "did not open" in capsys.readouterr().err
+    assert not record.exists() or _rows(record) == []
 
 
 def _sigint_when_reader_runs(cancel: threading.Event) -> None:
@@ -640,7 +679,7 @@ def _sigint_when_reader_runs(cancel: threading.Event) -> None:
 
 
 def test_clean_ctrl_c_prints_nothing_after_the_summary(tmp_path, capsys):
-    """Regression (FW #477): after a clean stop on a pyserial loop:// loopback source, the reader
+    """After a clean stop on a pyserial loop:// loopback source, the reader
     thread's failed read must not log 'line source stopped' after the summary. The SIGINT lands
     while the reader thread is live, so the port is closed mid-read."""
     for i in range(8):
@@ -672,7 +711,7 @@ def test_clean_ctrl_c_prints_nothing_after_the_summary(tmp_path, capsys):
 
 
 def test_midrun_source_failure_line_comes_before_the_summary(tmp_path, monkeypatch, capsys):
-    """Over-suppression guard (FW #477): a real mid-run source failure is still logged,
+    """A real mid-run source failure is still logged,
     before the summary, and returns 2."""
     record = tmp_path / "midrun_fail.csv"
     cmd_port, echo_port = _two_free_ports()

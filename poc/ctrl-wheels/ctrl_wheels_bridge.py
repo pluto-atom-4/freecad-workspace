@@ -20,7 +20,8 @@ unless --overwrite. Exit codes: 0 run finished (EOF or Ctrl-C), 2 usage error, a
 source (at open, or mid-run: the 'line source stopped' line is logged BEFORE the summary)
 or a --record error. A failure to receive echoes silently stops echo draining and the run
 still ends normally.
-Ctrl-C ends the run through stop_event and prints the summary.
+Ctrl-C ends the run through stop_event and prints the summary on the normal path; a Ctrl-C
+during shutdown returns 0 without a summary.
 An unreachable URL with --duration returns 2 on purpose: nothing was ever opened, so the
 run is a failed source, not a clean finish.
 
@@ -87,7 +88,7 @@ class BridgeStats:
     stale_cmds: int = 0
 
     def __post_init__(self) -> None:
-        # Not dataclass fields: the pinned field list has no send-error or source-error column.
+        # BridgeStats has no send-error or source-error field, so these are plain attributes.
         self.send_errors = 0
         self.source_error: str | None = None  # text of a line source error that ended the run
         # Set True in run_bridge's finally (every exit after the reader thread has started); a reader
@@ -608,23 +609,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="stop after SECONDS (> 0); default: run until the source ends")
     parser.add_argument(
         "--cmd-port", type=_port_number, default=PORT_CMD, metavar="N",
-        help=f"UDP port of the wheel stand-in for commands (default {PORT_CMD}); not 5006. "
-             f"Only 5006 (the single-wheel servo_wheel_dof port) is refused; the other ports "
-             f"reserved in CONTRACT.md S4 bind tests and the fake wheel, not this CLI, "
-             f"so the port choice is yours")
+        help=f"UDP port of the wheel stand-in for commands (default {PORT_CMD}). "
+             "Only 5006 (the single-wheel servo_wheel_dof port) is refused; the other ports "
+             "reserved in CONTRACT.md S4 bind tests and the fake wheel, not this CLI, "
+             "so the port choice is yours")
     parser.add_argument(
         "--echo-port", type=_port_number, default=PORT_ECHO, metavar="N",
-        help=f"UDP port this bridge listens on for echoes (default {PORT_ECHO}); not 5006. "
-             f"Only 5006 (the single-wheel servo_wheel_dof port) is refused; the other ports "
-             f"reserved in CONTRACT.md S4 bind tests and the fake wheel, not this CLI, "
-             f"so the port choice is yours")
+        help=f"UDP port this bridge listens on for echoes (default {PORT_ECHO}). "
+             "Only 5006 (the single-wheel servo_wheel_dof port) is refused; the other ports "
+             "reserved in CONTRACT.md S4 bind tests and the fake wheel, not this CLI, "
+             "so the port choice is yours")
     parser.add_argument(
         "--baud", type=_baud, default=115200,
         help="serial baud rate (default 115200); not used by --stdin")
     parser.add_argument(
         "--echo-timeout", type=_echo_timeout, default=0.5, metavar="SECONDS",
         help=f"seconds to wait for an echo before the row is written without one, 0..{_ECHO_TIMEOUT_MAX_S:g} "
-             f"(default 0.5)")
+             "(default 0.5); 0 writes every row without waiting for an echo")
     return parser
 
 
@@ -715,7 +716,10 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             _log("interrupted during shutdown; no summary")
             return 0
-        except OSError as exc:  # run_bridge raises OSError only from the CSV write (for example disk full)
+        except OSError as exc:
+            # Normally the CSV write (for example disk full). An OSError from the command socket
+            # creation in _Run.__init__ also escapes run_bridge and lands here, so it is reported
+            # with this same "cannot write --record" text.
             _log(f"cannot write --record {args.record!r}: {exc}")
             return 2
         finally:
