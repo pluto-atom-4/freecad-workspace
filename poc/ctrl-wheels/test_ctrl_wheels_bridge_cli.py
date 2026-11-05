@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
 """
 Tests for the ctrl-wheels bridge command line (ctrl_wheels_bridge.main and
-build_parser), issue FW #454. These tests pin its contract.
+build_parser), issue FW #454, WHL2 twin form (FW #499). These tests pin its contract.
 
 CLI contract pinned here:
     exactly one of --port PORT / --stdin; --record CSV (required);
-    --overwrite; --sign {1,-1} (default 1); --duration SECONDS (> 0);
-    --cmd-port N (default 5008); --echo-port N (default 5007);
+    --overwrite; --sign-left {1,-1} (default 1); --sign-right {1,-1} (default 1);
+    --duration SECONDS (> 0);
+    --cmd-port N (default 5018); --echo-port N (default 5017);
     --baud N (default 115200); --echo-timeout SECONDS (default 0.5).
-Parsed attribute names: port, stdin, record, overwrite, sign, duration,
-cmd_port, echo_port, baud, echo_timeout.
+There is no --sign: the old name is an ambiguous prefix of the two new flags.
+--sign-left and --sign-right are Webots-side signs applied to the model velocity
+(Relay sign). They are not the chip raw signs of the generator ctrl_wheels_msg
+(--sign-left/--sign-right there default +1/-1). The bridge ignores the raw columns.
+The CLI never latches: a fresh state-0 line resumes after a stop.
+Parsed attribute names: port, stdin, record, overwrite, sign_left, sign_right,
+duration, cmd_port, echo_port, baud, echo_timeout.
 
-Ports: 5005-5008 are never bound. Ports used in tests are ephemeral (bound
-to port 0, read back, closed). Refusal tests pass fixed non-reserved numbers
-because usage errors happen before any socket is bound.
+Ports: 5005-5008, 5017 and 5018 are never bound by a test. The CLI refuses only
+5006; the defaults 5017/5018 are accepted by its checks. Ports used in tests are
+ephemeral (bound to port 0, read back, closed). Refusal tests pass fixed
+non-reserved numbers because usage errors happen before any socket is bound.
 
 SIM ONLY. The sign convention and the model values are UNVERIFIED. Nothing
 here validates a real wheel, a balance loop or a serial device.
@@ -44,17 +51,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ctrl_wheels_bridge as cwb  # noqa: E402
 from ctrl_wheels_bridge import BridgeStats, DofSerialError, build_parser, main  # noqa: E402
 from ctrl_wheels_log import COLUMNS, CsvLog  # noqa: E402
-from ctrl_wheels_msg import Whl, format_whl, step_lines  # noqa: E402
+from ctrl_wheels_msg import Whl, Whl2, format_whl, format_whl2, step_lines  # noqa: E402
 from ctrl_wheels_udp import open_listener  # noqa: E402
 from fake_wheels import FakeWheel  # noqa: E402
 
-_RESERVED_PORTS = frozenset(range(5005, 5009))
+_RESERVED_PORTS = frozenset({5005, 5006, 5007, 5008, 5017, 5018})
 _RESERVED_ECHO_PORT = 5006
 _LOOPBACK = "127.0.0.1"
 
 
 def _free_port() -> int:
-    """Ephemeral loopback UDP port, released before return. Never 5005-5008 or 5006."""
+    """Ephemeral loopback UDP port, released before return. Never a reserved port."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.bind((_LOOPBACK, 0))
@@ -74,7 +81,8 @@ def _two_free_ports() -> tuple[int, int]:
 
 
 def _whl_line(seq: int, model: float = 0.5) -> str:
-    return format_whl(Whl(seq=seq, t_us=seq * 20000, model_rad_s=model, raw=0, state=0))
+    return format_whl2(
+        Whl2(seq=seq, t_us=seq * 20000, model_rad_s=model, raw_l=0, raw_r=0, state=0))
 
 
 def _rows(path):
@@ -145,24 +153,34 @@ def test_defaults_via_parse_args():
     assert args.port is None
     assert args.record == "out.csv"
     assert args.overwrite is False
-    assert args.sign == 1
+    assert args.sign_left == 1
+    assert args.sign_right == 1
+    assert not hasattr(args, "sign")
     assert args.duration is None
-    assert args.cmd_port == 5008
-    assert args.echo_port == 5007
+    assert args.cmd_port == 5018
+    assert args.echo_port == 5017
     assert args.baud == 115200
     assert args.echo_timeout == 0.5
 
 
+def test_default_ports_pass_cli_checks_without_refusal():
+    """5017/5018 are in the reserved set but the CLI refuses only 5006. No socket is bound."""
+    parser = build_parser()
+    args = parser.parse_args(["--stdin", "--record", "out.csv"])
+    cwb._check_args(parser, args)
+    assert (args.cmd_port, args.echo_port) == (5018, 5017)
+
+
 def test_port_source_and_options_parse():
     args = build_parser().parse_args([
-        "--port", "rfc2217://localhost:4001",
+        "--port", "rfc2217://localhost:4002",
         "--record", "out.csv",
         "--overwrite",
         "--duration", "2.5",
         "--baud", "57600",
         "--echo-timeout", "0.25",
     ])
-    assert args.port == "rfc2217://localhost:4001"
+    assert args.port == "rfc2217://localhost:4002"
     assert args.stdin is False
     assert args.overwrite is True
     assert args.duration == 2.5
@@ -170,11 +188,17 @@ def test_port_source_and_options_parse():
     assert args.echo_timeout == 0.25
 
 
-@pytest.mark.parametrize(("text", "value"), [("1", 1), ("-1", -1)])
-def test_sign_accepts_plus_and_minus_one(text, value):
-    args = build_parser().parse_args(["--stdin", "--record", "out.csv", "--sign", text])
-    assert args.sign == value
-    assert type(args.sign) is int
+@pytest.mark.parametrize("right_text", ["1", "-1"])
+@pytest.mark.parametrize("left_text", ["1", "-1"])
+def test_sign_left_and_right_accept_plus_and_minus_one(left_text, right_text):
+    args = build_parser().parse_args([
+        "--stdin", "--record", "out.csv",
+        "--sign-left", left_text, "--sign-right", right_text,
+    ])
+    assert args.sign_left == int(left_text)
+    assert args.sign_right == int(right_text)
+    assert type(args.sign_left) is int
+    assert type(args.sign_right) is int
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +214,7 @@ def test_neither_port_nor_stdin_refused(tmp_path):
 def test_port_and_stdin_together_refused(tmp_path):
     record = tmp_path / "out.csv"
     _assert_usage_error(
-        ["--port", "rfc2217://localhost:4001", "--stdin", "--record", str(record)], record)
+        ["--port", "rfc2217://localhost:4002", "--stdin", "--record", str(record)], record)
 
 
 def test_record_is_required(tmp_path):
@@ -199,10 +223,18 @@ def test_record_is_required(tmp_path):
     assert exc.value.code == 2
 
 
-@pytest.mark.parametrize("text", ["2", "0", "-2"])
-def test_sign_other_than_plus_or_minus_one_refused(tmp_path, text):
+@pytest.mark.parametrize("text", ["2", "0", "-2", "1.0", "x"])
+@pytest.mark.parametrize("flag", ["--sign-left", "--sign-right"])
+def test_sign_other_than_plus_or_minus_one_refused(tmp_path, flag, text):
     record = tmp_path / "out.csv"
-    _assert_usage_error(_argv(record, 40001, 40002, "--sign", text), record)
+    _assert_usage_error(_argv(record, 40001, 40002, flag, text), record)
+
+
+def test_old_sign_flag_refused_as_ambiguous_prefix(tmp_path):
+    """--sign was removed. argparse abbreviation matching sees it as a prefix of both
+    --sign-left and --sign-right, so it is an ambiguous option, not a silent alias."""
+    record = tmp_path / "out.csv"
+    _assert_usage_error(_argv(record, 40001, 40002, "--sign", "1"), record)
 
 
 @pytest.mark.parametrize(("flag", "value"), [
@@ -434,8 +466,12 @@ def test_stdin_end_to_end_logs_rows_and_summary(tmp_path, monkeypatch, capsys):
     assert re.search(r"bad_lines\D*0\b", summary)
 
 
-@pytest.mark.parametrize(("sign_text", "expect_positive"), [("1", True), ("-1", False)])
-def test_sign_flag_flips_echoed_velocity(tmp_path, pipe_stdin, sign_text, expect_positive):
+@pytest.mark.parametrize("sign_right", [1, -1])
+@pytest.mark.parametrize("sign_left", [1, -1])
+def test_sign_flags_flip_each_echoed_wheel_velocity(tmp_path, pipe_stdin, sign_left, sign_right):
+    """--sign-left/--sign-right are Webots-side signs on the model velocity, SIM ONLY and
+    UNVERIFIED. The input uses the generator's default raws (+1 left, -1 right); the bridge
+    ignores raw, so each echoed wheel follows its own sign flag alone."""
     record = tmp_path / "sign.csv"
     echo_port = _free_port()
     wheel = FakeWheel(("127.0.0.1", echo_port))
@@ -446,7 +482,8 @@ def test_sign_flag_flips_echoed_velocity(tmp_path, pipe_stdin, sign_text, expect
         rc = main([
             "--stdin",
             "--record", str(record),
-            "--sign", sign_text,
+            "--sign-left", str(sign_left),
+            "--sign-right", str(sign_right),
             "--cmd-port", str(wheel.cmd_addr[1]),
             "--echo-port", str(echo_port),
         ])
@@ -456,14 +493,82 @@ def test_sign_flag_flips_echoed_velocity(tmp_path, pipe_stdin, sign_text, expect
         wheel.close()
 
     assert rc == 0
-    vel = [float(r["vel_rad_s"]) for r in _rows(record) if r["vel_rad_s"] != ""]
-    assert vel
-    if expect_positive:
-        assert max(vel) > 0.3
-        assert min(vel) >= -1e-6
-    else:
-        assert min(vel) < -0.3
-        assert max(vel) <= 1e-6
+    rows = _rows(record)
+    for column, sign in (("vel_rad_s_l", sign_left), ("vel_rad_s_r", sign_right)):
+        vel = [float(r[column]) for r in rows if r[column] != ""]
+        assert vel, column
+        if sign == 1:
+            assert max(vel) > 0.3, column
+            assert min(vel) >= -1e-6, column
+        else:
+            assert min(vel) < -0.3, column
+            assert max(vel) <= 1e-6, column
+    live = [r for r in rows if r["stale"] == "0"]
+    assert live
+    for r in live:
+        assert float(r["cmd_left_rad_s"]) == pytest.approx(sign_left * 0.5)
+        assert float(r["cmd_right_rad_s"]) == pytest.approx(sign_right * 0.5)
+
+
+def _run_stdin_with_wheel(tmp_path, monkeypatch, lines, name):
+    record = tmp_path / name
+    echo_port = _free_port()
+    wheel = FakeWheel(("127.0.0.1", echo_port))
+    stop = threading.Event()
+    thread = wheel.run_background(stop)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("".join(lines)))
+    try:
+        rc = main([
+            "--stdin",
+            "--record", str(record),
+            "--cmd-port", str(wheel.cmd_addr[1]),
+            "--echo-port", str(echo_port),
+        ])
+    finally:
+        stop.set()
+        thread.join(timeout=1.0)
+        wheel.close()
+    assert rc == 0
+    return _rows(record)
+
+
+def test_state_1_line_stops_both_wheels(tmp_path, monkeypatch):
+    rows = _run_stdin_with_wheel(
+        tmp_path, monkeypatch, step_lines(0.5, 0.4, realtime=False, state=1), "state1.csv")
+    held = [r for r in rows if r["whl_state"] == "1"]
+    assert held
+    for r in held:
+        assert float(r["cmd_left_rad_s"]) == 0.0
+        assert float(r["cmd_right_rad_s"]) == 0.0
+        assert r["stale"] == "1"
+
+
+def test_state_0_line_after_state_1_resumes_no_latch(tmp_path, monkeypatch):
+    lines = list(step_lines(0.5, 0.4, realtime=False, state=1, start_seq=0))
+    lines += list(step_lines(0.5, 0.4, realtime=False, state=0, start_seq=len(lines)))
+    rows = _run_stdin_with_wheel(tmp_path, monkeypatch, lines, "resume.csv")
+    by_line = [r for r in rows if r["whl_state"] != ""]
+    held = [r for r in by_line if r["whl_state"] == "1"]
+    run = [r for r in by_line if r["whl_state"] == "0"]
+    assert held and run
+    assert all(r["stale"] == "1" for r in held)
+    assert run[-1]["stale"] == "0"
+    assert float(run[-1]["cmd_left_rad_s"]) == pytest.approx(0.5)
+    assert float(run[-1]["cmd_right_rad_s"]) == pytest.approx(0.5)
+
+
+def test_v1_whl_line_on_stdin_is_a_bad_line(tmp_path, monkeypatch, capsys):
+    record = tmp_path / "v1.csv"
+    cmd_port, echo_port = _two_free_ports()
+    v1 = format_whl(Whl(seq=0, t_us=0, model_rad_s=0.5, raw=0, state=0))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(v1))
+
+    rc = main(_argv(record, cmd_port, echo_port, "--echo-timeout", "0.05"))
+
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert re.search(r"bad_lines=1\b", err)
+    assert re.search(r"whl_lines=0\b", err)
 
 
 # ---------------------------------------------------------------------------
@@ -481,7 +586,7 @@ def test_script_help_runs_as_program():
         cwd=str(script.parent),
     )
     assert proc.returncode == 0, proc.stderr
-    for token in ("--stdin", "--record", "--sign"):
+    for token in ("--stdin", "--record", "--sign-left", "--sign-right", "4002"):
         assert token in proc.stdout
 
 
