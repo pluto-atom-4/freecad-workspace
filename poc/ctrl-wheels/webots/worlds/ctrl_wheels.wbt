@@ -32,8 +32,8 @@
 # of 3.5 rad/s is above the wheel command clamp of 3.0 rad/s, so it does not limit a command. The clamp
 # is CLAMP_RAD_S = 3.0 at poc/ctrl-wheel/webots/controllers/ctrl_wheel/ctrl_wheel.py:45 (the single-wheel
 # controller). The twin contract, poc/ctrl-wheels/CONTRACT.md:77 (S3), clamps each wheel to +-3.0 rad/s.
-# The twin controller (tasks F18 to F20) is expected to use the same clamp. It is not yet built, so this
-# world does not show it yet. The max torque of 1e-3 N.m is assumed the same per wheel. The inertia of
+# The twin controller (webots/controllers/ctrl_wheels/ctrl_wheels.py) applies the same clamp (CLAMP_RAD_S = 3.0).
+# This world does not show the clamp itself. The max torque of 1e-3 N.m is assumed the same per wheel. The inertia of
 # 2.25e-5 kg.m2 is the analytic value 1/2 * m * r^2 for a solid disc with m = 0.05 kg and r = 0.03 m.
 # It is not a measurement (the single-wheel world's comment calls it measured, which is wrong). With a
 # max torque of 1e-3 N.m, 1e-3 / 2.25e-5 is about 44 rad/s^2, so a step to 1 rad/s takes about 22.5 ms.
