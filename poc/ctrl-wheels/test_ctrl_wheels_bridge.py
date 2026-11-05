@@ -11,8 +11,6 @@ If either relay is stale, or the state is not 0, both wheels get (0.0, 0.0) with
 stale 1 (they stop together). That stop is not a latch: a fresh state-0 sample
 resumes. Each wheel is clamped to +-3.0 silently.
 
-These tests are expected to fail until the bridge is rewritten for the twin.
-
 Integration tests use real loopback UDP sockets, a real FakeWheel in a thread
 and the real clock, each well under 3 s. Every socket uses port 0 (ephemeral).
 Ports 5005-5008, 5017 and 5018 are never bound here.

@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 """
-ctrl-wheels bridge (issue FW #453, part 2): reads WHL lines from a serial source,
-relays the wheel velocity to the headless ctrl_wheels stand-in over UDP and logs
-one CSV row per WHL line plus one per silence episode (ctrl_wheels_log.COLUMNS).
+ctrl-wheels WHL2 twin bridge: reads WHL2 lines from a serial source, splits each
+into a left and a right single-wheel sample, feeds one Relay per wheel, sends one
+UDP v2 command (both wheels) per accepted line to the headless ctrl_wheels
+stand-in and logs one CSV row per WHL2 line plus one per silence episode
+(ctrl_wheels_log.COLUMNS).
 
-Command line (FW #454): build_parser() and main(argv) -> int. Run from poc/ctrl-wheels:
+The command uses the model velocity only, forward-positive on both wheels; the
+raw columns of the line are logged but never drive a command. If either relay is
+stale or the state is not 0, both wheels get (0.0, 0.0) with stale 1 (they stop
+together). That stop is not a latch: a fresh state-0 line resumes. Each wheel is
+clamped to +-3.0 silently. A line that is not WHL2 is a bad line.
+
+Command line: build_parser() and main(argv) -> int. Run from poc/ctrl-wheels:
     python3 -m ctrl_wheels_msg --step 0.5 --seconds 5 | python3 ctrl_wheels_bridge.py --stdin --record ac1.csv
-    python3 ctrl_wheels_bridge.py --port rfc2217://localhost:4001 --record ac1.csv
+    python3 ctrl_wheels_bridge.py --port rfc2217://localhost:4002 --record ac1.csv
 Exactly one of --port / --stdin. --record is required; an existing file is refused
 unless --overwrite. Exit codes: 0 run finished (EOF or Ctrl-C), 2 usage error, a failed
 source (at open, or mid-run: the 'line source stopped' line is logged BEFORE the summary), a CSV write error or an echo socket error.
@@ -50,7 +58,7 @@ from dataclasses import dataclass, fields
 import serial
 
 from ctrl_wheels_log import CsvLog
-from ctrl_wheels_msg import SEQ_MOD, WhlError, parse_line
+from ctrl_wheels_msg import SEQ_MOD, WhlError, parse_line, split
 from ctrl_wheels_relay import POLL_S, Relay
 from ctrl_wheels_udp import (
     PORT_CMD,
@@ -249,21 +257,24 @@ def _read_lines(lines: Iterable[str], out: queue.Queue, finished: threading.Even
         finished.set()
 
 
-def _row(host_t_s: float, seq: int, wheel: float, stale: int, whl=None, missed=None) -> dict:
+def _row(host_t_s: float, seq: int, left: float, right: float, stale: int,
+         w2=None, missed=None) -> dict:
     row = {
         "host_t_s": host_t_s,
         "cmd_seq": seq,
-        "cmd_rad_s": wheel,
+        "cmd_left_rad_s": left,
+        "cmd_right_rad_s": right,
         "stale": stale,
         "missed_whl": missed,
     }
-    if whl is not None:
+    if w2 is not None:
         row.update(
-            whl_seq=whl.seq,
-            whl_t_us=whl.t_us,
-            whl_model_rad_s=whl.model_rad_s,
-            whl_raw=whl.raw,
-            whl_state=whl.state,
+            whl_seq=w2.seq,
+            whl_t_us=w2.t_us,
+            whl_model_rad_s=w2.model_rad_s,
+            whl_raw_l=w2.raw_l,
+            whl_raw_r=w2.raw_r,
+            whl_state=w2.state,
         )
     return row
 
@@ -271,8 +282,9 @@ def _row(host_t_s: float, seq: int, wheel: float, stale: int, whl=None, missed=N
 class _Run:
     """State of one run_bridge call. Single-threaded use (main loop only)."""
 
-    def __init__(self, relay, cmd_addr, echo_sock, log, clock, echo_timeout_s, stats):
-        self.relay = relay
+    def __init__(self, relay_l, relay_r, cmd_addr, echo_sock, log, clock, echo_timeout_s, stats):
+        self.relay_l = relay_l
+        self.relay_r = relay_r
         self.cmd_addr = cmd_addr
         self.echo_sock = echo_sock
         self.log = log
@@ -286,13 +298,15 @@ class _Run:
         self.last_cmd_stale: int | None = None
         self.stale_episode = False
 
-    def _send(self, wheel_rad_s: float, stale: int, *, whl=None, missed=None, log_row=True) -> None:
+    def _send(self, left_rad_s: float, right_rad_s: float, stale: int, *, w2=None, missed=None,
+              log_row=True) -> None:
         seq = self.next_cmd_seq
         self.next_cmd_seq += 1
         now = self.clock()
-        wheel = clamp(wheel_rad_s)
-        payload = encode_cmd(seq, wheel, stale)
-        row = _row(now, seq, wheel, stale, whl, missed) if log_row else None
+        left = clamp(left_rad_s, "wheels.left")
+        right = clamp(right_rad_s, "wheels.right")
+        payload = encode_cmd(seq, left, right, stale)
+        row = _row(now, seq, left, right, stale, w2, missed) if log_row else None
         self.pending[seq] = _Pending(now, row)
         self.last_cmd_stale = stale
         self.stale_episode = stale == 1
@@ -308,30 +322,40 @@ class _Run:
 
     def handle_line(self, line: str) -> None:
         try:
-            whl = parse_line(line)
+            w2 = parse_line(line)
         except WhlError:
             self.stats.bad_lines += 1
             return
         self.stats.whl_lines += 1
         missed = 0
         if self.last_whl_seq is None:
-            self.last_whl_seq = whl.seq
+            self.last_whl_seq = w2.seq
         else:
-            gap = (whl.seq - self.last_whl_seq - 1) % SEQ_MOD
+            gap = (w2.seq - self.last_whl_seq - 1) % SEQ_MOD
             if gap < _SEQ_HALF:  # forward: count the gap and move on
                 missed = gap
-                self.last_whl_seq = whl.seq
+                self.last_whl_seq = w2.seq
             # else a repeat or reorder: not a gap, and last_whl_seq keeps the highest seen
         self.stats.missed_whl_total += missed
-        self.relay.on_whl(whl)
-        out = self.relay.poll()
-        self._send(out.wheel_rad_s, out.stale, whl=whl, missed=missed)
+        wl, wr = split(w2)
+        self.relay_l.on_whl(wl)
+        self.relay_r.on_whl(wr)
+        out_l = self.relay_l.poll()
+        out_r = self.relay_r.poll()
+        stale = 1 if (out_l is None or out_r is None or out_l.stale or out_r.stale) else 0
+        if stale:
+            left, right = 0.0, 0.0
+        else:
+            left, right = out_l.wheel_rad_s, out_r.wheel_rad_s
+        self._send(left, right, stale, w2=w2, missed=missed)
 
     def check_silence(self) -> None:
-        # One stale command per episode when the relay goes stale without a new line.
-        out = self.relay.poll()
-        if out is not None and out.stale == 1 and not self.stale_episode:
-            self._send(0.0, 1)
+        # One stale command per episode when either relay goes stale without a new line.
+        out_l = self.relay_l.poll()
+        out_r = self.relay_r.poll()
+        either = (out_l is not None and out_l.stale == 1) or (out_r is not None and out_r.stale == 1)
+        if either and not self.stale_episode:
+            self._send(0.0, 0.0, 1)
 
     def drain_echoes(self) -> None:
         for data in drain_all(self.echo_sock):
@@ -350,8 +374,10 @@ class _Run:
                 pend.row.update(
                     echo_cmd_seq=seq,
                     sim_t_s=echo.sim_t_s,
-                    angle_rad=echo.angle_rad,
-                    vel_rad_s=echo.vel_rad_s,
+                    angle_rad_l=echo.angle_rad_l,
+                    angle_rad_r=echo.angle_rad_r,
+                    vel_rad_s_l=echo.vel_rad_s_l,
+                    vel_rad_s_r=echo.vel_rad_s_r,
                     host_rtt_ms=(self.clock() - pend.sent_t) * 1000.0,
                 )
                 self.log.write_row(pend.row)
@@ -366,7 +392,7 @@ class _Run:
 
     def finish(self) -> None:
         if self.last_cmd_stale != 1:
-            self._send(0.0, 1, log_row=False)
+            self._send(0.0, 0.0, 1, log_row=False)
 
     def settle(self, poll_s: float, sleep: Callable[[float], object]) -> None:
         while self.pending:
@@ -378,7 +404,8 @@ class _Run:
 
 def run_bridge(
     lines: Iterable[str],
-    relay,
+    relay_l,
+    relay_r,
     cmd_addr: tuple[str, int],
     echo_sock: socket.socket,
     log,
@@ -390,11 +417,14 @@ def run_bridge(
     echo_timeout_s: float = 0.5,
     stop_event: threading.Event | None = None,
 ) -> BridgeStats:
-    """Relay WHL lines to the wheel over UDP and log one CSV row per WHL line (plus one per silence episode).
+    """Relay WHL2 lines to the wheels over UDP and log one CSV row per WHL2 line (plus one per silence episode).
 
-    One command per WHL line. A WHL line with state != 0 sends its own stale command
-    and its own row: one per line, not one per episode. A stale command from silence
-    (no new line) is sent once per silence episode.
+    relay_l and relay_r are single-wheel Relay instances. One command (both wheels)
+    per WHL2 line. A line with state != 0, or with either relay stale, sends
+    (0.0, 0.0) with stale 1 and its own row: one per line, not one per episode.
+    The stop is not a latch; a fresh state-0 line resumes. A stale command from
+    silence (no new line) is sent once per silence episode. Raw columns are logged
+    only.
     Rows are written on echo match or after echo_timeout_s with no echo. The run
     ends on duration_s, stop_event, or an exhausted line source (after draining).
     A line source that raises (other than KeyboardInterrupt) also ends the run; its
@@ -422,7 +452,7 @@ def run_bridge(
         raise ValueError(f"echo_timeout_s must be finite >= 0, got {echo_timeout_s!r}")
 
     stats = BridgeStats()
-    run = _Run(relay, cmd_addr, echo_sock, log, clock, echo_timeout_s, stats)
+    run = _Run(relay_l, relay_r, cmd_addr, echo_sock, log, clock, echo_timeout_s, stats)
     lines_q: queue.Queue = queue.Queue()
     finished = threading.Event()
     reader = threading.Thread(
@@ -657,14 +687,15 @@ def main(argv: list[str] | None = None) -> int:
             _log(f"cannot write --record {args.record!r}: {exc}{hint}")
             return 2
 
-        relay = Relay(sign=args.sign)
+        relay_l = Relay(sign=args.sign)
+        relay_r = Relay(sign=args.sign)
         stop = threading.Event()
         source_error = None
         close_error = None
         restore_sigint = _route_sigint(stop)
         try:
             stats = run_bridge(
-                lines, relay, (_LOOPBACK, args.cmd_port), sock, log,
+                lines, relay_l, relay_r, (_LOOPBACK, args.cmd_port), sock, log,
                 duration_s=args.duration, echo_timeout_s=args.echo_timeout, stop_event=stop)
             # Snapshot is taken before the port is closed below; stats.closing is the real guard
             # against the reader's late failure.
