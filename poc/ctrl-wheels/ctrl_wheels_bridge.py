@@ -488,6 +488,9 @@ def run_bridge(
 # Command line. SIM ONLY. The sign flip is only --sign, through Relay.
 # ---------------------------------------------------------------------------
 
+# The CLI refuses only 5006 (the single-wheel servo_wheel_dof port), for either port.
+# The full reserved set of CONTRACT.md S4 binds tests and the fake wheel, not this CLI;
+# the bridge owns 5017/5018 by default and other ports are the caller's responsibility.
 _RESERVED_PORT = 5006
 _LOOPBACK = "127.0.0.1"
 _SERIAL_READ_TIMEOUT_S = 0.05
@@ -599,10 +602,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="stop after SECONDS (> 0); default: run until the source ends")
     parser.add_argument(
         "--cmd-port", type=_port_number, default=PORT_CMD, metavar="N",
-        help=f"UDP port of the wheel stand-in for commands (default {PORT_CMD}); not 5006")
+        help=f"UDP port of the wheel stand-in for commands (default {PORT_CMD}); not 5006. "
+             f"Only 5006 (the single-wheel servo_wheel_dof port) is refused; the other ports "
+             f"reserved in CONTRACT.md S4 bind tests and the fake wheel, not this CLI, "
+             f"so the port choice is yours")
     parser.add_argument(
         "--echo-port", type=_port_number, default=PORT_ECHO, metavar="N",
-        help=f"UDP port this bridge listens on for echoes (default {PORT_ECHO}); not 5006")
+        help=f"UDP port this bridge listens on for echoes (default {PORT_ECHO}); not 5006. "
+             f"Only 5006 (the single-wheel servo_wheel_dof port) is refused; the other ports "
+             f"reserved in CONTRACT.md S4 bind tests and the fake wheel, not this CLI, "
+             f"so the port choice is yours")
     parser.add_argument(
         "--baud", type=_baud, default=115200,
         help="serial baud rate (default 115200); not used by --stdin")
