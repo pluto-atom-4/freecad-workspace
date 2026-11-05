@@ -20,13 +20,17 @@ unless --overwrite. Exit codes: 0 run finished (EOF or Ctrl-C), 2 usage error, a
 source (at open, or mid-run: the 'line source stopped' line is logged BEFORE the summary)
 or a --record error. A failure to receive echoes silently stops echo draining and the run
 still ends normally.
-Ctrl-C ends the run through stop_event and prints the summary.
+Ctrl-C while run_bridge is running ends the run through stop_event, prints the summary and
+returns 0. Ctrl-C while waiting to open the source returns 0 without a summary. A KeyboardInterrupt
+raised inside run_bridge's shutdown returns 0 without a summary. A Ctrl-C during startup (after the
+source opens, before the SIGINT handler is installed) or during the final cleanup (after the handler
+is restored) is not handled and ends with a traceback and a non-zero exit.
 An unreachable URL with --duration returns 2 on purpose: nothing was ever opened, so the
 run is a failed source, not a clean finish.
 
 SIM ONLY. The bridge is a relay, not a control loop, and makes no balance claim.
-The wheel sign is UNVERIFIED; it is flipped only through the Relay sign argument,
-which the CLI exposes as --sign (the only sign flip in the CLI).
+The wheel signs are UNVERIFIED; they are flipped only through the Relay sign argument,
+which the CLI exposes as --sign-left and --sign-right (the only sign flips in the CLI).
 Latency is UNMEASURED: host_rtt_ms is wall time, not link latency.
 
 The serial helpers (DofSerialError, _is_url, _open_first, _open_url_waiting,
@@ -87,7 +91,7 @@ class BridgeStats:
     stale_cmds: int = 0
 
     def __post_init__(self) -> None:
-        # Not dataclass fields: the pinned field list has no send-error or source-error column.
+        # BridgeStats has no send-error or source-error field, so these are plain attributes.
         self.send_errors = 0
         self.source_error: str | None = None  # text of a line source error that ended the run
         # Set True in run_bridge's finally (every exit after the reader thread has started); a reader
@@ -485,7 +489,7 @@ def run_bridge(
 
 
 # ---------------------------------------------------------------------------
-# Command line. SIM ONLY. The sign flip is only --sign, through Relay.
+# Command line. SIM ONLY. The sign flips are only --sign-left and --sign-right, through Relay.
 # ---------------------------------------------------------------------------
 
 # The CLI refuses only 5006 (the single-wheel servo_wheel_dof port), for either port.
@@ -594,31 +598,37 @@ def build_parser() -> argparse.ArgumentParser:
         "--overwrite", action="store_true",
         help="replace an existing --record file (default: refuse and leave it untouched)")
     parser.add_argument(
-        "--sign", type=int, choices=(1, -1), default=1,
-        help="wheel sign, 1 or -1 (default 1). This is the ONLY place the sign is flipped "
-             "(Relay). UNVERIFIED.")
+        "--sign-left", type=int, choices=(1, -1), default=1,
+        help="Webots-side sign, 1 or -1 (default 1), applied to the model value for the left "
+             "wheel (Relay). UNVERIFIED. Not the chip raw sign of the generator "
+             "ctrl_wheels_msg (its --sign-left/--sign-right default +1/-1)")
+    parser.add_argument(
+        "--sign-right", type=int, choices=(1, -1), default=1,
+        help="Webots-side sign, 1 or -1 (default 1), applied to the model value for the right "
+             "wheel (Relay). UNVERIFIED. Not the chip raw sign of the generator "
+             "ctrl_wheels_msg (its --sign-left/--sign-right default +1/-1)")
     parser.add_argument(
         "--duration", type=_positive_finite, default=None, metavar="SECONDS",
         help="stop after SECONDS (> 0); default: run until the source ends")
     parser.add_argument(
         "--cmd-port", type=_port_number, default=PORT_CMD, metavar="N",
-        help=f"UDP port of the wheel stand-in for commands (default {PORT_CMD}); not 5006. "
-             f"Only 5006 (the single-wheel servo_wheel_dof port) is refused; the other ports "
-             f"reserved in CONTRACT.md S4 bind tests and the fake wheel, not this CLI, "
-             f"so the port choice is yours")
+        help=f"UDP port of the wheel stand-in for commands (default {PORT_CMD}). "
+             "Only 5006 (the single-wheel servo_wheel_dof port) is refused; the other ports "
+             "reserved in CONTRACT.md S4 bind tests and the fake wheel, not this CLI, "
+             "so the port choice is yours")
     parser.add_argument(
         "--echo-port", type=_port_number, default=PORT_ECHO, metavar="N",
-        help=f"UDP port this bridge listens on for echoes (default {PORT_ECHO}); not 5006. "
-             f"Only 5006 (the single-wheel servo_wheel_dof port) is refused; the other ports "
-             f"reserved in CONTRACT.md S4 bind tests and the fake wheel, not this CLI, "
-             f"so the port choice is yours")
+        help=f"UDP port this bridge listens on for echoes (default {PORT_ECHO}). "
+             "Only 5006 (the single-wheel servo_wheel_dof port) is refused; the other ports "
+             "reserved in CONTRACT.md S4 bind tests and the fake wheel, not this CLI, "
+             "so the port choice is yours")
     parser.add_argument(
         "--baud", type=_baud, default=115200,
         help="serial baud rate (default 115200); not used by --stdin")
     parser.add_argument(
         "--echo-timeout", type=_echo_timeout, default=0.5, metavar="SECONDS",
         help=f"seconds to wait for an echo before the row is written without one, 0..{_ECHO_TIMEOUT_MAX_S:g} "
-             f"(default 0.5)")
+             "(default 0.5); 0 writes every row without waiting for an echo")
     return parser
 
 
@@ -693,8 +703,8 @@ def main(argv: list[str] | None = None) -> int:
             _log(f"cannot write --record {args.record!r}: {exc}{hint}")
             return 2
 
-        relay_l = Relay(sign=args.sign)
-        relay_r = Relay(sign=args.sign)
+        relay_l = Relay(sign=args.sign_left)
+        relay_r = Relay(sign=args.sign_right)
         stop = threading.Event()
         source_error = None
         close_error = None
@@ -709,7 +719,10 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             _log("interrupted during shutdown; no summary")
             return 0
-        except OSError as exc:  # run_bridge raises OSError only from the CSV write (for example disk full)
+        except OSError as exc:
+            # Normally the CSV write (for example disk full). An OSError from the command socket
+            # creation in _Run.__init__ also escapes run_bridge and lands here, so it is reported
+            # with this same "cannot write --record" text.
             _log(f"cannot write --record {args.record!r}: {exc}")
             return 2
         finally:
