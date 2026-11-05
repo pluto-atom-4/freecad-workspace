@@ -6,8 +6,8 @@ SIM ONLY. Nothing here is validated on hardware, and it makes no balance claim.
 The sign of each wheel against the firmware is UNVERIFIED. This file has not been
 run in Webots by its author; runtime behaviour in Webots is NOT CHECKED.
 
-State after tasks F18 to F20 (freecad-workspace #502 to #504, umbrella FW#482).
-The file was copied from the single-wheel controller and rewritten for the twin.
+Webots controller for the twin-wheel ctrl-wheels simulation. It speaks the v2 wire
+format of poc/ctrl-wheels/CONTRACT.md (sections S3 and S4).
 It binds the UDP command port CMD_PORT (127.0.0.1:5018) and drains it every step,
 keeps the newest valid v2 command, and drives the two wheel motors with
 setVelocity. Both wheels get 0 rad/s when no valid command has arrived, when the
@@ -21,9 +21,9 @@ poc/ctrl-wheels/CONTRACT.md (sections S3 and S4).
 Only the Webots-specific import is `controller`; the sensor maths lives in
 sensor_read.py so it stays importable outside Webots.
 
-Device names (must match the twin world, case-sensitive). The twin world file was
-not present in the checkout this controller was written from, so the names are
-taken from the plan (discussion 266) and are UNVERIFIED against a world file:
+Device names (must match the twin world ctrl_wheels.wbt, case-sensitive, #510).
+The worktree used for this change does not contain that world file, so the names
+are NOT CHECKED against it:
     RotationalMotor: "wheel_motor_left", "wheel_motor_right"
     PositionSensor:  "wheel_sensor_left", "wheel_sensor_right"
 """
@@ -59,6 +59,7 @@ STALE_SIM_S = 0.2  # simulated seconds without a fresh valid command before both
 SIGN_LEFT = 1
 SIGN_RIGHT = 1
 RECV_BUFSIZE = 65535
+MAX_DATAGRAMS_PER_STEP = 64  # drain cap per simulation step; leftovers are read on later steps
 
 # Wire key names. These are a contract with ctrl_wheels_udp.py in poc/ctrl-wheels,
 # which this controller cannot import (the controller directory is outside the
@@ -135,8 +136,9 @@ def _parse_cmd(data: bytes):
         stale = obj["stale"]
         if not _is_int(stale) or stale not in (0, 1):
             return None
-        # A huge JSON int raises OverflowError here, and a huge JSON float such as
-        # 1e400 parses to inf, so both are caught by the isfinite check below.
+        # float() raises OverflowError for a JSON int too large for a float; that is
+        # caught by the except clause below. A JSON float literal such as 1e400
+        # parses to inf without an error, and the isfinite check below refuses it.
         left = float(left_raw)
         right = float(right_raw)
         if not (math.isfinite(left) and math.isfinite(right)):
@@ -232,13 +234,18 @@ def main() -> int:
         while robot.step(timestep) != -1:
             t_s = robot.getTime()
 
-            # Drain every pending datagram; keep only the newest valid one. Invalid
-            # datagrams are counted and ignored, and they do not reset the watchdog.
-            while True:
+            # Drain pending datagrams, at most MAX_DATAGRAMS_PER_STEP per step; keep only
+            # the newest valid one. The newest valid command wins by arrival order. There
+            # is no sender authentication: any local sender that reaches 127.0.0.1:5018
+            # can send commands (single-wheel behaviour, kept on purpose).
+            # Invalid datagrams are counted and ignored, and they do not reset the watchdog.
+            drained = 0
+            while drained < MAX_DATAGRAMS_PER_STEP:
                 try:
                     data, _addr = sock.recvfrom(RECV_BUFSIZE)
                 except OSError:  # includes BlockingIOError: nothing more pending
                     break
+                drained += 1
                 parsed = _parse_cmd(data)
                 if parsed is None:
                     ignored_count += 1

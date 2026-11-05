@@ -9,12 +9,10 @@ wheels (left and right). The sim side echoes both wheels' angle and velocity.
 SIM ONLY. The wheel sign convention and the model values are UNVERIFIED.
 The wire format is not validated against any real device or receiver.
 
-The Webots controller (planned: tasks F18 to F20, #502 to #504) cannot import
-this module, so it duplicates the JSON key names on purpose. Change a key name
-in both places or not at all. Today the copied controller,
-poc/ctrl-wheels/webots/controllers/ctrl_wheels/ctrl_wheels.py, still speaks the
-v1 wire format (cmd keys cmd_seq, wheel_rad_s and stale on port 5008); it is
-rewritten by tasks F18 to F20. This module describes v2 only.
+This is the v2 contract module (CONTRACT.md S3 to S6). The Webots controller
+poc/ctrl-wheels/webots/controllers/ctrl_wheels/ctrl_wheels.py cannot import this
+module, so it duplicates the JSON key names on purpose. Change a key name in both
+places or not at all. This module describes v2 only.
 
 Ports: 5017 (echo, sim -> host) and 5018 (command, host -> sim) only.
 Port 5006 is never used by this module. The reserved port set of CONTRACT.md
