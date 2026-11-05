@@ -7,8 +7,8 @@ WhlError(ValueError), Whl (single-wheel, 5 fields), checksum(body), PREFIX
 == "WHL2", FIELD_COUNT == 7, the frozen dataclass
 Whl2(seq, t_us, model_rad_s, raw_l, raw_r, state), format_whl2(Whl2) -> str,
 parse_line(str) -> Whl2 (WHL2 only) and split(Whl2) -> (Whl, Whl). It covers
-format, parse, the reject rules and split. step_lines and main are not covered
-here (task F05).
+format, parse, the reject rules and split. step_lines and main are covered by
+test_ctrl_wheels_msg_steps.py.
 
 Golden origin: the accept and reject lines below are copied as literals from
 CONTRACT.md S7 (poc/ctrl-wheels). The "-0 model" case uses the real float
