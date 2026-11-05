@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
 """
-Tests for the ctrl-wheels bridge (ctrl_wheels_bridge), issue FW #453. The bridge
-module is in this directory; these tests pin its API.
+Tests for the twin ctrl-wheels bridge (ctrl_wheels_bridge). The bridge module is
+in this directory; these tests pin its API.
+
+The bridge reads WHL2 lines, splits each into a left and a right single-wheel
+sample (ctrl_wheels_msg.split), feeds one Relay per wheel, and sends one UDP v2
+command per accepted line. It uses the model velocity only, forward-positive on
+both wheels; the raw columns of the line are logged but never drive a command.
+If either relay is stale, or the state is not 0, both wheels get (0.0, 0.0) with
+stale 1 (they stop together). That stop is not a latch: a fresh state-0 sample
+resumes. Each wheel is clamped to +-3.0 silently.
+
+These tests are expected to fail until the bridge is rewritten for the twin.
 
 Integration tests use real loopback UDP sockets, a real FakeWheel in a thread
 and the real clock, each well under 3 s. Every socket uses port 0 (ephemeral).
-Ports 5005-5008 are never used.
+Ports 5005-5008, 5017 and 5018 are never bound here.
 
 SIM ONLY. The sign convention and the model values are UNVERIFIED. Nothing here
 validates a real wheel, a balance loop or a serial device. open_serial_lines is
@@ -41,8 +51,8 @@ from ctrl_wheels_bridge import (  # noqa: E402
     run_bridge,
 )
 from ctrl_wheels_log import COLUMNS, CsvLog  # noqa: E402
-from ctrl_wheels_msg import Whl, format_whl, step_lines  # noqa: E402
-from ctrl_wheels_relay import Relay  # noqa: E402
+from ctrl_wheels_msg import Whl, Whl2, format_whl, format_whl2, step_lines  # noqa: E402
+from ctrl_wheels_relay import Relay, RelayOut  # noqa: E402
 from ctrl_wheels_udp import (  # noqa: E402
     UdpMsgError,
     decode_cmd,
@@ -54,10 +64,19 @@ from ctrl_wheels_udp import (  # noqa: E402
 from fake_wheels import FakeWheel  # noqa: E402
 
 
-def _line(seq, model=0.5, state=0):
-    """One stripped WHL line (no newline), as the bridge's reader passes it."""
+def _line(seq, model=0.5, state=0, raw_l=10, raw_r=-10):
+    """One stripped WHL2 line (no newline), as the bridge's reader passes it."""
     t_us = (seq * 20000) % (2**32)
-    return format_whl(Whl(seq=seq, t_us=t_us, model_rad_s=model, raw=0, state=state)).rstrip("\n")
+    return format_whl2(
+        Whl2(seq=seq, t_us=t_us, model_rad_s=model, raw_l=raw_l, raw_r=raw_r, state=state)
+    ).rstrip("\n")
+
+
+def _v1_line(seq):
+    """One stripped single-wheel WHL v1 line (6 fields), which the twin refuses."""
+    return format_whl(
+        Whl(seq=seq, t_us=seq * 20000, model_rad_s=0.5, raw=10, state=0)
+    ).rstrip("\n")
 
 
 def _bad_checksum(line):
@@ -67,7 +86,7 @@ def _bad_checksum(line):
 
 
 def _endless(done):
-    """Fresh state-0 WHL lines at about 50 Hz until done is set (real time)."""
+    """Fresh state-0 WHL2 lines at about 50 Hz until done is set (real time)."""
     seq = 0
     while not done.is_set():
         yield _line(seq)
@@ -79,6 +98,23 @@ def _blocked(release):
     """Iterator that never yields until release is set (or 5 s pass)."""
     release.wait(timeout=5.0)
     yield from ()
+
+
+class _StaleRelay(Relay):
+    """Relay whose poll() is deterministic: stale after the first sample, whatever the clock."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._seen = False
+
+    def on_whl(self, whl):
+        super().on_whl(whl)
+        self._seen = True
+
+    def poll(self):
+        if not self._seen:
+            return None
+        return RelayOut(wheel_rad_s=0.0, stale=1)
 
 
 def _rows(path):
@@ -94,14 +130,21 @@ def _wire_cmds(cmd_rx):
     return [decode_cmd(data) for data in drain_all(cmd_rx)]
 
 
-def _run(tmp_path, lines, cmd_addr, echo_rx, *, relay=None, **kwargs):
+def _pairs(cmds):
+    """(left, right, stale) of each wire command."""
+    return [(c.left_rad_s, c.right_rad_s, c.stale) for c in cmds]
+
+
+def _run(tmp_path, lines, cmd_addr, echo_rx, *, relay_l=None, relay_r=None, **kwargs):
     """Run the bridge into a fresh CSV under tmp_path. Returns (stats, csv path)."""
     path = tmp_path / "bridge.csv"
-    if relay is None:
-        relay = Relay()
+    if relay_l is None:
+        relay_l = Relay()
+    if relay_r is None:
+        relay_r = Relay()
     log = CsvLog(path)
     try:
-        stats = run_bridge(iter(lines), relay, cmd_addr, echo_rx, log, **kwargs)
+        stats = run_bridge(iter(lines), relay_l, relay_r, cmd_addr, echo_rx, log, **kwargs)
     finally:
         log.close()
     return stats, path
@@ -125,7 +168,7 @@ def echo_rx():
 
 @pytest.fixture
 def live_wheel(echo_rx):
-    """Real FakeWheel stepping in a thread and echoing to echo_rx."""
+    """Real twin FakeWheel stepping in a thread and echoing to echo_rx."""
     wheel = FakeWheel(echo_rx.getsockname())
     stop = threading.Event()
     thread = wheel.run_background(stop)
@@ -140,7 +183,7 @@ def live_wheel(echo_rx):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("port", ["rfc2217://localhost:4000", "loop://"])
+@pytest.mark.parametrize("port", ["rfc2217://localhost:4002", "loop://"])
 def test_is_url_true_for_scheme_ports(port):
     assert _is_url(port) is True
 
@@ -178,7 +221,8 @@ def test_run_bridge_signature_pinned():
     params = inspect.signature(run_bridge).parameters
     assert list(params) == [
         "lines",
-        "relay",
+        "relay_l",
+        "relay_r",
         "cmd_addr",
         "echo_sock",
         "log",
@@ -221,6 +265,8 @@ def test_bridge_stats_fields_pinned():
 
 
 def test_a_fifty_hz_step_logs_rows_with_echoes(tmp_path, echo_rx, live_wheel):
+    # step_lines writes raw_l positive and raw_r negative; both wheels must still
+    # follow the model forward-positive.
     lines = step_lines(0.5, 1.2, rate_hz=50.0, realtime=True)
     stats, path = _run(tmp_path, lines, live_wheel.cmd_addr, echo_rx)
     rows = _rows(path)
@@ -237,7 +283,141 @@ def test_a_fifty_hz_step_logs_rows_with_echoes(tmp_path, echo_rx, live_wheel):
         assert float(r["host_rtt_ms"]) >= 0.0
 
     fresh = [r for r in echoed if r["stale"] == "0"]
-    assert float(fresh[-1]["vel_rad_s"]) == pytest.approx(0.5, abs=0.1)
+    assert float(fresh[-1]["vel_rad_s_l"]) == pytest.approx(0.5, abs=0.1)
+    assert float(fresh[-1]["vel_rad_s_r"]) == pytest.approx(0.5, abs=0.1)
+
+
+def test_echo_match_with_real_fake_wheel_fills_both_wheels(tmp_path, echo_rx, live_wheel):
+    stats, path = _run(
+        tmp_path, step_lines(0.5, 0.4, rate_hz=50.0, realtime=True), live_wheel.cmd_addr, echo_rx
+    )
+    echoed = [r for r in _rows(path) if r["echo_cmd_seq"] != ""]
+    assert echoed
+    assert stats.echoes_matched >= len(echoed)
+    for r in echoed:
+        assert r["echo_cmd_seq"] == r["cmd_seq"]
+        assert r["angle_rad_l"] != ""
+        assert r["angle_rad_r"] != ""
+        assert r["sim_t_s"] != ""
+        assert float(r["host_rtt_ms"]) >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# Command content (deterministic lines, no echoes)
+# ---------------------------------------------------------------------------
+
+
+def test_state_zero_line_sends_model_to_both_wheels_and_logs_raws(tmp_path, cmd_rx, echo_rx):
+    _stats, path = _run(
+        tmp_path,
+        [_line(0, model=0.5, state=0, raw_l=10, raw_r=-10)],
+        cmd_rx.getsockname(),
+        echo_rx,
+        echo_timeout_s=0.05,
+    )
+    cmds = _wire_cmds(cmd_rx)
+    assert _pairs(cmds)[0] == (0.5, 0.5, 0)
+
+    rows = _rows(path)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["whl_raw_l"] == "10"
+    assert row["whl_raw_r"] == "-10"
+    assert row["whl_state"] == "0"
+    assert row["stale"] == "0"
+    assert float(row["whl_model_rad_s"]) == pytest.approx(0.5)
+    assert float(row["cmd_left_rad_s"]) == pytest.approx(0.5)
+    assert float(row["cmd_right_rad_s"]) == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize("state", [1, 2])
+def test_nonzero_state_stops_both_wheels(tmp_path, cmd_rx, echo_rx, state):
+    _stats, path = _run(
+        tmp_path,
+        [_line(0, model=0.5, state=state)],
+        cmd_rx.getsockname(),
+        echo_rx,
+        echo_timeout_s=0.05,
+    )
+    assert _pairs(_wire_cmds(cmd_rx)) == [(0.0, 0.0, 1)]
+
+    rows = _rows(path)
+    assert len(rows) == 1
+    assert rows[0]["stale"] == "1"
+    assert rows[0]["whl_state"] == str(state)
+    assert float(rows[0]["cmd_left_rad_s"]) == 0.0
+    assert float(rows[0]["cmd_right_rad_s"]) == 0.0
+
+
+@pytest.mark.parametrize("raw_l, raw_r", [(125, -125), (-125, 125), (-7, -7), (0, 0)])
+def test_wire_raws_never_change_the_command(tmp_path, cmd_rx, echo_rx, raw_l, raw_r):
+    _stats, path = _run(
+        tmp_path,
+        [_line(0, model=0.5, raw_l=raw_l, raw_r=raw_r)],
+        cmd_rx.getsockname(),
+        echo_rx,
+        echo_timeout_s=0.05,
+    )
+    assert _pairs(_wire_cmds(cmd_rx))[0] == (0.5, 0.5, 0)
+    row = _rows(path)[0]
+    assert row["whl_raw_l"] == str(raw_l)
+    assert row["whl_raw_r"] == str(raw_r)
+    assert float(row["cmd_right_rad_s"]) == pytest.approx(0.5)
+
+
+def test_relay_signs_apply_per_wheel(tmp_path, cmd_rx, echo_rx):
+    _stats, path = _run(
+        tmp_path,
+        [_line(0, model=0.5)],
+        cmd_rx.getsockname(),
+        echo_rx,
+        relay_l=Relay(sign=-1),
+        relay_r=Relay(sign=1),
+        echo_timeout_s=0.05,
+    )
+    assert _pairs(_wire_cmds(cmd_rx))[0] == (-0.5, 0.5, 0)
+    row = _rows(path)[0]
+    assert float(row["cmd_left_rad_s"]) == pytest.approx(-0.5)
+    assert float(row["cmd_right_rad_s"]) == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize("model, expected", [(5.0, 3.0), (-5.0, -3.0)])
+def test_each_wheel_is_clamped_to_three(tmp_path, cmd_rx, echo_rx, model, expected):
+    # The relays are given a wide clamp so the bridge itself must limit the command.
+    _stats, path = _run(
+        tmp_path,
+        [_line(0, model=model)],
+        cmd_rx.getsockname(),
+        echo_rx,
+        relay_l=Relay(clamp=10.0),
+        relay_r=Relay(clamp=10.0),
+        echo_timeout_s=0.05,
+    )
+    assert _pairs(_wire_cmds(cmd_rx))[0] == (expected, expected, 0)
+    row = _rows(path)[0]
+    assert float(row["cmd_left_rad_s"]) == pytest.approx(expected)
+    assert float(row["cmd_right_rad_s"]) == pytest.approx(expected)
+    assert row["stale"] == "0"
+
+
+@pytest.mark.parametrize("stale_side", ["left", "right"])
+def test_either_relay_stale_stops_both_wheels(tmp_path, cmd_rx, echo_rx, stale_side):
+    relay_l = _StaleRelay() if stale_side == "left" else Relay()
+    relay_r = _StaleRelay() if stale_side == "right" else Relay()
+    _stats, path = _run(
+        tmp_path,
+        [_line(0, model=0.5)],
+        cmd_rx.getsockname(),
+        echo_rx,
+        relay_l=relay_l,
+        relay_r=relay_r,
+        echo_timeout_s=0.05,
+    )
+    assert _pairs(_wire_cmds(cmd_rx)) == [(0.0, 0.0, 1)]
+    row = _rows(path)[0]
+    assert row["stale"] == "1"
+    assert float(row["cmd_left_rad_s"]) == 0.0
+    assert float(row["cmd_right_rad_s"]) == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +480,15 @@ def test_c_bad_lines_counted_and_skipped(tmp_path, cmd_rx, echo_rx):
     assert all(r["missed_whl"] == "0" for r in rows)
 
 
+def test_v1_whl_line_is_a_bad_line_and_sends_no_command(tmp_path, cmd_rx, echo_rx):
+    stats, path = _run(tmp_path, [_v1_line(0)], cmd_rx.getsockname(), echo_rx)
+    assert stats.bad_lines == 1
+    assert stats.whl_lines == 0
+    assert _rows(path) == []
+    # Only the closing stop may reach the wire; no motion command does.
+    assert all(c.stale == 1 for c in _wire_cmds(cmd_rx))
+
+
 # ---------------------------------------------------------------------------
 # Stale and state handling
 # ---------------------------------------------------------------------------
@@ -309,7 +498,10 @@ def test_d_state_one_line_sends_zero_stale_command(tmp_path, cmd_rx, echo_rx):
     lines = [_line(0, model=0.5, state=0), _line(1, model=0.5, state=1)]
     _run(tmp_path, lines, cmd_rx.getsockname(), echo_rx)
     cmds = _wire_cmds(cmd_rx)
-    assert [(c.cmd_seq, c.wheel_rad_s, c.stale) for c in cmds] == [(0, 0.5, 0), (1, 0.0, 1)]
+    assert [(c.cmd_seq, c.left_rad_s, c.right_rad_s, c.stale) for c in cmds] == [
+        (0, 0.5, 0.5, 0),
+        (1, 0.0, 0.0, 1),
+    ]
 
 
 def test_d_state_one_row_shows_stale_and_zero_command(tmp_path, cmd_rx, echo_rx):
@@ -318,7 +510,14 @@ def test_d_state_one_row_shows_stale_and_zero_command(tmp_path, cmd_rx, echo_rx)
     by_seq = _by_seq(_rows(path))
     assert by_seq[1]["whl_state"] == "1"
     assert by_seq[1]["stale"] == "1"
-    assert float(by_seq[1]["cmd_rad_s"]) == 0.0
+    assert float(by_seq[1]["cmd_left_rad_s"]) == 0.0
+    assert float(by_seq[1]["cmd_right_rad_s"]) == 0.0
+
+
+def test_fresh_state_zero_line_resumes_after_a_state_one_stop(tmp_path, cmd_rx, echo_rx):
+    lines = [_line(0, state=0), _line(1, state=1), _line(2, state=0)]
+    _run(tmp_path, lines, cmd_rx.getsockname(), echo_rx)
+    assert _pairs(_wire_cmds(cmd_rx))[:3] == [(0.5, 0.5, 0), (0.0, 0.0, 1), (0.5, 0.5, 0)]
 
 
 def test_e_silence_gives_one_stale_command_then_fresh_resumes(tmp_path, echo_rx):
@@ -332,12 +531,12 @@ def test_e_silence_gives_one_stale_command_then_fresh_resumes(tmp_path, echo_rx)
         yield _line(1, model=0.5)
 
     # Echo tap: FakeWheel sends its echoes here; the tap records each echoed
-    # vel_rad_s (public decode_echo) and forwards the bytes unchanged to the
-    # bridge's echo socket. The CSV keeps only one echo per command, so it
-    # cannot show the decay during the silence.
+    # (vel_rad_s_l, vel_rad_s_r) (public decode_echo) and forwards the bytes
+    # unchanged to the bridge's echo socket. The CSV keeps only one echo per
+    # command, so it cannot show the decay during the silence.
     tap = open_listener(0)
     tap_tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    samples: list[tuple[float, float]] = []
+    samples: list[tuple[float, float, float]] = []
     tap_done = threading.Event()
 
     def _tap():
@@ -348,8 +547,8 @@ def test_e_silence_gives_one_stale_command_then_fresh_resumes(tmp_path, echo_rx)
                     echo = decode_echo(data)
                 except (UdpMsgError, RecursionError):
                     continue
-                if echo.vel_rad_s is not None:
-                    samples.append((time.monotonic(), echo.vel_rad_s))
+                if echo.vel_rad_s_l is not None and echo.vel_rad_s_r is not None:
+                    samples.append((time.monotonic(), echo.vel_rad_s_l, echo.vel_rad_s_r))
             tap_done.wait(0.005)
 
     wheel = FakeWheel(tap.getsockname())
@@ -377,19 +576,23 @@ def test_e_silence_gives_one_stale_command_then_fresh_resumes(tmp_path, echo_rx)
     stale_rows = [r for r in rows if r["whl_seq"] == ""]
     assert len(stale_rows) == 1
     assert stale_rows[0]["stale"] == "1"
-    assert float(stale_rows[0]["cmd_rad_s"]) == 0.0
+    assert float(stale_rows[0]["cmd_left_rad_s"]) == 0.0
+    assert float(stale_rows[0]["cmd_right_rad_s"]) == 0.0
 
     by_seq = _by_seq(rows)
     assert by_seq[1]["stale"] == "0"
-    assert float(by_seq[1]["cmd_rad_s"]) == pytest.approx(0.5)
+    assert float(by_seq[1]["cmd_left_rad_s"]) == pytest.approx(0.5)
+    assert float(by_seq[1]["cmd_right_rad_s"]) == pytest.approx(0.5)
     assert int(stale_rows[0]["cmd_seq"]) == int(by_seq[0]["cmd_seq"]) + 1
     assert int(by_seq[1]["cmd_seq"]) == int(stale_rows[0]["cmd_seq"]) + 1
     assert stats.stale_cmds >= 1
 
-    assert max(v for _, v in samples) > 0.3
-    before_resume = [v for t, v in samples if t < resumed_at[0]]
+    assert max(vl for _, vl, _ in samples) > 0.3
+    assert max(vr for _, _, vr in samples) > 0.3
+    before_resume = [(vl, vr) for t, vl, vr in samples if t < resumed_at[0]]
     assert before_resume
-    assert before_resume[-1] < 0.1
+    assert before_resume[-1][0] < 0.1
+    assert before_resume[-1][1] < 0.1
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +614,8 @@ def test_f_duration_stops_loop_and_sends_final_stale(tmp_path, cmd_rx, echo_rx):
     assert 0.35 <= elapsed < 2.0
     cmds = _wire_cmds(cmd_rx)
     assert cmds[-1].stale == 1
-    assert cmds[-1].wheel_rad_s == 0.0
+    assert cmds[-1].left_rad_s == 0.0
+    assert cmds[-1].right_rad_s == 0.0
     assert stats.cmds_sent == len(cmds)
 
 
@@ -433,8 +637,30 @@ def test_stop_event_ends_run_and_sends_final_stale(tmp_path, cmd_rx, echo_rx):
     assert elapsed < 2.0
     cmds = _wire_cmds(cmd_rx)
     assert cmds[-1].stale == 1
-    assert cmds[-1].wheel_rad_s == 0.0
+    assert cmds[-1].left_rad_s == 0.0
+    assert cmds[-1].right_rad_s == 0.0
     assert stats.cmds_sent == len(cmds)
+
+
+def test_final_stop_is_not_repeated_when_last_command_was_stale(tmp_path, cmd_rx, echo_rx):
+    _stats, path = _run(
+        tmp_path,
+        [_line(0, state=1)],
+        cmd_rx.getsockname(),
+        echo_rx,
+        echo_timeout_s=0.05,
+    )
+    assert _pairs(_wire_cmds(cmd_rx)) == [(0.0, 0.0, 1)]
+    assert len(_rows(path)) == 1
+
+
+def test_final_stop_has_no_csv_row(tmp_path, cmd_rx, echo_rx):
+    stats, path = _run(
+        tmp_path, [_line(0, state=0)], cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05
+    )
+    assert len(_rows(path)) == 1
+    assert stats.cmds_sent == 2
+    assert _pairs(_wire_cmds(cmd_rx)) == [(0.5, 0.5, 0), (0.0, 0.0, 1)]
 
 
 def test_blocked_iterator_does_not_hang_bridge(tmp_path, cmd_rx, echo_rx):
@@ -496,8 +722,8 @@ def test_bad_and_unmatched_echoes_counted_and_rows_flush_empty(tmp_path, cmd_rx,
     tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         tx.sendto(b"\xff\xfe junk", addr)
-        tx.sendto(encode_echo(999, 0.1, 0.0, 0.0), addr)
-        tx.sendto(encode_echo(None, 0.1, 0.0, None), addr)
+        tx.sendto(encode_echo(999, 0.1, 0.0, 0.0, 0.0, 0.0), addr)
+        tx.sendto(encode_echo(None, 0.1, 0.0, None, 0.0, None), addr)
     finally:
         tx.close()
 
@@ -517,6 +743,10 @@ def test_bad_and_unmatched_echoes_counted_and_rows_flush_empty(tmp_path, cmd_rx,
     assert len(rows) == 1
     assert rows[0]["echo_cmd_seq"] == ""
     assert rows[0]["sim_t_s"] == ""
+    assert rows[0]["angle_rad_l"] == ""
+    assert rows[0]["angle_rad_r"] == ""
+    assert rows[0]["vel_rad_s_l"] == ""
+    assert rows[0]["vel_rad_s_r"] == ""
     assert rows[0]["host_rtt_ms"] == ""
 
 
@@ -530,6 +760,7 @@ def test_g_csv_header_is_ctrl_wheels_log_columns(tmp_path, cmd_rx, echo_rx):
     with open(path, newline="", encoding="utf-8") as fh:
         header = next(csv.reader(fh))
     assert header == list(COLUMNS)
+    assert len(header) == 19
     assert _rows(path) == []
     assert stats.whl_lines == 0
 
