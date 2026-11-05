@@ -17,7 +17,9 @@ Command line: build_parser() and main(argv) -> int. Run from poc/ctrl-wheels:
     python3 ctrl_wheels_bridge.py --port rfc2217://localhost:4002 --record ac1.csv
 Exactly one of --port / --stdin. --record is required; an existing file is refused
 unless --overwrite. Exit codes: 0 run finished (EOF or Ctrl-C), 2 usage error, a failed
-source (at open, or mid-run: the 'line source stopped' line is logged BEFORE the summary), a CSV write error or an echo socket error.
+source (at open, or mid-run: the 'line source stopped' line is logged BEFORE the summary)
+or a --record error. A failure to receive echoes silently stops echo draining and the run
+still ends normally.
 Ctrl-C ends the run through stop_event and prints the summary.
 An unreachable URL with --duration returns 2 on purpose: nothing was ever opened, so the
 run is a failed source, not a clean finish.
@@ -27,19 +29,9 @@ The wheel sign is UNVERIFIED; it is flipped only through the Relay sign argument
 which the CLI exposes as --sign (the only sign flip in the CLI).
 Latency is UNMEASURED: host_rtt_ms is wall time, not link latency.
 
-Copied, not imported (owner decision: no import across directories). Source is
-poc/esp32-dof/monitor/dof_serial.py in this repo:
-- _MAX_BUF_BYTES, _READ_CHUNK, _RECONNECT_DELAY_S, _WAIT_HEARTBEAT_S,
-  _URL_WAIT_CAP_S: lines 15-19
-- DofSerialError: lines 22-23
-- device-open error text (_open_first): lines 53-60
-- _is_url: lines 63-64
-- _open_url_waiting: lines 67-93
-- _close_quietly: lines 96-100
-- _log: lines 103-104, tag changed to [ctrl_wheels_bridge]
-- read and sync loop of _serial_gen: lines 115-163, adapted: no reconnect loop
-  (a read error raises DofSerialError), ascii decode with errors=replace
-  (dof_serial uses utf-8), first fragment after open discarded as before.
+The serial helpers (DofSerialError, _is_url, _open_first, _open_url_waiting,
+_close_quietly and the read and sync loop) are copied, not imported, from
+poc/esp32-dof/monitor/dof_serial.py in this repo, with no reconnect loop.
 """
 
 from __future__ import annotations
@@ -135,7 +127,7 @@ def _open_first(port: str, baud: int, timeout_s: float):
 
 
 def _open_url_waiting(port: str, baud: int, timeout_s: float, deadline: float | None):
-    # Returns an open port, or None when max_duration_s passes first;
+    # Returns an open port, or None when deadline passes first;
     # raises DofSerialError when _URL_WAIT_CAP_S passes first.
     cap_deadline = time.monotonic() + _URL_WAIT_CAP_S
     attempt = 0
@@ -307,15 +299,17 @@ class _Run:
         right = clamp(right_rad_s, "wheels.right")
         payload = encode_cmd(seq, left, right, stale)
         row = _row(now, seq, left, right, stale, w2, missed) if log_row else None
-        self.pending[seq] = _Pending(now, row)
-        self.last_cmd_stale = stale
-        self.stale_episode = stale == 1
         try:
             self.cmd_tx.sendto(payload, self.cmd_addr)
         except OSError as exc:
+            # Nothing reached the wire: no pending row, and last_cmd_stale is unchanged
+            # so finish() still sends its stop.
             self.stats.send_errors += 1
             _log(f"command {seq} send failed: {exc}")
             return
+        self.pending[seq] = _Pending(now, row)
+        self.last_cmd_stale = stale
+        self.stale_episode = stale == 1
         self.stats.cmds_sent += 1
         if stale == 1:
             self.stats.stale_cmds += 1
@@ -434,7 +428,9 @@ def run_bridge(
     stats.source_error and is logged.
     A final stale command is sent unless the last command was already stale. It is
     not logged as a CSV row, so cmds_sent can exceed the row count by one.
-    UDP send errors are counted in BridgeStats.send_errors, not raised.
+    UDP send errors are counted in BridgeStats.send_errors, not raised. A command whose
+    send failed is not counted in cmds_sent, gets no CSV row and does not change the
+    stale state, so the final stop is still attempted.
     cmd_seq is an unbounded counter with no wrap (the Webots controller accepts any
     non-negative int).
     The injected clock drives echo timing (echo timeouts, host_rtt_ms) and duration_s
@@ -489,7 +485,7 @@ def run_bridge(
 
 
 # ---------------------------------------------------------------------------
-# Command line (FW #454). SIM ONLY. The sign flip is only --sign, through Relay.
+# Command line. SIM ONLY. The sign flip is only --sign, through Relay.
 # ---------------------------------------------------------------------------
 
 _RESERVED_PORT = 5006
@@ -566,30 +562,31 @@ def _baud(text: str) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Relay WHL lines from a serial port or stdin to the ctrl_wheels stand-in over UDP "
-            "and log one CSV row per WHL line (plus one per silence episode). SIM ONLY. Sign UNVERIFIED, latency UNMEASURED, "
+            "Relay WHL2 lines from a serial port or stdin to the ctrl_wheels stand-in over UDP "
+            "and log one CSV row per WHL2 line (plus one per silence episode). SIM ONLY. Sign UNVERIFIED, latency UNMEASURED, "
             "no balance claim. pyserial is imported at module load, so it is needed even "
             "for --stdin."),
         epilog=(
             "examples:\n"
             "  python3 -m ctrl_wheels_msg --step 0.5 --seconds 5 | "
             "python3 ctrl_wheels_bridge.py --stdin --record ac1.csv\n"
-            "  python3 ctrl_wheels_bridge.py --port rfc2217://localhost:4001 --record ac1.csv\n"
+            "  python3 ctrl_wheels_bridge.py --port rfc2217://localhost:4002 --record ac1.csv\n"
             "exit codes: 0 run finished (EOF or Ctrl-C); 2 usage error, failed source (at open or "
-            "mid-run), CSV write error or echo socket error."),
+            "mid-run) or --record error. A failure to receive echoes silently stops echo "
+            "draining and the run still ends normally."),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument(
         "--port", metavar="PORT",
-        help="serial device path or pyserial URL such as rfc2217://localhost:4001 "
+        help="serial device path or pyserial URL such as rfc2217://localhost:4002 "
              "(URL ports retry the first open for up to 300 s)")
     source.add_argument(
         "--stdin", action="store_true",
-        help="read WHL lines from stdin until EOF")
+        help="read WHL2 lines from stdin until EOF")
     parser.add_argument(
         "--record", metavar="CSV", required=True,
-        help="CSV log: one row per WHL line plus one per silence episode (ctrl_wheels_log columns)")
+        help="CSV log: one row per WHL2 line plus one per silence episode (ctrl_wheels_log columns)")
     parser.add_argument(
         "--overwrite", action="store_true",
         help="replace an existing --record file (default: refuse and leave it untouched)")
@@ -703,7 +700,7 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             _log("interrupted during shutdown; no summary")
             return 0
-        except OSError as exc:  # CSV write failure (for example disk full) from run_bridge
+        except OSError as exc:  # run_bridge raises OSError only from the CSV write (for example disk full)
             _log(f"cannot write --record {args.record!r}: {exc}")
             return 2
         finally:

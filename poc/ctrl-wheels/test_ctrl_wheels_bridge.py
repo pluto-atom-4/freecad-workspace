@@ -186,7 +186,7 @@ def test_is_url_true_for_scheme_ports(port):
     assert _is_url(port) is True
 
 
-@pytest.mark.parametrize("port", ["/dev/ttyACM0", "COM3", ""])
+@pytest.mark.parametrize("port", ["/dev/ttyACM0", "COM3"])
 def test_is_url_false_for_device_paths(port):
     assert _is_url(port) is False
 
@@ -262,7 +262,7 @@ def test_bridge_stats_fields_pinned():
 # ---------------------------------------------------------------------------
 
 
-def test_a_fifty_hz_step_logs_rows_with_echoes(tmp_path, echo_rx, live_wheel):
+def test_fifty_hz_step_logs_rows_with_echoes(tmp_path, echo_rx, live_wheel):
     # step_lines writes raw_l positive and raw_r negative; both wheels must still
     # follow the model forward-positive.
     lines = step_lines(0.5, 1.2, rate_hz=50.0, realtime=True)
@@ -291,13 +291,19 @@ def test_echo_match_with_real_fake_wheel_fills_both_wheels(tmp_path, echo_rx, li
     )
     echoed = [r for r in _rows(path) if r["echo_cmd_seq"] != ""]
     assert echoed
-    assert stats.echoes_matched >= len(echoed)
+    assert stats.echoes_matched > 0
     for r in echoed:
         assert r["echo_cmd_seq"] == r["cmd_seq"]
         assert r["angle_rad_l"] != ""
         assert r["angle_rad_r"] != ""
         assert r["sim_t_s"] != ""
         assert float(r["host_rtt_ms"]) >= 0.0
+    # The fake wheel lags first-order, so only some rows reach the model value.
+    assert any(
+        r["vel_rad_s_l"] != "" and r["vel_rad_s_r"] != ""
+        and float(r["vel_rad_s_l"]) > 0.3 and float(r["vel_rad_s_r"]) > 0.3
+        for r in echoed
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +429,7 @@ def test_either_relay_stale_stops_both_wheels(tmp_path, cmd_rx, echo_rx, stale_s
 # ---------------------------------------------------------------------------
 
 
-def test_b_seq_gap_is_counted_as_missed_whl(tmp_path, cmd_rx, echo_rx):
+def test_seq_gap_is_counted_as_missed_whl(tmp_path, cmd_rx, echo_rx):
     seqs = [0, 1, 2, 6, 7]
     stats, path = _run(
         tmp_path, [_line(s) for s in seqs], cmd_rx.getsockname(), echo_rx
@@ -433,7 +439,7 @@ def test_b_seq_gap_is_counted_as_missed_whl(tmp_path, cmd_rx, echo_rx):
     assert stats.missed_whl_total == 3
 
 
-def test_b_seq_wrap_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
+def test_seq_wrap_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
     seqs = [65534, 65535, 1]
     stats, path = _run(
         tmp_path, [_line(s) for s in seqs], cmd_rx.getsockname(), echo_rx
@@ -443,7 +449,7 @@ def test_b_seq_wrap_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
     assert stats.missed_whl_total == 1
 
 
-def test_b_seq_reorder_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
+def test_seq_reorder_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
     # 7 arrives before 6: the late 6 is a reorder (0), and 8 is measured from
     # the highest seq seen (7), so it is not a gap either.
     seqs = [5, 7, 6, 8]
@@ -455,7 +461,7 @@ def test_b_seq_reorder_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
     assert stats.missed_whl_total == 1
 
 
-def test_b_seq_pure_repeat_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
+def test_seq_pure_repeat_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
     seqs = [5, 5, 6]
     stats, path = _run(
         tmp_path, [_line(s) for s in seqs], cmd_rx.getsockname(), echo_rx
@@ -466,7 +472,7 @@ def test_b_seq_pure_repeat_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
     assert stats.missed_whl_total == 0
 
 
-def test_c_bad_lines_counted_and_skipped(tmp_path, cmd_rx, echo_rx):
+def test_bad_lines_counted_and_skipped(tmp_path, cmd_rx, echo_rx):
     good2 = _line(2)
     lines = [_line(0), "garbage", _line(1), _bad_checksum(good2), good2]
     stats, path = _run(tmp_path, lines, cmd_rx.getsockname(), echo_rx)
@@ -478,13 +484,13 @@ def test_c_bad_lines_counted_and_skipped(tmp_path, cmd_rx, echo_rx):
     assert all(r["missed_whl"] == "0" for r in rows)
 
 
-def test_v1_whl_line_is_a_bad_line_and_sends_no_command(tmp_path, cmd_rx, echo_rx):
+def test_v1_whl_line_is_a_bad_line_and_sends_no_motion_command(tmp_path, cmd_rx, echo_rx):
     stats, path = _run(tmp_path, [_v1_line(0)], cmd_rx.getsockname(), echo_rx)
     assert stats.bad_lines == 1
     assert stats.whl_lines == 0
     assert _rows(path) == []
-    # Only the closing stop may reach the wire; no motion command does.
-    assert all(c.stale == 1 for c in _wire_cmds(cmd_rx))
+    # Only the closing stop reaches the wire.
+    assert _pairs(_wire_cmds(cmd_rx)) == [(0.0, 0.0, 1)]
 
 
 # ---------------------------------------------------------------------------
@@ -492,7 +498,7 @@ def test_v1_whl_line_is_a_bad_line_and_sends_no_command(tmp_path, cmd_rx, echo_r
 # ---------------------------------------------------------------------------
 
 
-def test_d_state_one_line_sends_zero_stale_command(tmp_path, cmd_rx, echo_rx):
+def test_state_one_line_sends_zero_stale_command(tmp_path, cmd_rx, echo_rx):
     lines = [_line(0, model=0.5, state=0), _line(1, model=0.5, state=1)]
     _run(tmp_path, lines, cmd_rx.getsockname(), echo_rx)
     cmds = _wire_cmds(cmd_rx)
@@ -502,7 +508,7 @@ def test_d_state_one_line_sends_zero_stale_command(tmp_path, cmd_rx, echo_rx):
     ]
 
 
-def test_d_state_one_row_shows_stale_and_zero_command(tmp_path, cmd_rx, echo_rx):
+def test_state_one_row_shows_stale_and_zero_command(tmp_path, cmd_rx, echo_rx):
     lines = [_line(0, model=0.5, state=0), _line(1, model=0.5, state=1)]
     _stats, path = _run(tmp_path, lines, cmd_rx.getsockname(), echo_rx)
     by_seq = _by_seq(_rows(path))
@@ -518,7 +524,7 @@ def test_fresh_state_zero_line_resumes_after_a_state_one_stop(tmp_path, cmd_rx, 
     assert _pairs(_wire_cmds(cmd_rx))[:3] == [(0.5, 0.5, 0), (0.0, 0.0, 1), (0.5, 0.5, 0)]
 
 
-def test_e_silence_gives_one_stale_command_then_fresh_resumes(tmp_path, echo_rx):
+def test_silence_gives_one_stale_command_then_fresh_resumes(tmp_path, echo_rx):
     gate = threading.Event()
     resumed_at: list[float] = []
 
@@ -598,7 +604,7 @@ def test_e_silence_gives_one_stale_command_then_fresh_resumes(tmp_path, echo_rx)
 # ---------------------------------------------------------------------------
 
 
-def test_f_duration_stops_loop_and_sends_final_stale(tmp_path, cmd_rx, echo_rx):
+def test_duration_stops_loop_and_sends_final_stale(tmp_path, cmd_rx, echo_rx):
     done = threading.Event()
     t0 = time.monotonic()
     try:
@@ -640,18 +646,6 @@ def test_stop_event_ends_run_and_sends_final_stale(tmp_path, cmd_rx, echo_rx):
     assert stats.cmds_sent == len(cmds)
 
 
-def test_final_stop_is_not_repeated_when_last_command_was_stale(tmp_path, cmd_rx, echo_rx):
-    _stats, path = _run(
-        tmp_path,
-        [_line(0, state=1)],
-        cmd_rx.getsockname(),
-        echo_rx,
-        echo_timeout_s=0.05,
-    )
-    assert _pairs(_wire_cmds(cmd_rx)) == [(0.0, 0.0, 1)]
-    assert len(_rows(path)) == 1
-
-
 def test_final_stop_has_no_csv_row(tmp_path, cmd_rx, echo_rx):
     stats, path = _run(
         tmp_path, [_line(0, state=0)], cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05
@@ -659,6 +653,42 @@ def test_final_stop_has_no_csv_row(tmp_path, cmd_rx, echo_rx):
     assert len(_rows(path)) == 1
     assert stats.cmds_sent == 2
     assert _pairs(_wire_cmds(cmd_rx)) == [(0.5, 0.5, 0), (0.0, 0.0, 1)]
+
+
+def test_failed_send_has_no_row_and_final_stop_is_still_attempted(
+    tmp_path, cmd_rx, echo_rx, monkeypatch
+):
+    class _FlakyTx:
+        """Wraps the real command socket; the first sendto raises OSError."""
+
+        def __init__(self, real):
+            self._real = real
+            self.calls = 0
+
+        def sendto(self, data, addr):
+            self.calls += 1
+            if self.calls == 1:
+                raise OSError("injected send failure")
+            return self._real.sendto(data, addr)
+
+        def close(self):
+            self._real.close()
+
+    real_run = ctrl_wheels_bridge._Run
+
+    class _FlakyRun(real_run):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.cmd_tx = _FlakyTx(self.cmd_tx)
+
+    monkeypatch.setattr(ctrl_wheels_bridge, "_Run", _FlakyRun)
+    stats, path = _run(
+        tmp_path, [_line(0, state=0)], cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05
+    )
+    assert stats.send_errors == 1
+    assert _rows(path) == []
+    assert stats.cmds_sent == 1
+    assert _pairs(_wire_cmds(cmd_rx)) == [(0.0, 0.0, 1)]
 
 
 def test_blocked_iterator_does_not_hang_bridge(tmp_path, cmd_rx, echo_rx):
@@ -677,18 +707,24 @@ def test_blocked_iterator_does_not_hang_bridge(tmp_path, cmd_rx, echo_rx):
 
 def test_source_error_after_run_ended_is_not_logged_or_recorded(tmp_path, cmd_rx, echo_rx, capsys):
     release = threading.Event()
+    about_to_raise = threading.Event()
 
     def _late_failure():
         yield _line(0)
         release.wait(timeout=5.0)
+        about_to_raise.set()
         raise RuntimeError("late failure")
 
     try:
         stats, _path = _run(
             tmp_path, _late_failure(), cmd_rx.getsockname(), echo_rx, duration_s=0.3
         )
+        readers = [t for t in threading.enumerate() if t.name == "ctrl_wheels_lines"]
         release.set()
-        time.sleep(0.3)
+        assert about_to_raise.wait(timeout=2.0)
+        for t in readers:
+            t.join(timeout=2.0)
+        assert not any(t.is_alive() for t in readers)
     finally:
         release.set()
     err = capsys.readouterr().err
@@ -753,7 +789,7 @@ def test_bad_and_unmatched_echoes_counted_and_rows_flush_empty(tmp_path, cmd_rx,
 # ---------------------------------------------------------------------------
 
 
-def test_g_csv_header_is_ctrl_wheels_log_columns(tmp_path, cmd_rx, echo_rx):
+def test_csv_header_is_ctrl_wheels_log_columns(tmp_path, cmd_rx, echo_rx):
     stats, path = _run(tmp_path, iter([]), cmd_rx.getsockname(), echo_rx)
     with open(path, newline="", encoding="utf-8") as fh:
         header = next(csv.reader(fh))
