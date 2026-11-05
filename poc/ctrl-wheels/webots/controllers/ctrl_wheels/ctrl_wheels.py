@@ -40,8 +40,7 @@ Only the Webots-specific import is `controller`; the sensor maths lives in
 sensor_read.py so it stays importable outside Webots.
 
 Device names (must match the twin world ctrl_wheels.wbt, case-sensitive, #510).
-The worktree used for this change does not contain that world file, so the names
-are NOT CHECKED against it:
+The names below match webots/worlds/ctrl_wheels.wbt:
     RotationalMotor: "wheel_motor_left", "wheel_motor_right"
     PositionSensor:  "wheel_sensor_left", "wheel_sensor_right"
 """

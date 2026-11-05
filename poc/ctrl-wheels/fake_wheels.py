@@ -4,9 +4,8 @@ Headless twin fake of the Webots ctrl_wheels controller.
 
 SIM ONLY. Headless stand-in for the twin Webots controller at
 poc/ctrl-wheels/webots/controllers/ctrl_wheels/ctrl_wheels.py, which is the real
-counterpart. Per the header of ctrl_wheels_udp.py, that controller may still
-speak the v1 wire format until its v2 version lands; this fake speaks v2 only,
-and no run against the real controller is claimed. This file
+counterpart. The controller and this fake both speak the v2 wire format
+(ctrl_wheels_udp.py); no run of this fake against the real controller is claimed. This file
 is not a Webots model and makes no physics claim. The wheel sign convention is
 UNCONFIRMED (CONTRACT.md S2) and the fake applies each wheel's command as given,
 so any sign belongs to the bridge. The model values (tau, dt, clamp, stale
