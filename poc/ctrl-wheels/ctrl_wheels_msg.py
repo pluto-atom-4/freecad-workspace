@@ -6,10 +6,11 @@ splits into, and a step-input generator (step_lines) that yields WHL2 lines via
 format_whl2 (Whl and format_whl are kept for the bridge tests).
 
 SIM ONLY. This is a sim-only twin. Nothing here is validated on real hardware
-or against a real receiver. The sign conventions are UNCONFIRMED: the planned
-firmware writes rawR already negated (chip side), the Webots mirror of the two
-wheels is UNVERIFIED, and "forward-positive" for model is the contract's
-definition only (CONTRACT.md S2 in this directory).
+or against a real receiver. The sign conventions are UNCONFIRMED: the Webots net
+direction at +1/+1 is owner-observed (2026-11-06, sim only), the chip-side
+rawR negation is UNCONFIRMED (the planned firmware writes rawR already
+negated), and "forward-positive" for model is the contract's definition
+only (CONTRACT.md S2 in this directory).
 
 Line format of the twin (WHL2, ASCII, one line per sample, CONTRACT.md S1):
     WHL2,<seq>,<t_us>,<model %.6f>,<rawL>,<rawR>,<state>*<HH>\\n

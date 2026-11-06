@@ -4,7 +4,7 @@ ctrl-wheels relay (issue FW #450): holds the latest WHL sample and decides
 what wheel velocity to pass on, with a stale and hold rule.
 
 SIM ONLY. This relay is not a control loop and makes no balance claim.
-The sign convention is UNVERIFIED. The stale rule uses the host wall clock
+The Webots-side default +1/+1 is owner-observed (2026-11-06, sim only); the chip-side sign convention is UNCONFIRMED. The stale rule uses the host wall clock
 (time.monotonic by default, injected in tests), not the device t_us.
 
 Rules (pure logic, no sockets, no threads, no sleeping):

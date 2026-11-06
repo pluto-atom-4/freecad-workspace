@@ -14,9 +14,10 @@ Golden origin: the accept and reject lines below are copied as literals from
 CONTRACT.md S7 (poc/ctrl-wheels). The "-0 model" case uses the real float
 -0.0. Expected values are never taken from the implementation.
 
-Signs are UNCONFIRMED: the rawR negation on the chip side, the Webots mirror
-and the forward-positive model definition (CONTRACT.md S2). Nothing here is
-validated on real hardware.
+Signs are UNCONFIRMED: the rawR negation on the chip side, the Webots-side
++1/+1 direction owner-observed (2026-11-06, sim only; chip-side signs
+UNCONFIRMED) and the forward-positive model definition (CONTRACT.md S2).
+Nothing here is validated on real hardware.
 
 The reverse-direction reject ("WHL2 line against the single-wheel WHL v1
 parser") is planned in the BRC and FW follow-up. It is not tested in this

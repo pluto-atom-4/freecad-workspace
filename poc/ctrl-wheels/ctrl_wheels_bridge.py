@@ -52,7 +52,7 @@ An unreachable URL with --duration returns 2 on purpose: nothing was ever opened
 run is a failed source, not a clean finish.
 
 SIM ONLY. The bridge is a relay, not a control loop, and makes no balance claim.
-The wheel signs are UNVERIFIED; they are flipped only through the Relay sign argument,
+The Webots-side default +1/+1 gave both wheels rolling toward +x in an owner-observed Webots run (2026-11-06, sim only); the chip-side signs are UNCONFIRMED. The signs are flipped only through the Relay sign argument,
 which the CLI exposes as --sign-left and --sign-right (the only sign flips in the CLI).
 Latency is UNMEASURED: host_rtt_ms is wall time, not link latency.
 
@@ -610,8 +610,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Relay WHL2 lines from a serial port or stdin to the ctrl_wheels stand-in over UDP "
-            "and log one CSV row per WHL2 line (plus one per silence episode). SIM ONLY. Sign UNVERIFIED, latency UNMEASURED, "
-            "no balance claim. pyserial is imported at module load, so it is needed even "
+            "and log one CSV row per WHL2 line (plus one per silence episode). SIM ONLY. "
+            "Webots +1/+1 direction owner-observed (2026-11-06), chip-side sign UNCONFIRMED, "
+            "latency UNMEASURED, no balance claim. pyserial is imported at module load, so it is needed even "
             "for --stdin."),
         epilog=(
             "examples:\n"
@@ -640,12 +641,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--sign-left", type=int, choices=(1, -1), default=1,
         help="Webots-side sign, 1 or -1 (default 1), applied to the model value for the left "
-             "wheel (Relay). UNVERIFIED. Not the chip raw sign of the generator "
+             "wheel (Relay). Default +1/+1 owner-observed in Webots 2026-11-06 (sim only); --sign-right -1 gave erratic velocities in that run, cause not investigated. Not the chip raw sign of the generator "
              "ctrl_wheels_msg (its --sign-left/--sign-right default +1/-1)")
     parser.add_argument(
         "--sign-right", type=int, choices=(1, -1), default=1,
         help="Webots-side sign, 1 or -1 (default 1), applied to the model value for the right "
-             "wheel (Relay). UNVERIFIED. Not the chip raw sign of the generator "
+             "wheel (Relay). Default +1/+1 owner-observed in Webots 2026-11-06 (sim only); --sign-right -1 gave erratic velocities in that run, cause not investigated. Not the chip raw sign of the generator "
              "ctrl_wheels_msg (its --sign-left/--sign-right default +1/-1)")
     parser.add_argument(
         "--duration", type=_positive_finite, default=None, metavar="SECONDS",

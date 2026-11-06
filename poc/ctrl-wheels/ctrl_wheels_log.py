@@ -2,8 +2,9 @@
 CSV log writer for the ctrl-wheels twin-wheel proof of concept (freecad-workspace
 #494, task F10, under umbrella FW #482). Contract: poc/ctrl-wheels/CONTRACT.md, S6.
 
-SIM ONLY. Not hardware-validated. All signs are UNCONFIRMED (chip-side mirror,
-bridge sign and Webots sign). Latency UNMEASURED.
+SIM ONLY. Not hardware-validated. Chip-side signs UNCONFIRMED; the
+bridge/Webots default +1/+1 net direction was owner-observed 2026-11-06
+(sim only). Latency UNMEASURED.
 
 One row per host tick, 19 columns. Columns are fixed by COLUMNS and written in
 that order, whatever the key order of the input mapping. A row is fully
