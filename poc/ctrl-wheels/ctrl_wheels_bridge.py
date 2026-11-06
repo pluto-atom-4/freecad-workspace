@@ -13,14 +13,25 @@ together). That stop is not a latch: a fresh state-0 line resumes. Each wheel is
 clamped to +-3.0 silently. A line that is not WHL2 is a bad line.
 
 Sequence rule (F22). A forward step (seq gap below half the 16-bit range, and the t_us
-step fits it: at most 40 ms per missed frame plus 1 s slack) counts its gap as missed_whl.
-A seq that goes back (gap at or above half) while t_us goes back by less than 1 s is a
-repeat or reorder: missed 0, and the baseline stays at the highest seq seen. Anything else
-is a firmware restart: missed 0, stats.restarts +1, one log line, and the baseline moves to
-the new seq and t_us. Known limits: a real outage longer than about 1 s plus 40 ms per
-missed frame is read as a restart; a restart whose first t_us is within 1 s of the old one
-and whose seq goes back is read as a reorder. The constants _RESTART_BACK_US, _FWD_SLACK_US
-and _FRAME_US_MAX are unmeasured guesses for the 50 Hz firmware.
+step is at most (missed + 1) x 40 ms plus 1 s) counts its gap as missed_whl. A seq that
+goes back (gap at or above half) while t_us goes back by less than 1 s is a repeat or
+reorder: missed 0, and the baseline stays at the highest seq seen. Anything else is a
+firmware restart: missed 0, stats.restarts +1, one log line, and the baseline moves to the
+new seq and t_us. Known limits (thresholds: _REORDER_BACK_US, _FWD_SLACK_US, _FRAME_US_MAX):
+(i) a seq that goes back while t_us goes forward is read as a restart (both counters are
+monotonic in the firmware);
+(ii) a restart whose first t_us is within 1 s BELOW the old t_us is read as a reorder (a
+restart whose t_us is above the old one is a restart);
+(iii) a reorder that is read as a restart is only noticed when t_us passes the old baseline;
+(iv) a LATE frame more than 1 s of t_us behind the baseline, after a forward jump of 1 s or
+more, is read as a restart and the next live frame then adds a false missed count (example:
+frames 0..100, then seq 161 at +1.2 s, then the late seq 100: one false restart and a false
+61 missed); this edge is accepted because the firmware stream is in order (only a replay or
+relay could reorder), and a stricter rule (second consecutive line before accepting a
+restart) was left out;
+(v) a real outage longer than (missed + 1) x 40 ms plus 1 s is logged as a restart and its
+missed frames are not counted (accepted for the sim CSV);
+(vi) all thresholds are unmeasured guesses for the 50 Hz firmware.
 
 Command line: build_parser() and main(argv) -> int. Run from poc/ctrl-wheels:
     python3 -m ctrl_wheels_msg --step 0.5 --seconds 5 | python3 ctrl_wheels_bridge.py --stdin --record ac1.csv
@@ -63,7 +74,7 @@ from dataclasses import dataclass, fields
 import serial
 
 from ctrl_wheels_log import CsvLog
-from ctrl_wheels_msg import SEQ_MOD, WhlError, parse_line, split
+from ctrl_wheels_msg import SEQ_MOD, T_US_MAX, WhlError, parse_line, split
 from ctrl_wheels_relay import POLL_S, Relay
 from ctrl_wheels_udp import (
     PORT_CMD,
@@ -82,8 +93,8 @@ _RECONNECT_DELAY_S = 1.0
 _WAIT_HEARTBEAT_S = 10.0
 _URL_WAIT_CAP_S = 300.0
 _SEQ_HALF = SEQ_MOD // 2
-# Restart rule (F22). Unmeasured guesses for the 50 Hz firmware; see the module docstring.
-_RESTART_BACK_US = 1_000_000  # t_us stepping back by less than this is a repeat or reorder
+# Restart rule (F22). All three are unmeasured guesses for the 50 Hz firmware; see the module docstring.
+_REORDER_BACK_US = 1_000_000  # a seq going back with t_us stepping back by less than this is a repeat or reorder
 _FWD_SLACK_US = 1_000_000  # extra t_us allowed on a forward step, on top of the frame period
 _FRAME_US_MAX = 40_000  # largest expected t_us step per frame
 
@@ -346,14 +357,14 @@ class _Run:
             self.last_whl_t_us = w2.t_us
         else:
             gap = (w2.seq - self.last_whl_seq - 1) % SEQ_MOD
-            dt = (w2.t_us - self.last_whl_t_us) % 2**32
-            back = (self.last_whl_t_us - w2.t_us) % 2**32
+            dt = (w2.t_us - self.last_whl_t_us) % (T_US_MAX + 1)
+            back = (self.last_whl_t_us - w2.t_us) % (T_US_MAX + 1)
             if gap < _SEQ_HALF and dt <= (gap + 1) * _FRAME_US_MAX + _FWD_SLACK_US:
                 # forward: count the gap and move on
                 missed = gap
                 self.last_whl_seq = w2.seq
                 self.last_whl_t_us = w2.t_us
-            elif gap >= _SEQ_HALF and back < _RESTART_BACK_US:
+            elif gap >= _SEQ_HALF and back < _REORDER_BACK_US:
                 pass  # repeat or reorder: not a gap; the baseline keeps the highest seq and its t_us
             else:
                 self.stats.restarts += 1
