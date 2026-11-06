@@ -79,7 +79,7 @@ There are three sign places. They are independent, and nothing proves that they 
 2. Webots side (bridge): `--sign-left` and `--sign-right`, default +1 each, applied to the model value before the +-3.0 clamp. The raw columns of the line never reach the command; the bridge sends the model only.
 3. Webots controller: `SIGN_LEFT = 1` and `SIGN_RIGHT = 1`, fixed constants in `ctrl_wheels.py`.
 
-Flip one side only, and in one place. A bridge flip and a controller flip on the same wheel would cancel each other (the controller's own comment says so). The Webots defaults of +1/+1 follow the intended world design. The owner observed in the Webots 3D view (2026-11-06, sim only) that with +1/+1 a positive command turns both wheels about world +y in the same sense and they roll toward +x (viewed from each wheel's outside they look opposite; viewed from one side, same sense). CSVs sign_pos.csv and sign_neg.csv (owner-local, not committed) show both wheel sensors +1.000/+1.000 and -1.000/-1.000, angle change about +9.45 and -9.47 rad over about 9.5 s of sim time. A run with `--sign-right -1` (commands +1/-1) gave erratic wheel velocities up to about 20 rad/s, above the 3.5 rad/s motor limit: physics instability, cause not investigated, not a recommended setting. Chip-side signs (rawL=+raw, rawR=-raw) stay UNCONFIRMED.
+Flip one side only, and in one place. A bridge flip and a controller flip on the same wheel would cancel each other (the controller's own comment says so). The Webots defaults of +1/+1 follow the intended world design. The owner observed in the Webots 3D view (2026-11-06, sim only) that with +1/+1 a positive command turns both wheels about world +y in the same sense and they roll toward +x (viewed from each wheel's outside they look opposite; viewed from one side, same sense). CSVs sign_pos.csv (positive command run) and sign_neg.csv (negative command run, both signs +1; not the `--sign-right -1` run) (owner-local, not committed) show both wheel sensors +1.000/+1.000 and -1.000/-1.000, angle change about +9.45 and -9.47 rad over about 9.5 s of sim time. A run with `--sign-right -1` (commands +1/-1) gave erratic wheel velocities up to about 20 rad/s, above the 3.5 rad/s motor limit: physics instability, cause not investigated, not a recommended setting. Chip-side signs (rawL=+raw, rawR=-raw) stay UNCONFIRMED.
 
 The only sign flags are `--sign-left` and `--sign-right`. No unsuffixed sign option exists in any CLI here.
 
@@ -148,13 +148,13 @@ Exit codes: 0 when the run finishes (EOF, duration or Ctrl-C during the run). A 
 ## Notes
 
 - Firmware text on the serial stream: any line that is not WHL2 fails `parse_line`, is counted in `bad_lines` and does not stop the run. Such lines carry no WHL2 fields, so the count is benign.
-- Firmware restart (code and unit tests only, not run in the simulator): the bridge detects a firmware restart from WHL2 `seq` and `t_us` (PR #523, merged). Rule, with `gap = (seq - last_seq - 1) mod 65536` and `dt = (t_us - last_t_us) mod 2^32`:
+- Firmware restart (code and unit tests only, not run in the simulator; the full `poc/ctrl-wheels` pytest run by the main session at the merge commit's parent 070a8ac gave 865 passed, 10 skipped): the bridge detects a firmware restart from WHL2 `seq` and `t_us` (PR #523, merged). Rule, with `gap = (seq - last_seq - 1) mod 65536` and `dt = (t_us - last_t_us) mod 2^32`:
   - Forward step, when `gap < 32768` and `dt <= (gap + 1) * 40 ms + 1 s`: `gap` is counted in `missed_whl`.
   - Repeat or reorder, when `gap >= 32768` and `t_us` went back by less than 1 s: missed 0, baseline stays at the highest seq.
-  - Anything else is a restart: missed 0, the new `BridgeStats` field `restarts` (last field of the stderr summary line) goes up by 1, one stderr log line is written, and the baseline moves to the new seq and `t_us`.
+  - Anything else is a restart: missed 0, the new `BridgeStats` field `restarts` (the last `BridgeStats` field; in the stderr summary line it comes just before `send_errors`) goes up by 1, one stderr log line is written, and the baseline moves to the new seq and `t_us`.
   - The CSV is unchanged (19 columns).
   - The thresholds (40 ms frame, 1 s slack, 1 s reorder) are UNMEASURED guesses for the 50 Hz firmware.
-  - Known limits, one line each, detailed in the module docstring of `ctrl_wheels_bridge.py` under "limits (i)-(vi)":
+  - Known limits, one line each, detailed in the module docstring of `ctrl_wheels_bridge.py` (the list "Known limits", items (i) to (vi)):
     - (i) `seq` goes back while `t_us` goes forward: read as a restart.
     - (ii) a restart whose new seq is 0..32767 behind the baseline, with first `t_us` within 1 s below the old one, is read as a reorder.
     - (iii) that case is noticed only when `t_us` or `seq` passes the old baseline, within about 1 s of lines; missed stays 0 meanwhile.
