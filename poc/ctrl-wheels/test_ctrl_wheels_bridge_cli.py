@@ -10,7 +10,7 @@ CLI contract pinned here:
     --cmd-port N (default 5018); --echo-port N (default 5017);
     --baud N (default 115200); --echo-timeout SECONDS (default 0.5).
 --sign alone is refused: it is an ambiguous prefix of --sign-left and --sign-right.
---sign-left and --sign-right are Webots-side signs applied to the model velocity
+--sign-left and --sign-right are bridge-side signs applied to the model velocity
 (Relay sign). They are not the chip raw signs of the generator ctrl_wheels_msg
 (--sign-left/--sign-right there default +1/-1). The bridge ignores the raw columns.
 The CLI never latches: a fresh state-0 line resumes after a stop.
@@ -22,7 +22,7 @@ Ports: 5005-5008, 5017 and 5018 are never bound by a test. The CLI refuses only
 ephemeral (bound to port 0, read back, closed). Refusal tests pass fixed
 non-reserved numbers because usage errors happen before any socket is bound.
 
-SIM ONLY. The sign convention and the model values are UNVERIFIED. Nothing
+SIM ONLY. net direction with the bridge and Webots signs at +1/+1 owner-observed (2026-11-06, sim only); chip-side signs UNCONFIRMED; the model values are UNVERIFIED. Nothing
 here validates a real wheel, a balance loop or a serial device.
 
 Usage (run from poc/ctrl-wheels):
@@ -469,8 +469,9 @@ def test_stdin_end_to_end_logs_rows_and_summary(tmp_path, monkeypatch, capsys):
 @pytest.mark.parametrize("sign_right", [1, -1])
 @pytest.mark.parametrize("sign_left", [1, -1])
 def test_sign_flags_flip_each_echoed_wheel_velocity(tmp_path, pipe_stdin, sign_left, sign_right):
-    """--sign-left/--sign-right are Webots-side signs on the model velocity, SIM ONLY and
-    UNVERIFIED. The input uses the generator's default raws (+1 left, -1 right); the bridge
+    """--sign-left/--sign-right are bridge-side signs on the model velocity, SIM ONLY.
+    Chip-side signs UNCONFIRMED; net direction at +1/+1 owner-observed. The input uses the
+    generator's default raws (+1 left, -1 right); the bridge
     ignores raw, so each echoed wheel follows its own sign flag alone."""
     record = tmp_path / "sign.csv"
     cmd_port, echo_port = _two_free_ports()

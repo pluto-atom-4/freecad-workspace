@@ -3,7 +3,7 @@
 Unit tests for the ctrl-wheels CSV log writer (ctrl_wheels_log), task F09
 (freecad-workspace #493, umbrella #482).
 
-SIM ONLY. Not hardware-validated. The sign convention is UNVERIFIED.
+SIM ONLY. Not hardware-validated. Chip-side signs UNCONFIRMED; Webots +1/+1 owner-observed (2026-11-06, sim only).
 
 This suite pins contract S6 of poc/ctrl-wheels/CONTRACT.md for ctrl_wheels_log:
 the 19-column tuple, the column docs, the cell formatting rules (int columns,

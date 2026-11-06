@@ -3,8 +3,10 @@
 ctrl_wheels -- Webots controller for the twin-wheel ctrl-wheels relay simulation.
 
 SIM ONLY. Nothing here is validated on hardware, and it makes no balance claim.
-The sign of each wheel against the firmware is UNVERIFIED. This file has not been
-run in Webots by its author; runtime behaviour in Webots is NOT CHECKED.
+Webots side: with SIGN_LEFT/SIGN_RIGHT +1/+1 and the bridge signs +1/+1 the net
+direction was owner-observed (2026-11-06, sim only). The sign of each wheel against
+the firmware (chip side) is UNCONFIRMED. Beyond that direction check, runtime
+behaviour in Webots is NOT CHECKED.
 
 Webots controller for the twin-wheel ctrl-wheels simulation. It speaks the v2 wire
 format of poc/ctrl-wheels/CONTRACT.md (sections S3 and S4).
@@ -68,8 +70,10 @@ TAG = "ctrl_wheels"
 PROTOCOL_VERSION = 2  # the "v" value of both the command and the echo (CONTRACT.md S3)
 CLAMP_RAD_S = 3.0  # UNVERIFIED: symmetric clamp applied to each commanded wheel velocity
 STALE_SIM_S = 0.2  # simulated seconds without a fresh valid command before both wheels stop
-# UNVERIFIED sign for each wheel. The world is intended so that a positive command
-# rolls both wheels forward (discussion 266, world design). The firmware-side mirror
+# Sign per wheel. Observed by the owner (2026-11-06, sim only) with the bridge signs and these
+# constants all +1/+1: a positive command turned both wheels the same sense, rolling toward +x.
+# Only that combined default was observed; the two places were not tested separately. The world
+# design (discussion 266) intends a positive command to roll both wheels forward. The firmware-side mirror
 # for the two servo chips is a separate sign path and is not checked against this.
 # The bridge applies its own per-wheel sign to the model before it sends a command;
 # do not flip the same wheel on both sides, because the two flips would cancel.

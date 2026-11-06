@@ -73,7 +73,8 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
 
 
 class FakeWheel:
-    """SIM ONLY headless twin ctrl_wheels stand-in. UNVERIFIED sign and model values."""
+    """SIM ONLY headless twin ctrl_wheels stand-in. Applies each wheel's command as given; any sign
+    belongs to the bridge. Model values guessed."""
 
     def __init__(
         self,

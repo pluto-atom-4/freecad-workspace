@@ -7,8 +7,9 @@ SIM ONLY. These tests pin the WHL2 step generator (line format, counts, seq and
 t_us counters, raw mapping and clamp, pacing), its sign and state defaults, its
 refusals (WhlError for bad arguments) and the main() option handling.
 
-The signs are UNCONFIRMED. The sign_l=+1 and sign_r=-1 defaults pinned here are
-not verified against hardware or against the Webots world (CONTRACT.md S2).
+The chip raw signs are UNCONFIRMED. The sign_l=+1 and sign_r=-1 defaults pinned
+here are not verified against hardware (CONTRACT.md S2). The Webots +1/+1 direction
+was owner-observed on 2026-11-06 (sim only); this file does not test it.
 
 Expected values are written by hand from the contract and from _raw_for
 (rad/s * 60 / (2 pi) / 0.229, clamped to +-125, then rounded). They are not

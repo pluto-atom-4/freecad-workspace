@@ -1,6 +1,6 @@
 # ctrl-wheels (twin wheel pair)
 
-SIM ONLY. This directory holds the bridge, relay, CSV log, fake wheels and Webots twin for the BRC firmware program `programs/c3_ctrl_wheels` (Wokwi, sim only). The firmware prints a WHL2 line per tick. The bridge reads that line, sends one UDP v2 command (both wheels) to the Webots controller per accepted line, and logs the Webots echo to a CSV. It is a relay, not a closed loop: the firmware receives nothing back. The model value is never mixed with the Webots angle or velocity; the CSV keeps them in separate columns. Not hardware-validated. No balance claim. The Webots-side sign is owner-observed OK (+1/+1, 2026-11-06); the chip-side sign is UNCONFIRMED and latency is UNMEASURED (`host_rtt_ms` is wall time, not link latency).
+SIM ONLY. This directory holds the bridge, relay, CSV log, fake wheels and Webots twin for the BRC firmware program `programs/c3_ctrl_wheels` (Wokwi, sim only). The firmware prints a WHL2 line per tick. The bridge reads that line, sends one UDP v2 command (both wheels) to the Webots controller per accepted line, and logs the Webots echo to a CSV. It is a relay, not a closed loop: the firmware receives nothing back. The model value is never mixed with the Webots angle or velocity; the CSV keeps them in separate columns. Not hardware-validated. No balance claim. The net direction at bridge +1/+1 with Webots +1/+1 is owner-observed (2026-11-06); the chip-side sign is UNCONFIRMED and latency is UNMEASURED (`host_rtt_ms` is wall time, not link latency).
 
 ## Status
 
@@ -20,7 +20,7 @@ Not run:
 
 Open:
 
-- Wheel sign: Webots-side default +1/+1 observed OK by the owner in Webots (2026-11-06, sim only); chip-side signs still UNCONFIRMED (see Sign convention).
+- Wheel sign: bridge and Webots signs at +1/+1 gave an owner-observed net direction in Webots (2026-11-06, sim only); chip-side signs still UNCONFIRMED (see Sign convention).
 - Latency: UNMEASURED. `host_rtt_ms` includes up to one simulation step and one bridge poll.
 
 ## Links
@@ -54,7 +54,7 @@ Open:
 | `test_ctrl_wheels_bridge_cli.py` | Bridge command-line tests (`build_parser`, `main`). |
 | `webots/controllers/ctrl_wheels/ctrl_wheels.py` | Webots controller. Binds 127.0.0.1:5018, keeps the newest valid v2 command and sets both motor velocities with fixed signs of +1. Both wheels stop when no valid command has arrived, when the newest command has stale 1, or when it is 0.2 s of sim time old. Sends one echo per step to 127.0.0.1:5017. |
 | `webots/controllers/ctrl_wheels/sensor_read.py` | Sensor maths (finite angle check, finite-difference velocity). No Webots import. |
-| `webots/worlds/ctrl_wheels.wbt` | Webots world: a fixed body with two hinge wheels, motors `wheel_motor_left` and `wheel_motor_right`, sensors `wheel_sensor_left` and `wheel_sensor_right`. Direction with signs +1/+1: owner-observed OK in Webots (2026-11-06, see Sign convention). Motor limits are on paper or owner-chosen and not checked here. |
+| `webots/worlds/ctrl_wheels.wbt` | Webots world: a fixed body with two hinge wheels, motors `wheel_motor_left` and `wheel_motor_right`, sensors `wheel_sensor_left` and `wheel_sensor_right`. Direction with signs +1/+1: owner-observed OK in Webots (2026-11-06, see Sign convention). Motor limits are owner-chosen for this simulation and not checked here. |
 
 ## Origins
 
@@ -76,7 +76,7 @@ Copied and renamed from `poc/ctrl-wheel` (`ctrl_wheel_*` to `ctrl_wheels_*`, `fa
 There are three sign places. They are independent, and nothing proves that they agree. The chip side is UNCONFIRMED; the Webots side is owner-observed (see below).
 
 1. Chip side (BRC firmware `programs/c3_ctrl_wheels`, sim only, CONTRACT.md S2): `rawL = +raw` and `rawR = -raw`. The WHL2 line carries `rawR` already negated. The generator `python3 -m ctrl_wheels_msg` has `--sign-left` and `--sign-right` defaulting to +1 and -1. Those are the chip raw signs.
-2. Webots side (bridge): `--sign-left` and `--sign-right`, default +1 each, applied to the model value before the +-3.0 clamp. The raw columns of the line never reach the command; the bridge sends the model only.
+2. Bridge side: `--sign-left` and `--sign-right`, default +1 each, applied to the model value before the +-3.0 clamp. The raw columns of the line never reach the command; the bridge sends the model only.
 3. Webots controller: `SIGN_LEFT = 1` and `SIGN_RIGHT = 1`, fixed constants in `ctrl_wheels.py`.
 
 Flip one side only, and in one place. A bridge flip and a controller flip on the same wheel would cancel each other (the controller's own comment says so). The Webots defaults of +1/+1 follow the intended world design. The owner observed in the Webots 3D view (2026-11-06, sim only) that with +1/+1 a positive command turns both wheels about world +y in the same sense and they roll toward +x (viewed from each wheel's outside they look opposite; viewed from one side, same sense). CSVs sign_pos.csv (positive command run) and sign_neg.csv (negative command run, both signs +1; not the `--sign-right -1` run) (owner-local, not committed) show both wheel sensors +1.000/+1.000 and -1.000/-1.000, angle change about +9.45 and -9.47 rad over about 9.5 s of sim time. A run with `--sign-right -1` (commands +1/-1) gave erratic wheel velocities up to about 20 rad/s, above the 3.5 rad/s motor limit: physics instability, cause not investigated, not a recommended setting. Chip-side signs (rawL=+raw, rawR=-raw) stay UNCONFIRMED.
@@ -123,8 +123,8 @@ Bridge flags:
 | `--stdin` | off | Read WHL2 lines from stdin until EOF. |
 | `--record CSV` | required | CSV log path. |
 | `--overwrite` | off | Replace an existing `--record` file. |
-| `--sign-left {1,-1}` | 1 | Webots-side sign on the left model value, applied before the clamp. Default +1 owner-observed OK in Webots 2026-11-06. |
-| `--sign-right {1,-1}` | 1 | Webots-side sign on the right model value, applied before the clamp. Default +1 owner-observed OK in Webots 2026-11-06. |
+| `--sign-left {1,-1}` | 1 | Bridge-side sign on the left model value, applied before the clamp. Net direction with this flag and the Webots constants at +1/+1 owner-observed 2026-11-06 (sim only). |
+| `--sign-right {1,-1}` | 1 | Bridge-side sign on the right model value, applied before the clamp. Net direction with this flag and the Webots constants at +1/+1 owner-observed 2026-11-06 (sim only). |
 | `--duration SECONDS` | run until the source ends | Stop after SECONDS (> 0). |
 | `--cmd-port N` | 5018 | UDP port of the Webots controller for commands. Only 5006 is refused. |
 | `--echo-port N` | 5017 | UDP port the bridge listens on for echoes. Only 5006 is refused. The two ports must differ. |
@@ -165,5 +165,5 @@ Exit codes: 0 when the run finishes (EOF, duration or Ctrl-C during the run). A 
 - Stops are not latches. A state other than 0, or a stale relay, sends 0.0 to both wheels with stale 1. A fresh state-0 line resumes. The bridge's stale rule uses the host clock (200 ms). The Webots controller also stops both wheels after 0.2 s of sim time without a valid command. A Webots pause stops sim time, so that watchdog does not fire during a pause (the controller header, known limit (a)).
 - `unmatched_echoes`: the sibling README expected a non-zero count from the echo cadence. That expectation has not been checked for this twin.
 - CSV empty cells: an empty echo cell means no echo matched that row (`echo_cmd_seq`, `sim_t_s`, the angle and velocity cells, `host_rtt_ms`). `echo_cmd_seq` is also empty when the echo sends a null `cmd_seq_echo`, which is the case before the first command. `vel_rad_s_l` and `vel_rad_s_r` are empty when that wheel's velocity is null, which the controller sends on its first step.
-- Webots world: the direction with signs +1/+1 is owner-observed OK (2026-11-06, see Sign convention). The motor limits (`maxVelocity 3.5`, `maxTorque 1e-3`) are on paper or owner-chosen, per the world header, and were not checked here.
+- Webots world: the direction with signs +1/+1 is owner-observed OK (2026-11-06, see Sign convention). The motor limits (`maxVelocity 3.5`, `maxTorque 1e-3`) are owner-chosen for this simulation, per the world header, and were not checked here.
 - Sim only. Not hardware-validated.
