@@ -664,6 +664,37 @@ def test_seq_back_with_t_us_forward_is_a_restart(tmp_path, cmd_rx, echo_rx):
     assert stats.restarts == 1
 
 
+def test_restart_within_1s_below_old_t_us_is_read_as_reorder_until_t_passes(tmp_path, cmd_rx, echo_rx):
+    # Pins known limits (ii) and (iii): a restart to a seq 1..32768 behind the baseline whose t_us is
+    # within 1 s BELOW the old one is read as a reorder (no restart yet); the next line, whose t_us is
+    # ABOVE the old baseline, is then read as the restart. Both lines count missed 0.
+    stats, path = _run(
+        tmp_path,
+        [_line(100, t_us=2_000_000), _line(0, t_us=1_990_000), _line(1, t_us=2_010_000)],
+        cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05,
+    )
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[0]["missed_whl"]) == 0
+    assert int(by_seq[1]["missed_whl"]) == 0
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 1
+
+
+def test_restart_from_high_old_seq_with_t_us_slightly_below_is_still_a_restart(tmp_path, cmd_rx, echo_rx):
+    # Known limit (ii): the reorder reading needs the new seq to be 1..32768 behind the baseline. From
+    # a high old seq (50000 -> 0 looks like a forward wrap, gap 15535) the t_us step fails the forward
+    # bound, so it is a restart at once even though t_us is only 0.5 s below.
+    stats, path = _run(
+        tmp_path,
+        [_line(50000, t_us=1_000_000_000), _line(0, t_us=999_500_000)],
+        cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05,
+    )
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[0]["missed_whl"]) == 0
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 1
+
+
 def test_late_frame_after_forward_jump_is_a_known_false_restart(tmp_path, cmd_rx, echo_rx):
     # Pins a KNOWN LIMIT (bridge docstring, known limit iv), not a goal. A late frame more than 1 s
     # behind the baseline, after a forward jump, is read as a restart; the next live frame then
