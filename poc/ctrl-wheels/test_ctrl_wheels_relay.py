@@ -3,8 +3,7 @@
 Unit tests for the ctrl-wheels relay (ctrl_wheels_relay), issue FW #450.
 
 The module under test is the flat module ctrl_wheels_relay in poc/ctrl-wheels.
-Every test uses an injected fake clock, never real time. SIM ONLY. Webots-side
-+1/+1 direction owner-observed (2026-11-06, sim only); chip-side signs
+Every test uses an injected fake clock, never real time. SIM ONLY. net direction with the bridge and Webots signs at +1/+1 owner-observed (2026-11-06, sim only); chip-side signs
 UNCONFIRMED.
 
 Usage:

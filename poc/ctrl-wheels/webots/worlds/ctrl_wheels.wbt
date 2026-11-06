@@ -26,7 +26,7 @@
 # -x relative to the centre, so a free-rolling wheel with positive angular velocity moves toward +x.
 # Both wheels use the same sign, so a positive command rolls BOTH wheels toward +x. The single-wheel
 # world (ctrl_wheel.wbt, rotation +90 degrees) rolls toward -x. This twin differs on purpose.
-# Observed: both wheels rolled toward +x at +1/+1 (wheel sensors +1/+1 for a positive command, -1/-1 for a negative one). Chip-side signs stay UNCONFIRMED.
+# Observed: both wheels rolled toward +x at +1/+1 (wheel sensors +1/+1 for a positive command, -1/-1 for a negative one, from owner-local CSVs that are not committed). Chip-side signs stay UNCONFIRMED.
 #
 # Motor limits (both wheels, owner-chosen for this simulation, NOT servo specs). The maximum velocity
 # of 3.5 rad/s is above the wheel command clamp of 3.0 rad/s, so it does not limit a command. The clamp

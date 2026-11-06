@@ -1,6 +1,6 @@
 # ctrl-wheels (twin wheel pair)
 
-SIM ONLY. This directory holds the bridge, relay, CSV log, fake wheels and Webots twin for the BRC firmware program `programs/c3_ctrl_wheels` (Wokwi, sim only). The firmware prints a WHL2 line per tick. The bridge reads that line, sends one UDP v2 command (both wheels) to the Webots controller per accepted line, and logs the Webots echo to a CSV. It is a relay, not a closed loop: the firmware receives nothing back. The model value is never mixed with the Webots angle or velocity; the CSV keeps them in separate columns. Not hardware-validated. No balance claim. The Webots-side sign is owner-observed OK (+1/+1, 2026-11-06); the chip-side sign is UNCONFIRMED and latency is UNMEASURED (`host_rtt_ms` is wall time, not link latency).
+SIM ONLY. This directory holds the bridge, relay, CSV log, fake wheels and Webots twin for the BRC firmware program `programs/c3_ctrl_wheels` (Wokwi, sim only). The firmware prints a WHL2 line per tick. The bridge reads that line, sends one UDP v2 command (both wheels) to the Webots controller per accepted line, and logs the Webots echo to a CSV. It is a relay, not a closed loop: the firmware receives nothing back. The model value is never mixed with the Webots angle or velocity; the CSV keeps them in separate columns. Not hardware-validated. No balance claim. The net direction at bridge +1/+1 with Webots +1/+1 is owner-observed (2026-11-06); the chip-side sign is UNCONFIRMED and latency is UNMEASURED (`host_rtt_ms` is wall time, not link latency).
 
 ## Status
 
@@ -20,7 +20,7 @@ Not run:
 
 Open:
 
-- Wheel sign: Webots-side default +1/+1 observed OK by the owner in Webots (2026-11-06, sim only); chip-side signs still UNCONFIRMED (see Sign convention).
+- Wheel sign: bridge and Webots signs at +1/+1 gave an owner-observed net direction in Webots (2026-11-06, sim only); chip-side signs still UNCONFIRMED (see Sign convention).
 - Latency: UNMEASURED. `host_rtt_ms` includes up to one simulation step and one bridge poll.
 
 ## Links
@@ -123,8 +123,8 @@ Bridge flags:
 | `--stdin` | off | Read WHL2 lines from stdin until EOF. |
 | `--record CSV` | required | CSV log path. |
 | `--overwrite` | off | Replace an existing `--record` file. |
-| `--sign-left {1,-1}` | 1 | Webots-side sign on the left model value, applied before the clamp. Default +1 owner-observed OK in Webots 2026-11-06. |
-| `--sign-right {1,-1}` | 1 | Webots-side sign on the right model value, applied before the clamp. Default +1 owner-observed OK in Webots 2026-11-06. |
+| `--sign-left {1,-1}` | 1 | Webots-side sign on the left model value, applied before the clamp. Net direction with this flag and the Webots constants at +1/+1 owner-observed 2026-11-06 (sim only). |
+| `--sign-right {1,-1}` | 1 | Webots-side sign on the right model value, applied before the clamp. Net direction with this flag and the Webots constants at +1/+1 owner-observed 2026-11-06 (sim only). |
 | `--duration SECONDS` | run until the source ends | Stop after SECONDS (> 0). |
 | `--cmd-port N` | 5018 | UDP port of the Webots controller for commands. Only 5006 is refused. |
 | `--echo-port N` | 5017 | UDP port the bridge listens on for echoes. Only 5006 is refused. The two ports must differ. |

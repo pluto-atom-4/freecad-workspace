@@ -14,8 +14,7 @@ Golden origin: the accept and reject lines below are copied as literals from
 CONTRACT.md S7 (poc/ctrl-wheels). The "-0 model" case uses the real float
 -0.0. Expected values are never taken from the implementation.
 
-Signs are UNCONFIRMED: the rawR negation on the chip side, the Webots-side
-+1/+1 direction owner-observed (2026-11-06, sim only; chip-side signs
+Signs are UNCONFIRMED: the rawR negation on the chip side, the net direction with the bridge and Webots signs at +1/+1 owner-observed (2026-11-06, sim only; chip-side signs
 UNCONFIRMED) and the forward-positive model definition (CONTRACT.md S2).
 Nothing here is validated on real hardware.
 

@@ -6,7 +6,7 @@ decoders, a loopback listener and a non-blocking drain helper.
 Sim-only twin of the single-wheel module. One command carries the speeds of two
 wheels (left and right). The sim side echoes both wheels' angle and velocity.
 
-SIM ONLY. Webots-side +1/+1 direction owner-observed (2026-11-06, sim only); chip-side signs UNCONFIRMED; the model values are UNVERIFIED.
+SIM ONLY. net direction with the bridge and Webots signs at +1/+1 owner-observed (2026-11-06, sim only); chip-side signs UNCONFIRMED; the model values are UNVERIFIED.
 The wire format is not validated against any real device or receiver.
 
 This is the v2 contract module (CONTRACT.md S3 to S6). The Webots controller

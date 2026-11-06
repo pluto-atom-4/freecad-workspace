@@ -22,7 +22,7 @@ Ports: 5005-5008, 5017 and 5018 are never bound by a test. The CLI refuses only
 ephemeral (bound to port 0, read back, closed). Refusal tests pass fixed
 non-reserved numbers because usage errors happen before any socket is bound.
 
-SIM ONLY. Webots-side +1/+1 direction owner-observed (2026-11-06, sim only); chip-side signs UNCONFIRMED; the model values are UNVERIFIED. Nothing
+SIM ONLY. net direction with the bridge and Webots signs at +1/+1 owner-observed (2026-11-06, sim only); chip-side signs UNCONFIRMED; the model values are UNVERIFIED. Nothing
 here validates a real wheel, a balance loop or a serial device.
 
 Usage (run from poc/ctrl-wheels):

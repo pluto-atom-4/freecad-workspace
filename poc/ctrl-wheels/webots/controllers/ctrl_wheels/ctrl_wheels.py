@@ -70,7 +70,7 @@ TAG = "ctrl_wheels"
 PROTOCOL_VERSION = 2  # the "v" value of both the command and the echo (CONTRACT.md S3)
 CLAMP_RAD_S = 3.0  # UNVERIFIED: symmetric clamp applied to each commanded wheel velocity
 STALE_SIM_S = 0.2  # simulated seconds without a fresh valid command before both wheels stop
-# Webots-side sign per wheel: +1/+1 owner-observed (2026-11-06, sim only): a positive
+# Sign per wheel: bridge +1/+1 and these constants +1/+1 together owner-observed (2026-11-06, sim only): a positive
 # command turned both wheels the same sense, rolling toward +x; only the combined
 # default was observed, not each place separately. The world is intended so that a
 # positive command rolls both wheels forward (discussion 266, world design). The firmware-side mirror

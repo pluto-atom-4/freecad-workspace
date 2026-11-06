@@ -15,7 +15,7 @@ Integration tests use real loopback UDP sockets, a real FakeWheel in a thread
 and the real clock, each well under 3 s. Every socket uses port 0 (ephemeral).
 Ports 5005-5008, 5017 and 5018 are never bound here.
 
-SIM ONLY. Webots-side +1/+1 direction owner-observed (2026-11-06, sim only);
+SIM ONLY. net direction with the bridge and Webots signs at +1/+1 owner-observed (2026-11-06, sim only);
 chip-side signs UNCONFIRMED. The model values are UNVERIFIED. Nothing here
 validates a real wheel, a balance loop or a serial device. open_serial_lines is
 tested only for paths that need no hardware.
