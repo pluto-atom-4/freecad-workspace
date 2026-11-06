@@ -21,12 +21,14 @@
 # wheel at local z -0.026 (world -y). This is the reason for the sign flip compared with the
 # single-wheel template, which uses +90 degrees.
 #
-# Direction (owner-observed 2026-11-06, sim only, at +1/+1): with the Robot at -90 degrees about x, a positive velocity command
+# Direction, derivation on paper (the observation is stated below): with the Robot at -90 degrees about x, a positive velocity command
 # on a hinge turns that wheel about world +y. For such a wheel, the floor contact point moves toward
 # -x relative to the centre, so a free-rolling wheel with positive angular velocity moves toward +x.
 # Both wheels use the same sign, so a positive command rolls BOTH wheels toward +x. The single-wheel
 # world (ctrl_wheel.wbt, rotation +90 degrees) rolls toward -x. This twin differs on purpose.
-# Observed: both wheels rolled toward +x at +1/+1 (wheel sensors +1/+1 for a positive command, -1/-1 for a negative one, from owner-local CSVs that are not committed). Chip-side signs stay UNCONFIRMED.
+# Observed (owner, 2026-11-06, sim only, net direction at +1/+1): both wheels rolled toward +x; the
+# wheel sensors read +1/+1 for a positive command and -1/-1 for a negative one (owner-local CSVs,
+# not committed). Chip-side signs stay UNCONFIRMED.
 #
 # Motor limits (both wheels, owner-chosen for this simulation, NOT servo specs). The maximum velocity
 # of 3.5 rad/s is above the wheel command clamp of 3.0 rad/s, so it does not limit a command. The clamp

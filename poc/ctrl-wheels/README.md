@@ -54,7 +54,7 @@ Open:
 | `test_ctrl_wheels_bridge_cli.py` | Bridge command-line tests (`build_parser`, `main`). |
 | `webots/controllers/ctrl_wheels/ctrl_wheels.py` | Webots controller. Binds 127.0.0.1:5018, keeps the newest valid v2 command and sets both motor velocities with fixed signs of +1. Both wheels stop when no valid command has arrived, when the newest command has stale 1, or when it is 0.2 s of sim time old. Sends one echo per step to 127.0.0.1:5017. |
 | `webots/controllers/ctrl_wheels/sensor_read.py` | Sensor maths (finite angle check, finite-difference velocity). No Webots import. |
-| `webots/worlds/ctrl_wheels.wbt` | Webots world: a fixed body with two hinge wheels, motors `wheel_motor_left` and `wheel_motor_right`, sensors `wheel_sensor_left` and `wheel_sensor_right`. Direction with signs +1/+1: owner-observed OK in Webots (2026-11-06, see Sign convention). Motor limits are on paper or owner-chosen and not checked here. |
+| `webots/worlds/ctrl_wheels.wbt` | Webots world: a fixed body with two hinge wheels, motors `wheel_motor_left` and `wheel_motor_right`, sensors `wheel_sensor_left` and `wheel_sensor_right`. Direction with signs +1/+1: owner-observed OK in Webots (2026-11-06, see Sign convention). Motor limits are owner-chosen for this simulation and not checked here. |
 
 ## Origins
 
@@ -165,5 +165,5 @@ Exit codes: 0 when the run finishes (EOF, duration or Ctrl-C during the run). A 
 - Stops are not latches. A state other than 0, or a stale relay, sends 0.0 to both wheels with stale 1. A fresh state-0 line resumes. The bridge's stale rule uses the host clock (200 ms). The Webots controller also stops both wheels after 0.2 s of sim time without a valid command. A Webots pause stops sim time, so that watchdog does not fire during a pause (the controller header, known limit (a)).
 - `unmatched_echoes`: the sibling README expected a non-zero count from the echo cadence. That expectation has not been checked for this twin.
 - CSV empty cells: an empty echo cell means no echo matched that row (`echo_cmd_seq`, `sim_t_s`, the angle and velocity cells, `host_rtt_ms`). `echo_cmd_seq` is also empty when the echo sends a null `cmd_seq_echo`, which is the case before the first command. `vel_rad_s_l` and `vel_rad_s_r` are empty when that wheel's velocity is null, which the controller sends on its first step.
-- Webots world: the direction with signs +1/+1 is owner-observed OK (2026-11-06, see Sign convention). The motor limits (`maxVelocity 3.5`, `maxTorque 1e-3`) are on paper or owner-chosen, per the world header, and were not checked here.
+- Webots world: the direction with signs +1/+1 is owner-observed OK (2026-11-06, see Sign convention). The motor limits (`maxVelocity 3.5`, `maxTorque 1e-3`) are owner-chosen for this simulation, per the world header, and were not checked here.
 - Sim only. Not hardware-validated.

@@ -469,8 +469,9 @@ def test_stdin_end_to_end_logs_rows_and_summary(tmp_path, monkeypatch, capsys):
 @pytest.mark.parametrize("sign_right", [1, -1])
 @pytest.mark.parametrize("sign_left", [1, -1])
 def test_sign_flags_flip_each_echoed_wheel_velocity(tmp_path, pipe_stdin, sign_left, sign_right):
-    """--sign-left/--sign-right are Webots-side signs on the model velocity, SIM ONLY and
-    Chip-side signs UNCONFIRMED; Webots +1/+1 owner-observed. The input uses the generator's default raws (+1 left, -1 right); the bridge
+    """--sign-left/--sign-right are bridge-side signs on the model velocity, SIM ONLY.
+    Chip-side signs UNCONFIRMED; net direction at +1/+1 owner-observed. The input uses the
+    generator's default raws (+1 left, -1 right); the bridge
     ignores raw, so each echoed wheel follows its own sign flag alone."""
     record = tmp_path / "sign.csv"
     cmd_port, echo_port = _two_free_ports()
