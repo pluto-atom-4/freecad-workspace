@@ -28,6 +28,7 @@ from __future__ import annotations
 import csv
 import dataclasses
 import inspect
+import io
 import socket
 import sys
 import threading
@@ -62,9 +63,13 @@ from ctrl_wheels_udp import (  # noqa: E402
 from fake_wheels import FakeWheel  # noqa: E402
 
 
-def _line(seq, model=0.5, state=0, raw_l=10, raw_r=-10):
-    """One stripped WHL2 line (no newline), as the bridge's reader passes it."""
-    t_us = (seq * 20000) % (2**32)
+def _line(seq, model=0.5, state=0, raw_l=10, raw_r=-10, t_us=None):
+    """One stripped WHL2 line (no newline), as the bridge's reader passes it.
+
+    t_us defaults to seq * 20000 (no restart, no wrap); pass it explicitly for restart and wrap tests.
+    """
+    if t_us is None:
+        t_us = (seq * 20000) % (2**32)
     return format_whl2(
         Whl2(seq=seq, t_us=t_us, model_rad_s=model, raw_l=raw_l, raw_r=raw_r, state=state)
     ).rstrip("\n")
@@ -254,6 +259,7 @@ def test_bridge_stats_fields_pinned():
         "bad_echoes",
         "missed_whl_total",
         "stale_cmds",
+        "restarts",
     ]
 
 
@@ -437,12 +443,14 @@ def test_seq_gap_is_counted_as_missed_whl(tmp_path, cmd_rx, echo_rx):
     by_seq = _by_seq(_rows(path))
     assert {s: int(by_seq[s]["missed_whl"]) for s in seqs} == {0: 0, 1: 0, 2: 0, 6: 3, 7: 0}
     assert stats.missed_whl_total == 3
+    assert stats.restarts == 0
 
 
 def test_seq_wrap_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
+    # t_us keeps counting across the seq wrap, as the device does.
     seqs = [65534, 65535, 1]
     stats, path = _run(
-        tmp_path, [_line(s) for s in seqs], cmd_rx.getsockname(), echo_rx
+        tmp_path, [_line(s, t_us=i * 20000) for i, s in enumerate(seqs)], cmd_rx.getsockname(), echo_rx
     )
     by_seq = _by_seq(_rows(path))
     assert {s: int(by_seq[s]["missed_whl"]) for s in seqs} == {65534: 0, 65535: 0, 1: 1}
@@ -459,6 +467,7 @@ def test_seq_reorder_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
     by_seq = _by_seq(_rows(path))
     assert {s: int(by_seq[s]["missed_whl"]) for s in seqs} == {5: 0, 6: 0, 7: 1, 8: 0}
     assert stats.missed_whl_total == 1
+    assert stats.restarts == 0
 
 
 def test_seq_pure_repeat_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
@@ -470,6 +479,274 @@ def test_seq_pure_repeat_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
     assert [int(r["whl_seq"]) for r in rows] == seqs
     assert all(r["missed_whl"] == "0" for r in rows)
     assert stats.missed_whl_total == 0
+    assert stats.restarts == 0
+
+
+def test_restart_with_high_old_seq_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
+    seq_t = [
+        (49998, 1_000_000_000),
+        (49999, 1_000_020_000),
+        (50000, 1_000_040_000),
+        (0, 2_900_000),
+        (1, 2_920_000),
+    ]
+    stats, path = _run(
+        tmp_path, [_line(s, t_us=t) for s, t in seq_t], cmd_rx.getsockname(), echo_rx
+    )
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[0]["missed_whl"]) == 0
+    assert int(by_seq[1]["missed_whl"]) == 0
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 1
+
+
+def test_restart_with_low_old_seq_is_detected_and_later_gap_counted(tmp_path, cmd_rx, echo_rx):
+    lines = [_line(n, t_us=n * 20000) for n in range(1001)]
+    lines += [
+        _line(0, t_us=2_900_000),
+        _line(1, t_us=2_920_000),
+        _line(2, t_us=2_940_000),
+        _line(10, t_us=3_100_000),
+    ]
+    stats, path = _run(tmp_path, lines, cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05)
+    # _by_seq keeps the last row per seq, so seq 10 is the one after the restart.
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[10]["missed_whl"]) == 7
+    assert stats.restarts == 1
+    assert stats.missed_whl_total == 7
+
+
+def test_legit_seq_wrap_with_continuing_t_us_is_not_a_restart(tmp_path, cmd_rx, echo_rx):
+    # Kept separate from test_seq_wrap_is_not_a_gap: that test uses seqs [65534, 65535, 1]
+    # (seq 0 skipped, missed 1), so its inputs differ from this one.
+    seqs = [65534, 65535, 0]
+    stats, path = _run(
+        tmp_path, [_line(s, t_us=i * 20000) for i, s in enumerate(seqs)], cmd_rx.getsockname(), echo_rx
+    )
+    by_seq = _by_seq(_rows(path))
+    assert {s: int(by_seq[s]["missed_whl"]) for s in seqs} == {65534: 0, 65535: 0, 0: 0}
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 0
+
+
+def test_t_us_wrap_with_continuing_seq_is_not_a_restart(tmp_path, cmd_rx, echo_rx):
+    # 4294947296 + 20000 == 2**32, so the next t_us is 0 after a wrap.
+    stats, path = _run(
+        tmp_path,
+        [_line(5, t_us=4_294_947_296), _line(6, t_us=0)],
+        cmd_rx.getsockname(),
+        echo_rx,
+    )
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[6]["missed_whl"]) == 0
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 0
+
+
+def test_real_gap_after_restart_is_counted(tmp_path, cmd_rx, echo_rx):
+    seq_t = [
+        (50000, 1_000_000_000),
+        (0, 2_900_000),
+        (1, 2_920_000),
+        (2, 2_940_000),
+        (6, 3_020_000),
+    ]
+    stats, path = _run(
+        tmp_path, [_line(s, t_us=t) for s, t in seq_t], cmd_rx.getsockname(), echo_rx
+    )
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[6]["missed_whl"]) == 3
+    assert stats.missed_whl_total == 3
+    assert stats.restarts == 1
+
+
+def test_large_back_step_in_t_us_is_a_restart(tmp_path, cmd_rx, echo_rx):
+    # 2.4e9 us is a back step of about 40 minutes (past 2**31 us). The rule has no 36-minute threshold.
+    seq_t = [(100, 2_400_000_000), (0, 2_900_000), (1, 2_920_000)]
+    stats, _path = _run(
+        tmp_path, [_line(s, t_us=t) for s, t in seq_t], cmd_rx.getsockname(), echo_rx
+    )
+    assert stats.restarts == 1
+    assert stats.missed_whl_total == 0
+
+
+def test_restart_is_reported_in_summary_line(tmp_path, cmd_rx, capsys, monkeypatch):
+    text = "\n".join([_line(50000, t_us=1_000_000_000), _line(0, t_us=2_900_000)]) + "\n"
+    monkeypatch.setattr(sys, "stdin", io.StringIO(text))
+    real_open_listener = ctrl_wheels_bridge.open_listener
+    # main() binds the echo socket on --echo-port; this wrapper binds port 0 instead, so no fixed port is used.
+    monkeypatch.setattr(ctrl_wheels_bridge, "open_listener", lambda _port: real_open_listener(0))
+    rc = ctrl_wheels_bridge.main([
+        "--stdin",
+        "--record", str(tmp_path / "restart.csv"),
+        "--cmd-port", str(cmd_rx.getsockname()[1]),
+        "--echo-port", "5019",
+        "--echo-timeout", "0.05",
+    ])
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert "firmware restart detected (seq 50000 -> 0)" in err
+    assert "restarts=1" in err
+
+
+@pytest.mark.parametrize("gap", [0, 5])
+def test_forward_bound_is_inclusive(tmp_path, cmd_rx, echo_rx, gap):
+    # Forward bound for a gap: (gap + 1) * 40_000 + 1_000_000 us. Equal to the bound is forward.
+    bound = (gap + 1) * 40_000 + 1_000_000
+    stats, path = _run(
+        tmp_path, [_line(0, t_us=0), _line(gap + 1, t_us=bound)], cmd_rx.getsockname(), echo_rx,
+        echo_timeout_s=0.05,
+    )
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[gap + 1]["missed_whl"]) == gap
+    assert stats.missed_whl_total == gap
+    assert stats.restarts == 0
+
+
+@pytest.mark.parametrize("gap", [0, 5])
+def test_forward_bound_plus_one_is_a_restart(tmp_path, cmd_rx, echo_rx, gap):
+    # One microsecond over the forward bound is not forward, so the line is a restart.
+    bound = (gap + 1) * 40_000 + 1_000_000 + 1
+    stats, _path = _run(
+        tmp_path, [_line(0, t_us=0), _line(gap + 1, t_us=bound)], cmd_rx.getsockname(), echo_rx,
+        echo_timeout_s=0.05,
+    )
+    assert stats.restarts == 1
+    assert stats.missed_whl_total == 0
+
+
+def test_forward_gap_32767_is_counted_at_the_bound(tmp_path, cmd_rx, echo_rx):
+    # Largest forward gap (32767 < half of 65536), with the t_us step at the bound 32768 * 40_000 + 1_000_000.
+    bound = 32768 * 40_000 + 1_000_000
+    stats, path = _run(
+        tmp_path, [_line(0, t_us=0), _line(32768, t_us=bound)], cmd_rx.getsockname(), echo_rx,
+        echo_timeout_s=0.05,
+    )
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[32768]["missed_whl"]) == 32767
+    assert stats.missed_whl_total == 32767
+    assert stats.restarts == 0
+
+
+def test_gap_32768_is_not_a_forward_gap(tmp_path, cmd_rx, echo_rx):
+    # Gap 32768 is not below half, so the forward branch is closed. t_us goes forward, so the
+    # back step is about 2**32 and the line is a restart.
+    stats, path = _run(
+        tmp_path, [_line(0, t_us=0), _line(32769, t_us=32769 * 20_000)], cmd_rx.getsockname(), echo_rx,
+        echo_timeout_s=0.05,
+    )
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[32769]["missed_whl"]) == 0
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 1
+
+
+@pytest.mark.parametrize("back_us, restarts", [(999_999, 0), (1_000_000, 1)])
+def test_back_step_threshold_is_one_second(tmp_path, cmd_rx, echo_rx, back_us, restarts):
+    # A seq going back is a reorder while t_us steps back by less than 1 s (999_999 us), and a restart at 1_000_000 us.
+    stats, _path = _run(
+        tmp_path, [_line(100, t_us=2_000_000), _line(99, t_us=2_000_000 - back_us)],
+        cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05,
+    )
+    assert stats.restarts == restarts
+    assert stats.missed_whl_total == 0
+
+
+def test_seq_back_with_t_us_forward_is_a_restart(tmp_path, cmd_rx, echo_rx):
+    # Known limit (i) in the bridge docstring: a seq going back while t_us goes forward is a restart.
+    stats, path = _run(
+        tmp_path, [_line(100, t_us=2_000_000), _line(99, t_us=2_020_000)], cmd_rx.getsockname(), echo_rx,
+        echo_timeout_s=0.05,
+    )
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[99]["missed_whl"]) == 0
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 1
+
+
+def test_restart_within_1s_below_old_t_us_is_read_as_reorder_until_t_passes(tmp_path, cmd_rx, echo_rx):
+    # Pins known limits (ii) and (iii): a restart to a seq 0..32767 behind the baseline whose t_us is
+    # within 1 s BELOW the old one is read as a reorder (no restart yet); the next line, whose t_us is
+    # ABOVE the old baseline, is then read as the restart. Both lines count missed 0.
+    stats, path = _run(
+        tmp_path,
+        [_line(100, t_us=2_000_000), _line(0, t_us=1_990_000), _line(1, t_us=2_010_000)],
+        cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05,
+    )
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[0]["missed_whl"]) == 0
+    assert int(by_seq[1]["missed_whl"]) == 0
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 1
+
+
+def test_reorder_window_upper_edge_32767_behind_is_a_reorder(tmp_path, cmd_rx, echo_rx):
+    # Pins the upper edge of known limit (ii): a seq 32767 behind the baseline (gap 32768) with t_us
+    # 10 ms below is read as a reorder, so no restart.
+    stats, path = _run(
+        tmp_path,
+        [_line(32768, t_us=2_000_000), _line(1, t_us=1_990_000)],
+        cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05,
+    )
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 0
+
+
+def test_seq_32768_behind_is_a_restart_not_a_reorder(tmp_path, cmd_rx, echo_rx):
+    # Pins the edge just outside known limit (ii): a seq 32768 behind the baseline (gap 32767) is not
+    # in the reorder window; the t_us step fails the forward bound, so it is a restart at once.
+    stats, path = _run(
+        tmp_path,
+        [_line(32768, t_us=2_000_000), _line(0, t_us=1_990_000)],
+        cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05,
+    )
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 1
+
+
+def test_restart_read_as_reorder_is_noticed_when_new_seq_passes_old_baseline(tmp_path, cmd_rx, echo_rx):
+    # Pins limit (iii), second route: baseline seq 100, restart line seq 0 (read as reorder), then
+    # seq 101 with t_us still BELOW the old baseline: forward gap 0 with a backward t_us fails the
+    # forward bound, so it is a restart. Missed stays 0.
+    stats, path = _run(
+        tmp_path,
+        [_line(100, t_us=2_000_000), _line(0, t_us=1_900_000), _line(101, t_us=1_950_000)],
+        cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05,
+    )
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 1
+
+
+def test_restart_from_high_old_seq_with_t_us_slightly_below_is_still_a_restart(tmp_path, cmd_rx, echo_rx):
+    # Known limit (ii): the reorder reading needs the new seq to be 0..32767 behind the baseline. From
+    # a high old seq (50000 -> 0 looks like a forward wrap, gap 15535) the t_us step fails the forward
+    # bound, so it is a restart at once even though t_us is only 0.5 s below.
+    stats, path = _run(
+        tmp_path,
+        [_line(50000, t_us=1_000_000_000), _line(0, t_us=999_500_000)],
+        cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05,
+    )
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[0]["missed_whl"]) == 0
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 1
+
+
+def test_late_frame_after_forward_jump_is_a_known_false_restart(tmp_path, cmd_rx, echo_rx):
+    # Pins a KNOWN LIMIT (bridge docstring, known limit iv), not a goal. A late frame more than 1 s
+    # behind the baseline, after a forward jump, is read as a restart; the next live frame then
+    # counts a false missed 61. If the rule changes, this test is expected to change with it.
+    lines = [_line(n, t_us=n * 20000) for n in range(101)]
+    lines += [
+        _line(161, t_us=3_200_000),
+        _line(100, t_us=2_000_000),
+        _line(162, t_us=3_220_000),
+    ]
+    stats, path = _run(tmp_path, lines, cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05)
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[162]["missed_whl"]) == 61
+    assert stats.restarts == 1
+    assert stats.missed_whl_total == 60 + 61
 
 
 def test_bad_lines_counted_and_skipped(tmp_path, cmd_rx, echo_rx):
