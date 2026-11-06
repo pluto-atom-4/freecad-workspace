@@ -28,6 +28,7 @@ from __future__ import annotations
 import csv
 import dataclasses
 import inspect
+import io
 import socket
 import sys
 import threading
@@ -62,9 +63,13 @@ from ctrl_wheels_udp import (  # noqa: E402
 from fake_wheels import FakeWheel  # noqa: E402
 
 
-def _line(seq, model=0.5, state=0, raw_l=10, raw_r=-10):
-    """One stripped WHL2 line (no newline), as the bridge's reader passes it."""
-    t_us = (seq * 20000) % (2**32)
+def _line(seq, model=0.5, state=0, raw_l=10, raw_r=-10, t_us=None):
+    """One stripped WHL2 line (no newline), as the bridge's reader passes it.
+
+    t_us defaults to seq * 20000 (no restart, no wrap); pass it explicitly for restart and wrap tests.
+    """
+    if t_us is None:
+        t_us = (seq * 20000) % (2**32)
     return format_whl2(
         Whl2(seq=seq, t_us=t_us, model_rad_s=model, raw_l=raw_l, raw_r=raw_r, state=state)
     ).rstrip("\n")
@@ -254,6 +259,7 @@ def test_bridge_stats_fields_pinned():
         "bad_echoes",
         "missed_whl_total",
         "stale_cmds",
+        "restarts",
     ]
 
 
@@ -440,9 +446,10 @@ def test_seq_gap_is_counted_as_missed_whl(tmp_path, cmd_rx, echo_rx):
 
 
 def test_seq_wrap_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
+    # t_us keeps counting across the seq wrap, as the device does.
     seqs = [65534, 65535, 1]
     stats, path = _run(
-        tmp_path, [_line(s) for s in seqs], cmd_rx.getsockname(), echo_rx
+        tmp_path, [_line(s, t_us=i * 20000) for i, s in enumerate(seqs)], cmd_rx.getsockname(), echo_rx
     )
     by_seq = _by_seq(_rows(path))
     assert {s: int(by_seq[s]["missed_whl"]) for s in seqs} == {65534: 0, 65535: 0, 1: 1}
@@ -470,6 +477,148 @@ def test_seq_pure_repeat_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
     assert [int(r["whl_seq"]) for r in rows] == seqs
     assert all(r["missed_whl"] == "0" for r in rows)
     assert stats.missed_whl_total == 0
+
+
+def _free_port():
+    sock = open_listener(0)
+    port = sock.getsockname()[1]
+    sock.close()
+    return port
+
+
+def test_restart_with_high_old_seq_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
+    seq_t = [
+        (49998, 1_000_000_000),
+        (49999, 1_000_020_000),
+        (50000, 1_000_040_000),
+        (0, 2_900_000),
+        (1, 2_920_000),
+    ]
+    stats, path = _run(
+        tmp_path, [_line(s, t_us=t) for s, t in seq_t], cmd_rx.getsockname(), echo_rx
+    )
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[0]["missed_whl"]) == 0
+    assert int(by_seq[1]["missed_whl"]) == 0
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 1
+
+
+def test_restart_with_low_old_seq_is_detected_and_later_gap_counted(tmp_path, cmd_rx, echo_rx):
+    lines = [_line(n, t_us=n * 20000) for n in range(1001)]
+    lines += [
+        _line(0, t_us=2_900_000),
+        _line(1, t_us=2_920_000),
+        _line(2, t_us=2_940_000),
+        _line(10, t_us=3_100_000),
+    ]
+    stats, path = _run(tmp_path, lines, cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05)
+    # _by_seq keeps the last row per seq, so seq 10 is the one after the restart.
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[10]["missed_whl"]) == 7
+    assert stats.restarts == 1
+    assert stats.missed_whl_total == 7
+
+
+def test_legit_seq_wrap_with_continuing_t_us_is_not_a_restart(tmp_path, cmd_rx, echo_rx):
+    seqs = [65534, 65535, 0]
+    stats, path = _run(
+        tmp_path, [_line(s, t_us=i * 20000) for i, s in enumerate(seqs)], cmd_rx.getsockname(), echo_rx
+    )
+    by_seq = _by_seq(_rows(path))
+    assert {s: int(by_seq[s]["missed_whl"]) for s in seqs} == {65534: 0, 65535: 0, 0: 0}
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 0
+
+
+def test_t_us_wrap_with_continuing_seq_is_not_a_restart(tmp_path, cmd_rx, echo_rx):
+    # 4294947296 + 20000 == 2**32, so the next t_us is 0 after a wrap.
+    stats, path = _run(
+        tmp_path,
+        [_line(5, t_us=4_294_947_296), _line(6, t_us=0)],
+        cmd_rx.getsockname(),
+        echo_rx,
+    )
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[6]["missed_whl"]) == 0
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 0
+
+
+def test_reorder_with_consistent_t_us_is_not_a_restart(tmp_path, cmd_rx, echo_rx):
+    seqs = [5, 7, 6, 8]
+    stats, path = _run(
+        tmp_path, [_line(s, t_us=s * 20000) for s in seqs], cmd_rx.getsockname(), echo_rx
+    )
+    by_seq = _by_seq(_rows(path))
+    assert {s: int(by_seq[s]["missed_whl"]) for s in seqs} == {5: 0, 6: 0, 7: 1, 8: 0}
+    assert stats.missed_whl_total == 1
+    assert stats.restarts == 0
+
+
+def test_pure_repeat_with_consistent_t_us_is_not_a_restart(tmp_path, cmd_rx, echo_rx):
+    seqs = [5, 5, 6]
+    stats, path = _run(
+        tmp_path, [_line(s, t_us=s * 20000) for s in seqs], cmd_rx.getsockname(), echo_rx
+    )
+    rows = _rows(path)
+    assert [int(r["whl_seq"]) for r in rows] == seqs
+    assert all(r["missed_whl"] == "0" for r in rows)
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 0
+
+
+def test_forward_gap_with_consistent_t_us_is_not_a_restart(tmp_path, cmd_rx, echo_rx):
+    seqs = [0, 1, 2, 6, 7]
+    stats, path = _run(
+        tmp_path, [_line(s, t_us=s * 20000) for s in seqs], cmd_rx.getsockname(), echo_rx
+    )
+    by_seq = _by_seq(_rows(path))
+    assert {s: int(by_seq[s]["missed_whl"]) for s in seqs} == {0: 0, 1: 0, 2: 0, 6: 3, 7: 0}
+    assert stats.missed_whl_total == 3
+    assert stats.restarts == 0
+
+
+def test_real_gap_after_restart_is_counted(tmp_path, cmd_rx, echo_rx):
+    seq_t = [
+        (50000, 1_000_000_000),
+        (0, 2_900_000),
+        (1, 2_920_000),
+        (2, 2_940_000),
+        (6, 3_020_000),
+    ]
+    stats, path = _run(
+        tmp_path, [_line(s, t_us=t) for s, t in seq_t], cmd_rx.getsockname(), echo_rx
+    )
+    by_seq = _by_seq(_rows(path))
+    assert int(by_seq[6]["missed_whl"]) == 3
+    assert stats.missed_whl_total == 3
+    assert stats.restarts == 1
+
+
+def test_old_t_us_beyond_36_minutes_then_restart_is_detected(tmp_path, cmd_rx, echo_rx):
+    seq_t = [(100, 2_400_000_000), (0, 2_900_000), (1, 2_920_000)]
+    stats, _path = _run(
+        tmp_path, [_line(s, t_us=t) for s, t in seq_t], cmd_rx.getsockname(), echo_rx
+    )
+    assert stats.restarts == 1
+    assert stats.missed_whl_total == 0
+
+
+def test_restart_is_reported_in_summary_line(tmp_path, cmd_rx, capsys, monkeypatch):
+    text = "\n".join([_line(50000, t_us=1_000_000_000), _line(0, t_us=2_900_000)]) + "\n"
+    monkeypatch.setattr(sys, "stdin", io.StringIO(text))
+    rc = ctrl_wheels_bridge.main([
+        "--stdin",
+        "--record", str(tmp_path / "restart.csv"),
+        "--cmd-port", str(cmd_rx.getsockname()[1]),
+        "--echo-port", str(_free_port()),
+        "--echo-timeout", "0.05",
+    ])
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert "firmware restart detected (seq 50000 -> 0)" in err
+    assert "restarts=1" in err
 
 
 def test_bad_lines_counted_and_skipped(tmp_path, cmd_rx, echo_rx):

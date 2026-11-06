@@ -12,6 +12,16 @@ stale or the state is not 0, both wheels get (0.0, 0.0) with stale 1 (they stop
 together). That stop is not a latch: a fresh state-0 line resumes. Each wheel is
 clamped to +-3.0 silently. A line that is not WHL2 is a bad line.
 
+Sequence rule (F22). A forward step (seq gap below half the 16-bit range, and the t_us
+step fits it: at most 40 ms per missed frame plus 1 s slack) counts its gap as missed_whl.
+A seq that goes back (gap at or above half) while t_us goes back by less than 1 s is a
+repeat or reorder: missed 0, and the baseline stays at the highest seq seen. Anything else
+is a firmware restart: missed 0, stats.restarts +1, one log line, and the baseline moves to
+the new seq and t_us. Known limits: a real outage longer than about 1 s plus 40 ms per
+missed frame is read as a restart; a restart whose first t_us is within 1 s of the old one
+and whose seq goes back is read as a reorder. The constants _RESTART_BACK_US, _FWD_SLACK_US
+and _FRAME_US_MAX are unmeasured guesses for the 50 Hz firmware.
+
 Command line: build_parser() and main(argv) -> int. Run from poc/ctrl-wheels:
     python3 -m ctrl_wheels_msg --step 0.5 --seconds 5 | python3 ctrl_wheels_bridge.py --stdin --record ac1.csv
     python3 ctrl_wheels_bridge.py --port rfc2217://localhost:4002 --record ac1.csv
@@ -72,6 +82,10 @@ _RECONNECT_DELAY_S = 1.0
 _WAIT_HEARTBEAT_S = 10.0
 _URL_WAIT_CAP_S = 300.0
 _SEQ_HALF = SEQ_MOD // 2
+# Restart rule (F22). Unmeasured guesses for the 50 Hz firmware; see the module docstring.
+_RESTART_BACK_US = 1_000_000  # t_us stepping back by less than this is a repeat or reorder
+_FWD_SLACK_US = 1_000_000  # extra t_us allowed on a forward step, on top of the frame period
+_FRAME_US_MAX = 40_000  # largest expected t_us step per frame
 
 
 class DofSerialError(serial.SerialException):
@@ -88,6 +102,7 @@ class BridgeStats:
     bad_echoes: int = 0
     missed_whl_total: int = 0
     stale_cmds: int = 0
+    restarts: int = 0
 
     def __post_init__(self) -> None:
         # BridgeStats has no send-error or source-error field, so these are plain attributes.
@@ -290,6 +305,7 @@ class _Run:
         self.next_cmd_seq = 0
         self.pending: dict[int, _Pending] = {}
         self.last_whl_seq: int | None = None
+        self.last_whl_t_us: int | None = None
         self.last_cmd_stale: int | None = None
         self.stale_episode = False
 
@@ -327,12 +343,23 @@ class _Run:
         missed = 0
         if self.last_whl_seq is None:
             self.last_whl_seq = w2.seq
+            self.last_whl_t_us = w2.t_us
         else:
             gap = (w2.seq - self.last_whl_seq - 1) % SEQ_MOD
-            if gap < _SEQ_HALF:  # forward: count the gap and move on
+            dt = (w2.t_us - self.last_whl_t_us) % 2**32
+            back = (self.last_whl_t_us - w2.t_us) % 2**32
+            if gap < _SEQ_HALF and dt <= (gap + 1) * _FRAME_US_MAX + _FWD_SLACK_US:
+                # forward: count the gap and move on
                 missed = gap
                 self.last_whl_seq = w2.seq
-            # else a repeat or reorder: not a gap, and last_whl_seq keeps the highest seen
+                self.last_whl_t_us = w2.t_us
+            elif gap >= _SEQ_HALF and back < _RESTART_BACK_US:
+                pass  # repeat or reorder: not a gap; the baseline keeps the highest seq and its t_us
+            else:
+                self.stats.restarts += 1
+                _log(f"firmware restart detected (seq {self.last_whl_seq} -> {w2.seq})")
+                self.last_whl_seq = w2.seq
+                self.last_whl_t_us = w2.t_us
         self.stats.missed_whl_total += missed
         wl, wr = split(w2)
         self.relay_l.on_whl(wl)
