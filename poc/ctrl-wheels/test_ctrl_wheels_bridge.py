@@ -665,7 +665,7 @@ def test_seq_back_with_t_us_forward_is_a_restart(tmp_path, cmd_rx, echo_rx):
 
 
 def test_restart_within_1s_below_old_t_us_is_read_as_reorder_until_t_passes(tmp_path, cmd_rx, echo_rx):
-    # Pins known limits (ii) and (iii): a restart to a seq 1..32768 behind the baseline whose t_us is
+    # Pins known limits (ii) and (iii): a restart to a seq 0..32767 behind the baseline whose t_us is
     # within 1 s BELOW the old one is read as a reorder (no restart yet); the next line, whose t_us is
     # ABOVE the old baseline, is then read as the restart. Both lines count missed 0.
     stats, path = _run(
@@ -680,8 +680,45 @@ def test_restart_within_1s_below_old_t_us_is_read_as_reorder_until_t_passes(tmp_
     assert stats.restarts == 1
 
 
+def test_reorder_window_upper_edge_32767_behind_is_a_reorder(tmp_path, cmd_rx, echo_rx):
+    # Pins the upper edge of known limit (ii): a seq 32767 behind the baseline (gap 32768) with t_us
+    # 10 ms below is read as a reorder, so no restart.
+    stats, path = _run(
+        tmp_path,
+        [_line(32768, t_us=2_000_000), _line(1, t_us=1_990_000)],
+        cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05,
+    )
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 0
+
+
+def test_seq_32768_behind_is_a_restart_not_a_reorder(tmp_path, cmd_rx, echo_rx):
+    # Pins the edge just outside known limit (ii): a seq 32768 behind the baseline (gap 32767) is not
+    # in the reorder window; the t_us step fails the forward bound, so it is a restart at once.
+    stats, path = _run(
+        tmp_path,
+        [_line(32768, t_us=2_000_000), _line(0, t_us=1_990_000)],
+        cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05,
+    )
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 1
+
+
+def test_restart_read_as_reorder_is_noticed_when_new_seq_passes_old_baseline(tmp_path, cmd_rx, echo_rx):
+    # Pins limit (iii), second route: baseline seq 100, restart line seq 0 (read as reorder), then
+    # seq 101 with t_us still BELOW the old baseline: forward gap 0 with a backward t_us fails the
+    # forward bound, so it is a restart. Missed stays 0.
+    stats, path = _run(
+        tmp_path,
+        [_line(100, t_us=2_000_000), _line(0, t_us=1_900_000), _line(101, t_us=1_950_000)],
+        cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05,
+    )
+    assert stats.missed_whl_total == 0
+    assert stats.restarts == 1
+
+
 def test_restart_from_high_old_seq_with_t_us_slightly_below_is_still_a_restart(tmp_path, cmd_rx, echo_rx):
-    # Known limit (ii): the reorder reading needs the new seq to be 1..32768 behind the baseline. From
+    # Known limit (ii): the reorder reading needs the new seq to be 0..32767 behind the baseline. From
     # a high old seq (50000 -> 0 looks like a forward wrap, gap 15535) the t_us step fails the forward
     # bound, so it is a restart at once even though t_us is only 0.5 s below.
     stats, path = _run(

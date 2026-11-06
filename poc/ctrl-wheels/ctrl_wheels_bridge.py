@@ -20,11 +20,12 @@ firmware restart: missed 0, stats.restarts +1, one log line, and the baseline mo
 new seq and t_us. Known limits (thresholds: _REORDER_BACK_US, _FWD_SLACK_US, _FRAME_US_MAX):
 (i) a seq that goes back while t_us goes forward is read as a restart (both counters are
 monotonic in the firmware);
-(ii) a restart is read as a reorder only when the new seq is 1 to 32768 behind the baseline
-(mod 65536) AND its first t_us is within 1 s BELOW the old t_us (a restart from a high old seq,
+(ii) a restart is read as a reorder only when the new seq is 0 to 32767 behind the baseline
+(mod 65536; 0 behind is a repeat) AND its first t_us is within 1 s BELOW the old t_us (a restart from a high old seq,
 where the new seq looks like a forward wrap, or with a t_us above the old one, is a restart);
 (iii) a restart that is read as a reorder (ii) is only noticed when t_us passes the old
-baseline, up to 1 s of lines later, and those lines count missed 0;
+baseline or the new seq passes the old baseline, whichever comes first, up to 1 s of lines
+later, and those lines count missed 0;
 (iv) a LATE frame more than 1 s of t_us behind the baseline, after a forward jump of 1 s or
 more, is read as a restart and the next live frame then adds a false missed count (example:
 frames 0..100, then seq 161 at +1.2 s, then the late seq 100: one false restart and a false
