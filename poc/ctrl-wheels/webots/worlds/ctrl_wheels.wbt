@@ -15,7 +15,7 @@
 # the HingeJoint anchor and the endPoint translation must stay identical
 # (0.026 = body face 0.02 + half the wheel height 0.006, with the sign set by the side).
 #
-# Orientation of the Robot (owner opened this world in Webots 2026-11-06; direction observed, see below):
+# Orientation of the Robot (owner opened this world in Webots 2026-11-06; net direction observed, orientation still on paper, see below):
 # the Robot is rotated -90 degrees about x, so its local +z points to world +y. Both hinge axes are
 # therefore local 0 0 1 (world +y). The left wheel sits at local z +0.026 (world +y) and the right
 # wheel at local z -0.026 (world -y). This is the reason for the sign flip compared with the

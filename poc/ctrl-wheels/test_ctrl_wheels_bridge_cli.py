@@ -10,7 +10,7 @@ CLI contract pinned here:
     --cmd-port N (default 5018); --echo-port N (default 5017);
     --baud N (default 115200); --echo-timeout SECONDS (default 0.5).
 --sign alone is refused: it is an ambiguous prefix of --sign-left and --sign-right.
---sign-left and --sign-right are Webots-side signs applied to the model velocity
+--sign-left and --sign-right are bridge-side signs applied to the model velocity
 (Relay sign). They are not the chip raw signs of the generator ctrl_wheels_msg
 (--sign-left/--sign-right there default +1/-1). The bridge ignores the raw columns.
 The CLI never latches: a fresh state-0 line resumes after a stop.

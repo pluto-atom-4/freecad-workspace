@@ -123,8 +123,8 @@ Bridge flags:
 | `--stdin` | off | Read WHL2 lines from stdin until EOF. |
 | `--record CSV` | required | CSV log path. |
 | `--overwrite` | off | Replace an existing `--record` file. |
-| `--sign-left {1,-1}` | 1 | Webots-side sign on the left model value, applied before the clamp. Net direction with this flag and the Webots constants at +1/+1 owner-observed 2026-11-06 (sim only). |
-| `--sign-right {1,-1}` | 1 | Webots-side sign on the right model value, applied before the clamp. Net direction with this flag and the Webots constants at +1/+1 owner-observed 2026-11-06 (sim only). |
+| `--sign-left {1,-1}` | 1 | Bridge-side sign on the left model value, applied before the clamp. Net direction with this flag and the Webots constants at +1/+1 owner-observed 2026-11-06 (sim only). |
+| `--sign-right {1,-1}` | 1 | Bridge-side sign on the right model value, applied before the clamp. Net direction with this flag and the Webots constants at +1/+1 owner-observed 2026-11-06 (sim only). |
 | `--duration SECONDS` | run until the source ends | Stop after SECONDS (> 0). |
 | `--cmd-port N` | 5018 | UDP port of the Webots controller for commands. Only 5006 is refused. |
 | `--echo-port N` | 5017 | UDP port the bridge listens on for echoes. Only 5006 is refused. The two ports must differ. |

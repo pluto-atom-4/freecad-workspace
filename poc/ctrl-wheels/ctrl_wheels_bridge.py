@@ -652,7 +652,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Bridge-side sign, 1 or -1 (default 1), applied to the model value for the right "
              "wheel (Relay). With the Webots constants also +1/+1 the net direction was "
              "owner-observed in Webots on 2026-11-06 (sim only). -1 gave erratic wheel "
-             "velocities in the owner's run (cause not investigated, not recommended). "
+             "velocities in the owner's run (cause not investigated, not recommended; see the "
+             "README, Sign convention). "
              "Not the chip raw sign of the generator "
              "ctrl_wheels_msg (its --sign-left/--sign-right default +1/-1)")
     parser.add_argument(
