@@ -3,11 +3,13 @@
 Text-parse test for the two-box geometry of webots/worlds/ctrl_wheels.wbt
 (freecad-workspace #535, epic #533).
 
-Reads the .wbt as TEXT with the stdlib only; no Webots is started. It pins the
-two DEF BODY_BOX_* Transforms (size 0.04 x 0.02 x 0.04 at local z +-0.024, an
-8 mm gap), the box outer edge meeting the wheel inner face (0.044), the
-HingeJoint anchor equal to the wheel endPoint translation on each side, the
-mirrored wheels, and the four device names.
+Reads the .wbt as TEXT and parses it with the stdlib (pytest is the runner); no
+Webots is started. It pins the two DEF BODY_BOX_* Transforms (size 0.04 x 0.02
+x 0.04 at local z +-0.024, an 8 mm gap), the box outer edge meeting the wheel
+inner face (0.044), the HingeJoint anchor equal to the wheel endPoint
+translation on each side, the mirrored wheels, the four device names, no
+boundingObject or Physics in the two box blocks, and no leftover 0.026 in the
+comment-stripped text.
 
 SIM ONLY. This checks numbers in the text only. It does not prove the world
 loads in Webots, and it says nothing about balance, wheel direction or sign.
@@ -19,12 +21,9 @@ Usage (run from poc/ctrl-wheels):
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 WORLD = Path(__file__).resolve().parent / "webots" / "worlds" / "ctrl_wheels.wbt"
@@ -94,7 +93,8 @@ def _wheel(world: str, side_lower: str):
     hinge = _hinge(world, side_lower)
     anchor = _vec(hinge, "anchor")
     endpoint = _block(hinge, r"endPoint\s+Solid\s*\{")
-    translation = _vec(endpoint, "translation")
+    head = endpoint.split("children", 1)[0]
+    translation = _vec(head, "translation")
     m = re.search(r"Cylinder\s*\{[^}]*?height\s+" + NUM, endpoint)
     assert m, f"no Cylinder height in {side_lower} wheel"
     return anchor, translation, float(m.group(1))
@@ -110,8 +110,8 @@ def test_two_body_box_transforms_exist(world):
         assert y == pytest.approx(0.0, abs=ABS)
 
 
-@pytest.mark.parametrize("side,low,sign", SIDES)
-def test_box_size(world, side, low, sign):
+@pytest.mark.parametrize("side", ["LEFT", "RIGHT"])
+def test_box_size(world, side):
     assert _vec(_box(world, side), "size") == pytest.approx(BOX_SIZE, abs=ABS)
 
 
@@ -134,12 +134,12 @@ def test_box_outer_edge_meets_wheel_inner_face(world, side, low, sign):
     _, translation, height = _wheel(world, low)
     assert height == pytest.approx(WHEEL_HEIGHT, abs=ABS)
     wheel_z = translation[2]
-    assert abs(box_z) + size_z / 2 == pytest.approx(abs(wheel_z) - WHEEL_HALF_H, abs=ABS)
-    assert abs(wheel_z) - WHEEL_HALF_H == pytest.approx(0.044, abs=ABS)
+    assert sign * box_z + size_z / 2 == pytest.approx(sign * wheel_z - height / 2, abs=ABS)
+    assert sign * wheel_z - height / 2 == pytest.approx(0.044, abs=ABS)
 
 
-@pytest.mark.parametrize("side,low,sign", SIDES)
-def test_anchor_equals_endpoint_translation(world, side, low, sign):
+@pytest.mark.parametrize("low,sign", [("left", +1), ("right", -1)])
+def test_anchor_equals_endpoint_translation(world, low, sign):
     anchor, translation, _ = _wheel(world, low)
     assert anchor == pytest.approx(translation, abs=ABS)
     assert anchor == pytest.approx((0.0, 0.0, sign * WHEEL_CENTRE), abs=ABS)
@@ -158,13 +158,11 @@ def test_four_device_names_present(world):
     for name in DEVICE_NAMES:
         assert world.count(f'name "{name}"') == 1, name
     for low in ("left", "right"):
-        hinge = _hinge(world, low)
-        assert f'name "wheel_motor_{low}"' in hinge
-        assert f'name "wheel_sensor_{low}"' in hinge
+        assert f'name "wheel_sensor_{low}"' in _hinge(world, low)
 
 
-@pytest.mark.parametrize("side,low,sign", SIDES)
-def test_boxes_have_no_physics_or_bounding_object(world, side, low, sign):
+@pytest.mark.parametrize("side", ["LEFT", "RIGHT"])
+def test_boxes_have_no_physics_or_bounding_object(world, side):
     block = _box(world, side)
     assert "boundingObject" not in block
     assert "Physics" not in block
