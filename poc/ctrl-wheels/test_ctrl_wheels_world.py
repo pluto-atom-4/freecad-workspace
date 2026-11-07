@@ -32,7 +32,6 @@ BOX_SIZE = (0.04, 0.02, 0.04)
 BOX_CENTRE = 0.024
 WHEEL_CENTRE = 0.050
 WHEEL_HEIGHT = 0.012
-WHEEL_HALF_H = 0.006
 DEVICE_NAMES = ("wheel_motor_left", "wheel_motor_right", "wheel_sensor_left", "wheel_sensor_right")
 SIDES = [("LEFT", "left", +1), ("RIGHT", "right", -1)]
 ABS = 1e-9
