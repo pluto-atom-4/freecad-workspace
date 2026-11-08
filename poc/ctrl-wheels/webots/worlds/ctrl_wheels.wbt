@@ -8,7 +8,7 @@
 # wheels spin about their axles. The wheel endPoint Solids have Physics (mass 0.05).
 # The body is two Boxes (BODY_BOX_LEFT reddish, BODY_BOX_RIGHT bluish, tints are muted visual aids
 # only), each 0.04 x 0.02 x 0.04 at local z +-0.024, with an 8 mm gap between them (z -0.004..+0.004).
-# Track is +-0.050 (derivation in the wheel rule below).
+# Track is +-0.050 (derivation in the comment about the wheel anchors below).
 # A dynamic body later (not done here, no balance claim) would need a Physics node on the Robot and a
 # boundingObject covering both boxes; neither exists now, so the boxes are visual only.
 #
@@ -21,7 +21,8 @@
 # (0.050 = inner wheel face 0.044 + half the wheel height 0.006, with the sign set by the side).
 # The inner face 0.044 is the outer face of a body box (box centre 0.024 + half its z size 0.020).
 #
-# Orientation of the Robot (owner opened the old single-body world in Webots 2026-11-06; net direction observed on the old +-0.026 track, not re-run on this one; orientation still on paper, see below):
+# Orientation of the Robot (net direction: see the Observed block below; the orientation itself is
+# still derived on paper, see below):
 # the Robot is rotated -90 degrees about x, so its local +z points to world +y. Both hinge axes are
 # therefore local 0 0 1 (world +y). The left wheel sits at local z +0.050 (world +y) and the right
 # wheel at local z -0.050 (world -y). This is the reason for the sign flip compared with the
@@ -32,10 +33,14 @@
 # -x relative to the centre, so a free-rolling wheel with positive angular velocity moves toward +x.
 # Both wheels use the same sign, so a positive command rolls BOTH wheels toward +x. The single-wheel
 # world (ctrl_wheel.wbt, rotation +90 degrees) rolls toward -x. This twin differs on purpose.
-# Observed (owner, 2026-11-06, sim only, net direction at +1/+1): both wheels rolled toward +x; the
-# wheel sensors read +1/+1 for a positive command and -1/-1 for a negative one (owner-local CSVs,
-# not committed). That observation was on the old track of +-0.026 and was NOT re-run after the
-# track was widened to +-0.050 and the body split into two boxes. Chip-side signs stay UNCONFIRMED.
+# Observed (owner-reported in issue #537, 2026-11-07, sim only, on this two-box world, bridge sign
+# flags at their defaults and Webots controller constants +1/+1): commands of +1.0 and -1.0 rad/s
+# for 6 s each, one run per direction. Positive: both wheels rolled toward +x in the same sense;
+# negative: toward -x. Owner-local CSVs (not committed), left and right alike: angle-derived sensor
+# velocity (vel_rad_s_l, vel_rad_s_r) max +1.000 rad/s in the positive run and min -1.000 rad/s in
+# the negative run; wheel angle from 0 to +5.50 rad and from 0 to -5.66 rad (first and last echo
+# rows). An earlier owner run on 2026-11-06 used the old single-body +-0.026 track. NOT covered:
+# chip-side signs (UNCONFIRMED), Wokwi, latency, hardware, balance.
 #
 # Motor limits (both wheels, owner-chosen for this simulation, NOT servo specs). The maximum velocity
 # of 3.5 rad/s is above the wheel command clamp of 3.0 rad/s, so it does not limit a command. The clamp
