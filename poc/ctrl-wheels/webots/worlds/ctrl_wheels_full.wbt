@@ -1,8 +1,8 @@
 #VRML_SIM R2025a utf8
 
 # EXPERIMENT, sim only, not the main world. Copy of ctrl_wheels.wbt to test freecad-workspace issue
-# #544 (part of #533). Differences from the main world: the Robot is the physics root (see the Robot
-# node at the end, see the EXPERIMENT block below), WorldInfo has a contactProperties entry, header comments adjusted.
+# #544 (part of #533). Differences from the main world: the Robot is the physics root (physics, boundingObject
+# and contactMaterial; see the EXPERIMENT block below), a WorldInfo contactProperties entry and info text, header comments.
 # The physics numbers added here (mass, centre of mass, skids) are GUESSES. No Webots run of this copy
 # is recorded. No balance claim. The Observed block below was seen in the main world, not in this one.
 #
@@ -12,7 +12,7 @@
 #
 # EXPERIMENT: the Robot is the physics root (Physics mass 0.064, boundingObject of two body Boxes and
 # two passive skid Boxes). It may roll on the floor and may leave it (untested). The centre of mass is
-# 2 mm toward local +y (world down), at world z 0.028 below the axle at 0.03 (a guess). The wheel
+# 2 mm toward local +y (world down), at world z 0.028, 2 mm below the axle at z 0.03 (a guess). The wheel
 # endPoint Solids have Physics (mass 0.05). The wheel inner face and the box outer face are both at z
 # 0.044 (no clearance); contact between them is not checked.
 # The body is two Boxes (BODY_BOX_LEFT reddish, BODY_BOX_RIGHT bluish, tints are muted visual aids
@@ -20,7 +20,7 @@
 # Track is +-0.050 (derivation in the comment about the wheel anchors below).
 # The boundingObject boxes copy the two visual boxes. The two skids (translation +-0.02 0.0195 0, size
 # 0.004 0.020 0.004) are passive props, not wheels. The Robot uses contactMaterial body with friction 0,
-# which applies only to body versus default pairs; the wheels keep the default material (expected, untested).
+# which is expected to apply only to body versus default pairs; the wheels keep the default material (all untested).
 #
 # The lookup names for the left and right motors and position sensors are the ones written in the
 # two HingeJoint device lists below. The controller looks them up exactly (case-sensitive).
@@ -41,7 +41,7 @@
 # Direction, derivation on paper (the observation is stated below): with the Robot at -90 degrees about x, a positive velocity command
 # on a hinge turns that wheel about world +y. For such a wheel, the floor contact point moves toward
 # -x relative to the centre, so a free-rolling wheel with positive angular velocity moves toward +x (in the floor frame; body motion in this copy is untested).
-# Both wheels use the same sign, so a positive command rolls BOTH wheels toward +x. The single-wheel
+# Both wheels use the same sign, so a positive command rolls BOTH wheels toward +x (floor frame). The single-wheel
 # world (ctrl_wheel.wbt, rotation +90 degrees) rolls toward -x. This twin differs on purpose.
 # Observed (owner-reported in issue #537, 2026-11-07, sim only, on the main two-box world, bridge sign
 # flags at their defaults and Webots controller constants +1/+1): commands of +1.0 and -1.0 rad/s
