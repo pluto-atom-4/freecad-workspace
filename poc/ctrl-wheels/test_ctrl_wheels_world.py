@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""
-Text-only parse of webots/worlds/ctrl_wheels.wbt, no Webots. SIM ONLY.
-Pins body boxes, wheel anchors, device names, and the physics root (Robot mass/CoM,
-bounding boxes, skids, Robot pose, 0.5 mm clearance, contact properties, name set,
-wheel masses). Does not prove Webots loads the file, and says nothing about balance,
-wheel direction or sign.
-"""
+"""Text-only pins for webots/worlds/ctrl_wheels.wbt. SIM ONLY. Does not prove Webots loads the file."""
 
 from __future__ import annotations
 
