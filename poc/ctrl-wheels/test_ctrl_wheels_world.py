@@ -9,7 +9,10 @@ x 0.04 at local z +-0.024, an 8 mm gap), the box outer edge meeting the wheel
 inner face (0.044), the HingeJoint anchor equal to the wheel endPoint
 translation on each side, the mirrored wheels, the four device names, no
 boundingObject or Physics in the two box blocks, and no leftover 0.026 in the
-comment-stripped text.
+comment-stripped text. It also pins the physics root (#549): Robot-level Physics
+(mass 0.064, centerOfMass), the boundingObject Group (two body Boxes equal to the
+visual boxes, two skids mirrored in x), WorldInfo contactProperties with the Robot
+contactMaterial, the wheel masses, and the full set of name strings.
 
 SIM ONLY. This checks numbers in the text only. It does not prove the world
 loads in Webots, and it says nothing about balance, wheel direction or sign.
@@ -35,6 +38,14 @@ WHEEL_HEIGHT = 0.012
 DEVICE_NAMES = ("wheel_motor_left", "wheel_motor_right", "wheel_sensor_left", "wheel_sensor_right")
 SIDES = [("LEFT", "left", +1), ("RIGHT", "right", -1)]
 ABS = 1e-9
+ROBOT_MASS = 0.064
+ROBOT_COM = (0.0, 0.002, 0.0)
+WHEEL_MASS = 0.05
+WHEEL_RADIUS = 0.03
+SKID_X = 0.02
+SKID_Y = 0.0195
+SKID_SIZE = (0.004, 0.020, 0.004)
+ALL_NAMES = set(DEVICE_NAMES) | {"wheel_left", "wheel_right", "floor", "ctrl_wheels"}
 NUM = r"([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)"
 
 
@@ -165,6 +176,85 @@ def test_boxes_have_no_physics_or_bounding_object(world, side):
     block = _box(world, side)
     assert "boundingObject" not in block
     assert "Physics" not in block
+
+
+def _robot_tail(world: str) -> str:
+    """Robot text from its own contactMaterial on (after the hinges, so wheel nodes are excluded)."""
+    robot = _block(world, r"DEF\s+CTRL_WHEELS\s+Robot\s*\{")
+    i = robot.find("contactMaterial")
+    assert i >= 0, "no Robot-level contactMaterial"
+    return robot[i:]
+
+
+def _group_items(world: str):
+    """[(translation, size)] for each Transform in the Robot boundingObject Group."""
+    group = _block(_robot_tail(world), r"boundingObject\s+Group\s*\{")
+    items = []
+    for m in re.finditer(r"Transform\s*\{", group):
+        inner = _block(group[m.start():], r"Transform\s*\{")
+        items.append((_vec(inner, "translation"), _vec(inner, "size")))
+    return items
+
+
+def test_robot_is_physics_root(world):
+    phys = _block(_robot_tail(world), r"physics\s+Physics\s*\{")
+    m = re.search(r"\bmass\s+" + NUM, phys)
+    assert m, "no Robot mass"
+    assert float(m.group(1)) == pytest.approx(ROBOT_MASS, abs=ABS)
+    c = re.search(r"centerOfMass\s*\[\s*" + NUM + r"\s+" + NUM + r"\s+" + NUM + r"\s*\]", phys)
+    assert c, "no Robot centerOfMass"
+    assert tuple(float(g) for g in c.groups()) == pytest.approx(ROBOT_COM, abs=ABS)
+
+
+def test_bounding_object_body_boxes_equal_visual_boxes(world):
+    items = _group_items(world)
+    assert len(items) == 4
+    for side, _, _ in SIDES:
+        visual = (_vec(_box(world, side), "translation"), _vec(_box(world, side), "size"))
+        hits = [
+            1 for t, s in items
+            if t == pytest.approx(visual[0], abs=ABS) and s == pytest.approx(visual[1], abs=ABS)
+        ]
+        assert len(hits) == 1, f"no bounding Box equal to BODY_BOX_{side}"
+
+
+def test_skids_mirrored_and_below_wheel_radius(world):
+    skids = [(t, s) for t, s in _group_items(world) if s == pytest.approx(SKID_SIZE, abs=ABS)]
+    assert len(skids) == 2
+    skids.sort(key=lambda ts: ts[0][0])
+    assert skids[0][0] == pytest.approx((-SKID_X, SKID_Y, 0.0), abs=ABS)
+    assert skids[1][0] == pytest.approx((+SKID_X, SKID_Y, 0.0), abs=ABS)
+    # Robot-frame y is DOWN, so the skid bottom is y + half height; it must stay above the floor.
+    bottom = SKID_Y + SKID_SIZE[1] / 2
+    assert bottom == pytest.approx(0.0295, abs=ABS)
+    assert bottom < WHEEL_RADIUS
+    for low in ("left", "right"):
+        endpoint = _block(_hinge(world, low), r"endPoint\s+Solid\s*\{")
+        r = re.search(r"Cylinder\s*\{[^}]*?radius\s+" + NUM, endpoint)
+        assert r and float(r.group(1)) == pytest.approx(WHEEL_RADIUS, abs=ABS)
+
+
+def test_contact_properties_and_contact_material(world):
+    info = _block(world, r"WorldInfo\s*\{")
+    cp = _block(info, r"ContactProperties\s*\{")
+    assert re.search(r'material1\s+"body"', cp)
+    assert re.search(r'material2\s+"default"', cp)
+    assert re.search(r"coulombFriction\s*\[\s*0(?:\.0+)?\s*\]", cp)
+    assert re.search(r'contactMaterial\s+"body"', _robot_tail(world))
+
+
+def test_name_strings_unchanged(world):
+    names = re.findall(r'\bname\s+"([^"]*)"', world)
+    assert set(names) == ALL_NAMES
+    assert len(names) == len(ALL_NAMES), "duplicate name string"
+
+
+@pytest.mark.parametrize("low", ["left", "right"])
+def test_wheel_physics_mass(world, low):
+    endpoint = _block(_hinge(world, low), r"endPoint\s+Solid\s*\{")
+    phys = _block(endpoint, r"physics\s+Physics\s*\{")
+    m = re.search(r"\bmass\s+" + NUM, phys)
+    assert m and float(m.group(1)) == pytest.approx(WHEEL_MASS, abs=ABS)
 
 
 def test_no_stale_026_in_code(world):
