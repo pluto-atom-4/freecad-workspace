@@ -33,13 +33,14 @@
 # -x relative to the centre, so a free-rolling wheel with positive angular velocity moves toward +x.
 # Both wheels use the same sign, so a positive command rolls BOTH wheels toward +x. The single-wheel
 # world (ctrl_wheel.wbt, rotation +90 degrees) rolls toward -x. This twin differs on purpose.
-# Observed (owner-reported in issue #537, 2026-11-07, sim only, on this two-box world, bridge and
-# Webots signs +1/+1): a positive command rolled toward +x and a negative command rolled toward -x,
-# both wheels the same sense. Wheel sensor velocity peaked at +1.000 rad/s on both wheels for the
-# positive command and -1.000 rad/s for the negative one; angle change +5.50 and -5.66 rad
-# (owner-local CSVs, not committed). One run per direction. An earlier owner run on 2026-11-06 used
-# the old single-body +-0.026 track. NOT covered: chip-side signs (UNCONFIRMED), Wokwi, latency,
-# hardware, balance.
+# Observed (owner-reported in issue #537, 2026-11-07, sim only, on this two-box world, bridge flags
+# at their defaults and Webots controller constants +1/+1): a positive command rolled toward +x and
+# a negative command rolled toward -x, both wheels the same sense. Wheel sensor velocity peaked at
+# +1.000 rad/s on both wheels for the positive command and -1.000 rad/s for the negative one; the
+# wheel angle went from 0 to +5.50 rad and from 0 to -5.66 rad (first and last echo rows, owner-local
+# CSVs, not committed). One run per direction. An earlier owner run on 2026-11-06 used the old
+# single-body +-0.026 track. NOT covered: chip-side signs (UNCONFIRMED), Wokwi, latency, hardware,
+# balance.
 #
 # Motor limits (both wheels, owner-chosen for this simulation, NOT servo specs). The maximum velocity
 # of 3.5 rad/s is above the wheel command clamp of 3.0 rad/s, so it does not limit a command. The clamp
