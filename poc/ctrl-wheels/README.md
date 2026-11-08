@@ -7,6 +7,7 @@ SIM ONLY. This directory holds the bridge, relay, CSV log, fake wheels and Webot
 Ran (owner-reported, sim only; the author of this README did not run these):
 
 - Webots twin run (owner-reported).
+- Load of `webots/worlds/ctrl_wheels.wbt` in Webots (owner-reported, 2026-11-07, sim only): no red error in the console; two body boxes (left reddish, right bluish) with a visible gap of about 8 mm; each wheel touches its box with no visible gap or overlap; red marker on the left wheel, blue on the right; no flicker at the wheel and box faces; the controller listened on 127.0.0.1:5018 (protocol v2) and echoed to 5017; motor and sensor names as expected; angles and velocities 0 while idle (first velocity sample nan). The console showed one WARNING: `DEF CTRL_WHEELS Robot: This node is controlled in kinematics mode but some Solid descendant nodes have physics and won't move along with this node.` It is reported as seen, not investigated here. This is a visual and load check only; it does not settle the wheel direction.
 - VS Code Wokwi run of `c3_ctrl_wheels-xiao_c3` into the bridge (`--port rfc2217://localhost:4002`, 60 s), with the Webots run on the other side. The owner reported that both wheels turned together and that the bridge exited with code 0. This run does not settle the direction of either wheel.
 
 Not run:
@@ -16,6 +17,7 @@ Not run:
 - A fall seen in WHL2 (state 1).
 - A long run.
 - Three RFC2217 listeners at once.
+- The +1/+1 direction on the two-box world (both wheels the same sense toward +x, wheel sensors +1/+1 for a positive command).
 - Any hardware.
 
 Open:
@@ -54,7 +56,7 @@ Open:
 | `test_ctrl_wheels_bridge_cli.py` | Bridge command-line tests (`build_parser`, `main`). |
 | `webots/controllers/ctrl_wheels/ctrl_wheels.py` | Webots controller. Binds 127.0.0.1:5018, keeps the newest valid v2 command and sets both motor velocities with fixed signs of +1. Both wheels stop when no valid command has arrived, when the newest command has stale 1, or when it is 0.2 s of sim time old. Sends one echo per step to 127.0.0.1:5017. |
 | `webots/controllers/ctrl_wheels/sensor_read.py` | Sensor maths (finite angle check, finite-difference velocity). No Webots import. |
-| `webots/worlds/ctrl_wheels.wbt` | Webots world: a fixed body made of two boxes (`BODY_BOX_LEFT`, `BODY_BOX_RIGHT`, each 0.04 x 0.02 x 0.04 m at local z +-0.024, 8 mm gap) and two hinge wheels at local z +-0.050 (track 10.0 cm), motors `wheel_motor_left` and `wheel_motor_right`, sensors `wheel_sensor_left` and `wheel_sensor_right`. Direction with signs +1/+1: owner-observed OK in Webots on the OLD track (2026-11-06, wheels at z +-0.026, 5.2 cm, one body box); not re-run on this two-box world (see Sign convention). Motor limits are owner-chosen for this simulation and not checked here. |
+| `webots/worlds/ctrl_wheels.wbt` | Webots world: a fixed body made of two boxes (`BODY_BOX_LEFT`, `BODY_BOX_RIGHT`, each 0.04 x 0.02 x 0.04 m at local z +-0.024, 8 mm gap) and two hinge wheels at local z +-0.050 (track 10.0 cm), motors `wheel_motor_left` and `wheel_motor_right`, sensors `wheel_sensor_left` and `wheel_sensor_right`. Direction with signs +1/+1: owner-observed OK in Webots on the OLD track (2026-11-06, wheels at z +-0.026, 5.2 cm, one body box); not re-run on this two-box world (see Sign convention). Load and appearance of this world: owner-reported 2026-11-07, see Status. Motor limits are owner-chosen for this simulation and not checked here. |
 
 ## Origins
 
