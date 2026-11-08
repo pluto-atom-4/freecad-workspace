@@ -2,31 +2,34 @@
 
 # EXPERIMENT, sim only, not the main world. Copy of ctrl_wheels.wbt for freecad-workspace #545,
 # which tests #544 (boxes look displaced from the driven wheels, cause unverified). No balance claim.
-# Direction, observations and motor-limit derivations: see the header of ctrl_wheels.wbt.
+# Direction, observations (main world only), motor-limit derivations: see ctrl_wheels.wbt header, #537.
 #
-# WHY (mass, centre of mass, skid size and 0.5 mm clearance are GUESSES, none measured):
+# WHY (mass, centre of mass, skid size and skid-to-floor clearance 0.5 mm are GUESSES, none measured):
 # - Robot is the physics root: in the main world only the wheels have physics under a kinematic
-#   Robot, which Webots warns about and which may let wheels and boxes move apart (#544).
-# - boundingObject is a Group of the two body Boxes plus two passive skids: a physics Robot needs
-#   one, and the skids are meant to keep the free body from tipping onto the axle (untested).
-# - centerOfMass 2 mm below the axle (local +y): meant to keep the body hanging level.
-# - contactMaterial body with friction 0 against default: so the skids slide and add no drag.
-#   The wheels keep the default material. Whether Webots applies it so is untested.
+#   Robot (console warning seen there, see #544), which may let wheels and boxes move apart.
+# - boundingObject is a Group of the two body Boxes plus two skids: the body needs one to touch the
+#   floor; the skids are the lowest body points and should stop pitch about the axle (untested).
+# - centerOfMass 2 mm below the axle: meant to keep the body hanging level.
+# - contactMaterial body, friction 0 against default: so the skids slide. It also applies to
+#   wheel-vs-body contact at the inner faces; wheel-vs-floor keeps default friction.
 #
-# HOW TO USE (human, in Webots; nothing was run): command +1.0 and -1.0 rad/s, 6 s each. Pass if
-# wheel local z stays 0.0500 and -0.0500 (the box-to-wheel offset is constant). Report the Robot
-# translation and rotation in #545.
+# HOW TO USE (human, in Webots; this copy has never been run): drive +1.0 and -1.0 rad/s, 6 s each
+# (ctrl_wheels_msg through the bridge, see poc/ctrl-wheels/README.md). Pass: wheel local z stays
+# 0.0500 and -0.0500 within 0.1 mm (scene tree, Robot frame; the main world read 0.0278, #544).
+# Report the Robot translation and rotation in #545.
 #
 # HAZARDS:
-# - Robot rotation is -90 degrees about x: local +z is the world +y axle, local +y is world DOWN.
+# - Robot rotation is -90 degrees about x (ctrl_wheel.wbt uses +90, do not copy it): local +z is
+#   the world +y axle, local +y is world DOWN.
 # - Per side, HingeJoint anchor and endPoint translation must stay identical (0.050 or -0.050 =
-#   inner face 0.044 + half wheel height 0.006). Do not rotate a wheel Solid (Cylinder axis is z).
+#   body box face 0.024 + 0.020, plus half wheel height 0.006). Do not rotate a wheel Solid.
 # - Wheel inner face touches the body box face (0.044, no clearance): contact is untested.
-# - Units rad/s and N.m. The controller clamps to 3.0 rad/s (CLAMP_RAD_S); maxVelocity 3.5 is
-#   above it and never limits. maxTorque 1e-3 is owner-chosen, not a servo spec.
+# - Units rad/s and N.m. The controller clamps to 3.0 rad/s (CLAMP_RAD_S); maxVelocity 3.5 does not
+#   limit commands up to 3.0. maxTorque 1e-3 is owner-chosen, not a servo spec.
 # - The robot can roll away and off the 2 m floor.
-# - test_ctrl_wheels_world.py pins only the main world, not this file. Device names are exact.
-# - Group of bare Boxes and ContactProperties are UNVERIFIED in Webots R2025a.
+# - test_ctrl_wheels_world.py pins only the main world, not this file. Device names are exact
+#   (case-sensitive).
+# - Box nodes inside the boundingObject Group and ContactProperties are UNVERIFIED in Webots R2025a.
 
 WorldInfo {
   info [
