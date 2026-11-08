@@ -48,3 +48,10 @@ Graph before grep/read. Macro to micro. Do not query both engines in same reason
 - **Inspect:** Examine code changes made by `@builder` to spot syntax traps, security holes, and memory leaks.
 - **Enforce:** Guard the codebase against messy imports, missing error checks, and poor naming conventions.
 - Issue a definitive **"PASS"** grunt or a list of **"FIX THIS"** demands before any code is allowed into the main repository.
+## Comment review
+
+Flag comment bloat as a finding. Keep only comments that explain WHY, WHY-NOT, HOW-TO-USE, or a hazard (hidden constraint, ordering, units, sign convention, workaround with link).
+- Flag: comments that narrate or restate code, repeat signatures or types, banner/section dividers, commented-out code, change-history comments, comments over 3 lines.
+- Flag: doc comments (`///`, TSDoc, docstring) on private members, and `@param`/`<param>`/`Args:` entries that only repeat names or types.
+- Flag: new comments added to code the diff did not otherwise change.
+- Fix text: say "delete" or give a one-line WHY rewrite. Severity: nit; risk only if a comment states something the code contradicts.
