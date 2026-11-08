@@ -1,22 +1,21 @@
 #VRML_SIM R2025a utf8
 
 # Twin of ctrl_wheel.wbt for the ctrl-wheels relay sim (freecad-workspace #501, umbrella #482).
-# Two velocity-driven wheels on a free body (Robot is the physics root). SIM ONLY. No balance claim.
-# Wheel direction observation: README Sign convention (made on the earlier non-physics body, not
-# re-run on this world, re-run pending, #552).
+# Two velocity-driven wheels on a free body. SIM ONLY. No balance claim.
+# Wheel direction: README Sign convention, observed 2026-11-07 on the two-box world before the physics-root
+# change (owner-reported). Not re-run on this file, pending #552.
 #
 # WHY (mass, centre of mass, skid size and skid-to-floor clearance 0.5 mm are GUESSES, none measured):
 # - Robot is the physics root: when only the wheels had physics under a kinematic Robot (console
-#   warning, #544), wheels and boxes may have moved apart. Adopted per #549, evidence #545 (one run pair).
+#   warning, #544), wheels and boxes may have moved apart.
 # - boundingObject: without a collision shape the body cannot rest on the floor. The two skids are
 #   the lowest body points and should stop the pitch that the motor reaction torque would cause.
 # - centerOfMass below the axle: meant to keep the body hanging level.
 # - contactMaterial body with friction 0: so the skids slide. Wheel-vs-floor keeps default friction.
 #
-# HOW TO USE (human, in Webots): start Webots before the bridge. Drive with ctrl_wheels_msg through
-# the bridge, see poc/ctrl-wheels/README.md. The robot is free and rolls about 0.17 m per 6 s run
-# at 1.0 rad/s. Use File > Reload World between runs. This physics-root world has been run only as
-# the experiment copy so far (#545); the direction check is pending (#552).
+# HOW TO USE (human, in Webots): drive with ctrl_wheels_msg through the bridge, see poc/ctrl-wheels/README.md.
+# The robot is free and rolls away, rolling distance not measured. Use File > Reload World between runs.
+# This file has not been run in Webots; the physics-root layout ran only in #545. Direction re-run pending (#552).
 #
 # HAZARDS:
 # - Robot rotation is -90 degrees about x (ctrl_wheel.wbt uses +90, do not copy it): Robot-frame z
@@ -24,9 +23,11 @@
 # - Per side, HingeJoint anchor and endPoint translation must equal each other (0.050 or -0.050 =
 #   body box centre 0.024 + half size 0.020 + half wheel height 0.006). Do not rotate a wheel
 #   Solid: a Webots Cylinder axis is local z, the same as the hinge axis.
-# - Wheel inner face touches the body box face (0.044, no clearance): untested; friction 0 intended.
-# - Units rad/s and N.m. The controller clamps to 3.0 rad/s (CLAMP_RAD_S, ctrl_wheels.py:71);
-#   maxVelocity 3.5 does not limit commands up to 3.0. maxTorque 1e-3 is not a servo spec.
+# - Wheel inner face touches the body box face (0.044, no clearance): contact not run on this
+#   layout; friction 0 intended.
+# - Units rad/s and N.m. The controller clamps to 3.0 rad/s (CLAMP_RAD_S,
+#   webots/controllers/ctrl_wheels/ctrl_wheels.py:71); maxVelocity 3.5 does not limit commands
+#   up to 3.0. maxTorque 1e-3 is not a servo spec.
 # - The robot can roll away and off the 2 m floor.
 # - test_ctrl_wheels_world.py pins this file. Device names are exact, case-sensitive.
 # - UNVERIFIED in Webots R2025a: Box nodes inside a boundingObject Group; ContactProperties effect.
