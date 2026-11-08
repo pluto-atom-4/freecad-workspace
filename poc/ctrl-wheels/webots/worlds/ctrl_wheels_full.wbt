@@ -2,9 +2,9 @@
 
 # EXPERIMENT, sim only, not the main world. Copy of ctrl_wheels.wbt to test freecad-workspace issue
 # #544 (part of #533). Differences from the main world: the Robot is the physics root (see the Robot
-# node at the end), WorldInfo has a contactProperties entry, and the header comments are adjusted.
+# node at the end, see the EXPERIMENT block below), WorldInfo has a contactProperties entry, header comments adjusted.
 # The physics numbers added here (mass, centre of mass, skids) are GUESSES. No Webots run of this copy
-# exists. No balance claim. The Observed block below was seen in the main world, not in this one.
+# is recorded. No balance claim. The Observed block below was seen in the main world, not in this one.
 #
 # Twin of ctrl_wheel.wbt for the ctrl-wheel relay sim (freecad-workspace issue #501, umbrella #482).
 # Two velocity-driven wheels on one body (a physics root in this copy), driven by the ctrl_wheels controller with setVelocity.
@@ -20,7 +20,7 @@
 # Track is +-0.050 (derivation in the comment about the wheel anchors below).
 # The boundingObject boxes copy the two visual boxes. The two skids (translation +-0.02 0.0195 0, size
 # 0.004 0.020 0.004) are passive props, not wheels. The Robot uses contactMaterial body with friction 0,
-# which applies only to body versus default pairs; the wheels keep the default material and normal grip.
+# which applies only to body versus default pairs; the wheels keep the default material (expected, untested).
 #
 # The lookup names for the left and right motors and position sensors are the ones written in the
 # two HingeJoint device lists below. The controller looks them up exactly (case-sensitive).
@@ -31,7 +31,7 @@
 # (0.050 = inner wheel face 0.044 + half the wheel height 0.006, with the sign set by the side).
 # The inner face 0.044 is the outer face of a body box (box centre 0.024 + half its z size 0.020).
 #
-# Orientation of the Robot (net direction: see the Observed block below; the orientation itself is
+# Orientation of the Robot (the observed direction is in the Observed block below; the orientation itself is
 # still derived on paper, see below):
 # the Robot is rotated -90 degrees about x, so its local +z points to world +y. Both hinge axes are
 # therefore local 0 0 1 (world +y). The left wheel sits at local z +0.050 (world +y) and the right
@@ -40,7 +40,7 @@
 #
 # Direction, derivation on paper (the observation is stated below): with the Robot at -90 degrees about x, a positive velocity command
 # on a hinge turns that wheel about world +y. For such a wheel, the floor contact point moves toward
-# -x relative to the centre, so a free-rolling wheel with positive angular velocity moves toward +x (relative to the Robot body in this copy).
+# -x relative to the centre, so a free-rolling wheel with positive angular velocity moves toward +x (in the floor frame; body motion in this copy is untested).
 # Both wheels use the same sign, so a positive command rolls BOTH wheels toward +x. The single-wheel
 # world (ctrl_wheel.wbt, rotation +90 degrees) rolls toward -x. This twin differs on purpose.
 # Observed (owner-reported in issue #537, 2026-11-07, sim only, on the main two-box world, bridge sign
