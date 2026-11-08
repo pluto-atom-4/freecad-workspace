@@ -1,69 +1,32 @@
 #VRML_SIM R2025a utf8
 
-# EXPERIMENT, sim only, not the main world. Copy of ctrl_wheels.wbt to test freecad-workspace issue
-# #544 (part of #533). Differences from the main world: the Robot is the physics root (physics, boundingObject
-# and contactMaterial; see the EXPERIMENT block below), a WorldInfo contactProperties entry and info text, header comments.
-# The physics numbers added here (mass, centre of mass, skids) are GUESSES. No Webots run of this copy
-# is recorded. No balance claim. The Observed block below was seen in the main world, not in this one.
+# EXPERIMENT, sim only, not the main world. Copy of ctrl_wheels.wbt for freecad-workspace #545,
+# which tests #544 (boxes look displaced from the driven wheels, cause unverified). No balance claim.
+# Direction, observations and motor-limit derivations: see the header of ctrl_wheels.wbt.
 #
-# Twin of ctrl_wheel.wbt for the ctrl-wheel relay sim (freecad-workspace issue #501, umbrella #482).
-# Two velocity-driven wheels on one body (a physics root in this copy), driven by the ctrl_wheels controller with setVelocity.
-# SIM ONLY. No balance claim.
+# WHY (mass, centre of mass, skid size and 0.5 mm clearance are GUESSES, none measured):
+# - Robot is the physics root: in the main world only the wheels have physics under a kinematic
+#   Robot, which Webots warns about and which may let wheels and boxes move apart (#544).
+# - boundingObject is a Group of the two body Boxes plus two passive skids: a physics Robot needs
+#   one, and the skids are meant to keep the free body from tipping onto the axle (untested).
+# - centerOfMass 2 mm below the axle (local +y): meant to keep the body hanging level.
+# - contactMaterial body with friction 0 against default: so the skids slide and add no drag.
+#   The wheels keep the default material. Whether Webots applies it so is untested.
 #
-# EXPERIMENT: the Robot is the physics root (Physics mass 0.064, boundingObject of two body Boxes and
-# two passive skid Boxes). It may roll on the floor and may leave it (untested). The centre of mass is
-# 2 mm toward local +y (world down), at world z 0.028, 2 mm below the axle at z 0.03 (a guess). The wheel
-# endPoint Solids have Physics (mass 0.05). The wheel inner face and the box outer face are both at z
-# 0.044 (no clearance); contact between them is not checked.
-# The body is two Boxes (BODY_BOX_LEFT reddish, BODY_BOX_RIGHT bluish, tints are muted visual aids
-# only), each 0.04 x 0.02 x 0.04 at local z +-0.024, with an 8 mm gap between them (z -0.004..+0.004).
-# Track is +-0.050 (derivation in the comment about the wheel anchors below).
-# The boundingObject boxes copy the two visual boxes. The two skids (translation +-0.02 0.0195 0, size
-# 0.004 0.020 0.004) are passive props, not wheels. The Robot uses contactMaterial body with friction 0,
-# which is expected to apply only to body versus default pairs; the wheels keep the default material (all untested).
+# HOW TO USE (human, in Webots; nothing was run): command +1.0 and -1.0 rad/s, 6 s each. Pass if
+# wheel local z stays 0.0500 and -0.0500 (the box-to-wheel offset is constant). Report the Robot
+# translation and rotation in #545.
 #
-# The lookup names for the left and right motors and position sensors are the ones written in the
-# two HingeJoint device lists below. The controller looks them up exactly (case-sensitive).
-#
-# Frame: ENU (x East, y North, z Up).
-# A Webots Cylinder's axis is local Z, so do NOT add a `rotation` to a wheel Solid. For each wheel,
-# the HingeJoint anchor and the endPoint translation must stay identical
-# (0.050 = inner wheel face 0.044 + half the wheel height 0.006, with the sign set by the side).
-# The inner face 0.044 is the outer face of a body box (box centre 0.024 + half its z size 0.020).
-#
-# Orientation of the Robot (the observed direction is in the Observed block below; the orientation itself is
-# still derived on paper, see below):
-# the Robot is rotated -90 degrees about x, so its local +z points to world +y. Both hinge axes are
-# therefore local 0 0 1 (world +y). The left wheel sits at local z +0.050 (world +y) and the right
-# wheel at local z -0.050 (world -y). This is the reason for the sign flip compared with the
-# single-wheel template, which uses +90 degrees.
-#
-# Direction, derivation on paper (the observation is stated below): with the Robot at -90 degrees about x, a positive velocity command
-# on a hinge turns that wheel about world +y. For such a wheel, the floor contact point moves toward
-# -x relative to the centre, so a free-rolling wheel with positive angular velocity moves toward +x (in the floor frame; body motion in this copy is untested).
-# Both wheels use the same sign, so a positive command rolls BOTH wheels toward +x (floor frame). The single-wheel
-# world (ctrl_wheel.wbt, rotation +90 degrees) rolls toward -x. This twin differs on purpose.
-# Observed (owner-reported in issue #537, 2026-11-07, sim only, on the main two-box world, bridge sign
-# flags at their defaults and Webots controller constants +1/+1): commands of +1.0 and -1.0 rad/s
-# for 6 s each, one run per direction. Positive: both wheels rolled toward +x in the same sense;
-# negative: toward -x. Owner-local CSVs (not committed), left and right alike: angle-derived sensor
-# velocity (vel_rad_s_l, vel_rad_s_r) max +1.000 rad/s in the positive run and min -1.000 rad/s in
-# the negative run; wheel angle from 0 to +5.50 rad and from 0 to -5.66 rad (first and last echo
-# rows). An earlier owner run on 2026-11-06 used the old single-body +-0.026 track. NOT covered:
-# chip-side signs (UNCONFIRMED), Wokwi, latency, hardware, balance, and this physics-root copy (never
-# run).
-#
-# Motor limits (both wheels, owner-chosen for this simulation, NOT servo specs). The maximum velocity
-# of 3.5 rad/s is above the wheel command clamp of 3.0 rad/s, so it does not limit a command. The clamp
-# is CLAMP_RAD_S = 3.0 at poc/ctrl-wheel/webots/controllers/ctrl_wheel/ctrl_wheel.py:45 (the single-wheel
-# controller). The twin contract, poc/ctrl-wheels/CONTRACT.md:77 (S3), clamps each wheel to +-3.0 rad/s.
-# The twin controller (webots/controllers/ctrl_wheels/ctrl_wheels.py) applies the same clamp (CLAMP_RAD_S = 3.0).
-# This world does not show the clamp itself. The max torque of 1e-3 N.m is assumed the same per wheel. The inertia of
-# 2.25e-5 kg.m2 is the analytic value 1/2 * m * r^2 for a solid disc with m = 0.05 kg and r = 0.03 m.
-# It is not a measurement (the single-wheel world's comment calls it measured, which is wrong). With a
-# max torque of 1e-3 N.m, 1e-3 / 2.25e-5 is about 44 rad/s^2, so a step to 1 rad/s takes about 22.5 ms
-# (wheel disc only, body reaction ignored: UNVERIFIED for this copy, where the Robot is a free body).
-# Not measured here. Sim only, UNVERIFIED against hardware.
+# HAZARDS:
+# - Robot rotation is -90 degrees about x: local +z is the world +y axle, local +y is world DOWN.
+# - Per side, HingeJoint anchor and endPoint translation must stay identical (0.050 or -0.050 =
+#   inner face 0.044 + half wheel height 0.006). Do not rotate a wheel Solid (Cylinder axis is z).
+# - Wheel inner face touches the body box face (0.044, no clearance): contact is untested.
+# - Units rad/s and N.m. The controller clamps to 3.0 rad/s (CLAMP_RAD_S); maxVelocity 3.5 is
+#   above it and never limits. maxTorque 1e-3 is owner-chosen, not a servo spec.
+# - The robot can roll away and off the 2 m floor.
+# - test_ctrl_wheels_world.py pins only the main world, not this file. Device names are exact.
+# - Group of bare Boxes and ContactProperties are UNVERIFIED in Webots R2025a.
 
 WorldInfo {
   info [
