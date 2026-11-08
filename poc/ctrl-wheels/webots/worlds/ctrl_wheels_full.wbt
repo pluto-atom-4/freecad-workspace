@@ -1,0 +1,277 @@
+#VRML_SIM R2025a utf8
+
+# EXPERIMENT, sim only, not the main world. Copy of ctrl_wheels.wbt for freecad-workspace #545,
+# which tests #544 (boxes look displaced from the driven wheels, cause unverified). No balance claim.
+# Direction, observations (main world only), motor-limit derivations: see ctrl_wheels.wbt header, #537.
+#
+# WHY (mass, centre of mass, skid size and skid-to-floor clearance 0.5 mm are GUESSES, none measured):
+# - Robot is the physics root: in the main world only the wheels have physics under a kinematic
+#   Robot (console warning seen there, see #544), which may let wheels and boxes move apart.
+# - boundingObject: without a collision shape the body cannot rest on the floor. The two skids are
+#   the lowest body points and should stop the pitch that the motor reaction torque would cause.
+# - centerOfMass below the axle: meant to keep the body hanging level.
+# - contactMaterial body with friction 0: so the skids slide. Wheel-vs-floor keeps default friction.
+#
+# HOW TO USE (human, in Webots; this copy has never been run): open THIS file, not ctrl_wheels.wbt,
+# and start Webots before the bridge. Drive +1.0 and -1.0 rad/s, 6 s each (ctrl_wheels_msg through
+# the bridge, see poc/ctrl-wheels/README.md). Pass: wheel velocity follows +-1.0 rad/s AND wheel z
+# (scene tree, Robot frame) stays +-0.0500 within 0.1 mm (main world: left 0.0278 after a run, #544).
+# Report the Robot translation and rotation in #545.
+#
+# HAZARDS:
+# - Robot rotation is -90 degrees about x (ctrl_wheel.wbt uses +90, do not copy it): Robot-frame z
+#   is the world +y axle, Robot-frame y is world DOWN.
+# - Per side, HingeJoint anchor and endPoint translation must equal each other (0.050 or -0.050 =
+#   body box centre 0.024 + half size 0.020 + half wheel height 0.006). Do not rotate a wheel
+#   Solid: a Webots Cylinder axis is local z, the same as the hinge axis.
+# - Wheel inner face touches the body box face (0.044, no clearance): untested; friction 0 intended.
+# - Units rad/s and N.m. The controller clamps to 3.0 rad/s (CLAMP_RAD_S, ctrl_wheels.py:71);
+#   maxVelocity 3.5 does not limit commands up to 3.0. maxTorque 1e-3 is not a servo spec.
+# - The robot can roll away and off the 2 m floor.
+# - test_ctrl_wheels_world.py pins only the main world. Device names are exact, case-sensitive.
+# - UNVERIFIED in Webots R2025a: Box nodes inside a boundingObject Group; ContactProperties effect.
+
+WorldInfo {
+  info [
+    "ctrl-wheels EXPERIMENT (freecad-workspace issue #544, part of #533): physics-root copy of the twin world. Two idealised velocity-driven wheels on a free body (generic RotationalMotor, no servo model) for the ctrl_wheels controller. Not the main world. Sim only."
+  ]
+  title "ctrl_wheels"
+  coordinateSystem "ENU"
+  basicTimeStep 16
+  contactProperties [
+    ContactProperties {
+      material1 "body"
+      material2 "default"
+      coulombFriction [ 0 ]
+    }
+  ]
+}
+
+Viewpoint {
+  orientation -0.3 0.3 0.9 1.2
+  position -0.25 -0.35 0.35
+}
+
+Background {
+  skyColor [0.6 0.75 0.95]
+}
+
+DirectionalLight {
+  direction -0.5 -0.5 -1.0
+  intensity 1.0
+  ambientIntensity 0.4
+}
+
+Solid {
+  translation 0 0 -0.01
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.75 0.75 0.75
+        }
+      }
+      geometry Box {
+        size 2.0 2.0 0.02
+      }
+    }
+  ]
+  name "floor"
+  boundingObject Box {
+    size 2.0 2.0 0.02
+  }
+}
+
+DEF CTRL_WHEELS Robot {
+  translation 0 0 0.03
+  rotation 1 0 0 -1.57079633
+  children [
+    DEF BODY_BOX_LEFT Transform {
+      translation 0 0 0.024
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0.45 0.20 0.20
+            }
+          }
+          geometry Box {
+            size 0.04 0.02 0.04
+          }
+        }
+      ]
+    }
+    DEF BODY_BOX_RIGHT Transform {
+      translation 0 0 -0.024
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0.20 0.20 0.45
+            }
+          }
+          geometry Box {
+            size 0.04 0.02 0.04
+          }
+        }
+      ]
+    }
+    HingeJoint {
+      jointParameters HingeJointParameters {
+        axis 0 0 1
+        anchor 0 0 0.050
+      }
+      device [
+        RotationalMotor {
+          name "wheel_motor_left"
+          maxVelocity 3.5
+          maxTorque 1e-3
+        }
+        PositionSensor {
+          name "wheel_sensor_left"
+        }
+      ]
+      endPoint Solid {
+        translation 0 0 0.050
+        children [
+          Transform {
+            translation 0.024 0 0
+            children [
+              Shape {
+                appearance Appearance {
+                  material Material {
+                    diffuseColor 1 0 0
+                  }
+                }
+                geometry Box {
+                  size 0.006 0.006 0.014
+                }
+              }
+            ]
+          }
+          Shape {
+            appearance Appearance {
+              material Material {
+                diffuseColor 0.05 0.05 0.05
+              }
+            }
+            geometry Cylinder {
+              radius 0.03
+              height 0.012
+            }
+          }
+        ]
+        name "wheel_left"
+        boundingObject Cylinder {
+          radius 0.03
+          height 0.012
+        }
+        physics Physics {
+          density -1
+          mass 0.05
+        }
+      }
+    }
+    HingeJoint {
+      jointParameters HingeJointParameters {
+        axis 0 0 1
+        anchor 0 0 -0.050
+      }
+      device [
+        RotationalMotor {
+          name "wheel_motor_right"
+          maxVelocity 3.5
+          maxTorque 1e-3
+        }
+        PositionSensor {
+          name "wheel_sensor_right"
+        }
+      ]
+      endPoint Solid {
+        translation 0 0 -0.050
+        children [
+          Transform {
+            translation 0.024 0 0
+            children [
+              Shape {
+                appearance Appearance {
+                  material Material {
+                    diffuseColor 0 0 1
+                  }
+                }
+                geometry Box {
+                  size 0.006 0.006 0.014
+                }
+              }
+            ]
+          }
+          Shape {
+            appearance Appearance {
+              material Material {
+                diffuseColor 0.05 0.05 0.05
+              }
+            }
+            geometry Cylinder {
+              radius 0.03
+              height 0.012
+            }
+          }
+        ]
+        name "wheel_right"
+        boundingObject Cylinder {
+          radius 0.03
+          height 0.012
+        }
+        physics Physics {
+          density -1
+          mass 0.05
+        }
+      }
+    }
+  ]
+  contactMaterial "body"
+  boundingObject Group {
+    children [
+      Transform {
+        translation 0 0 0.024
+        children [
+          Box {
+            size 0.04 0.02 0.04
+          }
+        ]
+      }
+      Transform {
+        translation 0 0 -0.024
+        children [
+          Box {
+            size 0.04 0.02 0.04
+          }
+        ]
+      }
+      Transform {
+        translation 0.02 0.0195 0
+        children [
+          Box {
+            size 0.004 0.020 0.004
+          }
+        ]
+      }
+      Transform {
+        translation -0.02 0.0195 0
+        children [
+          Box {
+            size 0.004 0.020 0.004
+          }
+        ]
+      }
+    ]
+  }
+  physics Physics {
+    density -1
+    mass 0.064
+    centerOfMass [ 0 0.002 0 ]
+  }
+  name "ctrl_wheels"
+  controller "ctrl_wheels"
+  supervisor TRUE
+}
