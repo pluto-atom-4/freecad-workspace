@@ -2,8 +2,8 @@
 
 # Twin of ctrl_wheel.wbt for the ctrl-wheels relay sim (freecad-workspace #501, umbrella #482).
 # Two velocity-driven wheels on a free body. SIM ONLY. No balance claim.
-# Wheel direction: README Sign convention, observed 2026-11-07 on the two-box world before the physics-root
-# change (owner-reported). Not re-run on this file, pending #552.
+# Wheel direction: README Sign convention (two-box world, 2026-11-07, owner-reported). Not re-run on this
+# file, pending #552.
 #
 # WHY (mass, centre of mass, skid size and skid-to-floor clearance 0.5 mm are GUESSES, none measured):
 # - Robot is the physics root: when only the wheels had physics under a kinematic Robot (console
@@ -15,7 +15,7 @@
 #
 # HOW TO USE (human, in Webots): drive with ctrl_wheels_msg through the bridge, see poc/ctrl-wheels/README.md.
 # The robot is free and rolls away, rolling distance not measured. Use File > Reload World between runs.
-# This file has not been run in Webots; the physics-root layout ran only in #545. Direction re-run pending (#552).
+# This file has not been run in Webots. Direction re-run pending (#552).
 #
 # HAZARDS:
 # - Robot rotation is -90 degrees about x (ctrl_wheel.wbt uses +90, do not copy it): Robot-frame z

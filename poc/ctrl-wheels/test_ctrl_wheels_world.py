@@ -1,26 +1,10 @@
 #!/usr/bin/env python3
 """
-Text-parse test for the two-box geometry of webots/worlds/ctrl_wheels.wbt
-(freecad-workspace #535, epic #533).
-
-Reads the .wbt as TEXT and parses it with the stdlib (pytest is the runner); no
-Webots is started. It pins the two DEF BODY_BOX_* Transforms (size 0.04 x 0.02
-x 0.04 at local z +-0.024, an 8 mm gap), the box outer edge meeting the wheel
-inner face (0.044), the HingeJoint anchor equal to the wheel endPoint
-translation on each side, the mirrored wheels, the four device names, no
-boundingObject or Physics in the two box blocks, and no leftover 0.026 in the
-comment-stripped text. It also pins the physics root (#549): Robot-level Physics
-(mass 0.064, centerOfMass), the boundingObject Group (two body Boxes equal to the
-visual boxes, two skids mirrored in x and 0.5 mm clear of the floor), the Robot
-rotation (-90 deg about x) and translation (z = wheel radius) pin, WorldInfo
-contactProperties with the Robot contactMaterial, the wheel masses, and that the
-name strings match the expected set.
-
-SIM ONLY. This checks numbers in the text only. It does not prove the world
-loads in Webots, and it says nothing about balance, wheel direction or sign.
-
-Usage (run from poc/ctrl-wheels):
-    python3 -m pytest test_ctrl_wheels_world.py -v
+Text-only parse of webots/worlds/ctrl_wheels.wbt, no Webots. SIM ONLY.
+Pins body boxes, wheel anchors, device names, and the physics root (Robot mass/CoM,
+bounding boxes, skids, Robot pose, 0.5 mm clearance, contact properties, name set,
+wheel masses). Does not prove Webots loads the file, and says nothing about balance,
+wheel direction or sign.
 """
 
 from __future__ import annotations
@@ -181,8 +165,9 @@ def test_boxes_have_no_physics_or_bounding_object(world, side):
     assert "Physics" not in block
 
 
+# Strips the hinge `children [...]` so wheel nodes cannot match; Robot translation/rotation
+# lookups still need canonical field order (translation before boundingObject).
 def _robot_own(world: str) -> str:
-    """Robot text without its wheel `children [...]` list, so wheel nodes cannot match (field order free)."""
     robot = _block(world, r"DEF\s+CTRL_WHEELS\s+Robot\s*\{")
     for m in re.finditer(r"\bchildren\s*\[", robot):
         depth = 1
@@ -244,6 +229,9 @@ def test_skids_mirrored_and_clear_floor(world):
     axis_angle = tuple(float(g) for g in rot.groups())
     assert axis_angle == pytest.approx((1.0, 0.0, 0.0, -math.pi / 2), abs=1e-6)
     assert _vec(own, "translation")[2] == pytest.approx(WHEEL_RADIUS, abs=ABS)
+    floor = _block(world, r"(?m)^Solid\s*\{")
+    assert 'name "floor"' in floor
+    assert _vec(floor, "translation")[2] + _vec(floor, "size")[2] / 2 == pytest.approx(0.0, abs=ABS)
     bottom = SKID_Y + SKID_SIZE[1] / 2
     assert WHEEL_RADIUS - bottom == pytest.approx(0.0005, abs=ABS)
     for low in ("left", "right"):
