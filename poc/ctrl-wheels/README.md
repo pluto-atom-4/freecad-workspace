@@ -7,7 +7,7 @@ SIM ONLY. This directory holds the bridge, relay, CSV log, fake wheels and Webot
 Ran (owner-reported, sim only; the author of this README did not run these):
 
 - Webots twin run (owner-reported).
-- Load of `webots/worlds/ctrl_wheels.wbt` in Webots (owner-reported, 2026-11-07, sim only): no red error in the console; two body boxes (left reddish, right bluish) with a visible gap of about 8 mm; each wheel touches its box with no visible gap or overlap; red marker on the left wheel, blue on the right; no flicker at the wheel and box faces; the controller listened on 127.0.0.1:5018 (protocol v2) and echoed to 5017; motor and sensor names as expected; angles and velocities 0 while idle (first velocity sample nan). The console showed one WARNING: `DEF CTRL_WHEELS Robot: This node is controlled in kinematics mode but some Solid descendant nodes have physics and won't move along with this node.` It is reported as seen, not investigated here. This is a visual and load check only; it does not settle the wheel direction.
+- Load of `webots/worlds/ctrl_wheels.wbt` in Webots (owner-reported, 2026-11-07, sim only): no red error in the console; two body boxes (left reddish, right bluish) with a visible gap of about 8 mm; each wheel touches its box with no gap and no overlap; red marker on the left wheel, blue on the right; no flicker at the wheel and box faces; motor and sensor names as expected; angles and velocities 0 while idle (first velocity sample nan in the console). The console showed one WARNING: `DEF CTRL_WHEELS Robot: This node is controlled in kinematics mode but some Solid descendant nodes have physics and won't move along with this node.` It is reported as seen, not investigated here. This is a visual and load check only; it does not settle the wheel direction.
 - VS Code Wokwi run of `c3_ctrl_wheels-xiao_c3` into the bridge (`--port rfc2217://localhost:4002`, 60 s), with the Webots run on the other side. The owner reported that both wheels turned together and that the bridge exited with code 0. This run does not settle the direction of either wheel.
 
 Not run:
@@ -17,12 +17,12 @@ Not run:
 - A fall seen in WHL2 (state 1).
 - A long run.
 - Three RFC2217 listeners at once.
-- The +1/+1 direction on the two-box world (both wheels the same sense toward +x, wheel sensors +1/+1 for a positive command).
+- The +1/+1 direction on the two-box world (track 10.0 cm). It was seen only on the old track (see Sign convention).
 - Any hardware.
 
 Open:
 
-- Wheel sign: bridge and Webots signs at +1/+1 gave an owner-observed net direction in Webots (2026-11-06, sim only); chip-side signs still UNCONFIRMED (see Sign convention).
+- Wheel sign: bridge and Webots signs at +1/+1 gave an owner-observed net direction in Webots (2026-11-06, sim only, on the old track; not re-run on the two-box world); chip-side signs still UNCONFIRMED (see Sign convention).
 - Latency: UNMEASURED. `host_rtt_ms` includes up to one simulation step and one bridge poll.
 
 ## Links
