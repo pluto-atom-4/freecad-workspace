@@ -2,8 +2,7 @@
 
 # Twin of ctrl_wheel.wbt for the ctrl-wheels relay sim (freecad-workspace #501, umbrella #482).
 # Two velocity-driven wheels on a free body. SIM ONLY. No balance claim.
-# Wheel direction: README Sign convention (earlier two-box world without Robot physics, 2026-11-07,
-# owner-reported). Not re-run on this file, pending #552.
+# Wheel direction: README Sign convention (owner-reported, sim only).
 #
 # WHY (mass, centre of mass, skid size and skid-to-floor clearance 0.5 mm are GUESSES, none measured):
 # - Robot is the physics root: when only the wheels had physics under a kinematic Robot (console
@@ -14,8 +13,8 @@
 # - contactMaterial body with friction 0: so the skids slide. Wheel-vs-floor keeps default friction.
 #
 # HOW TO USE (human, in Webots): drive with ctrl_wheels_msg through the bridge, see poc/ctrl-wheels/README.md.
-# The robot is free and rolls away, rolling distance not measured. Use File > Reload World between runs.
-# This file has not been run in Webots. Direction re-run pending (#552).
+# The robot is free and rolls away (distance: README Status). Use File > Reload World between runs.
+# Sim only, never run on hardware.
 #
 # HAZARDS:
 # - Robot rotation is -90 degrees about x (ctrl_wheel.wbt uses +90, do not copy it): Robot-frame z
@@ -23,8 +22,8 @@
 # - Per side, HingeJoint anchor and endPoint translation must equal each other (0.050 or -0.050 =
 #   body box centre 0.024 + half size 0.020 + half wheel height 0.006). Do not rotate a wheel
 #   Solid: a Webots Cylinder axis is local z, the same as the hinge axis.
-# - Wheel inner face touches the body box face (0.044, no clearance): contact not run on this
-#   layout; friction 0 intended.
+# - Wheel inner face touches the body box face (0.044, no clearance): contact not measured;
+#   friction 0 intended.
 # - Units rad/s and N.m. The controller clamps to 3.0 rad/s (CLAMP_RAD_S,
 #   webots/controllers/ctrl_wheels/ctrl_wheels.py:71); maxVelocity 3.5 does not limit commands
 #   up to 3.0. maxTorque 1e-3 is not a servo spec.
