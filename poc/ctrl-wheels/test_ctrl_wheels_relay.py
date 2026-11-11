@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
-"""
-Unit tests for the ctrl-wheels relay (ctrl_wheels_relay), issue FW #450.
-
-The module under test is the flat module ctrl_wheels_relay in poc/ctrl-wheels.
-Every test uses an injected fake clock, never real time. SIM ONLY. The net direction with the
-bridge and Webots signs at +1/+1 is owner-observed (2026-11-06); chip-side signs UNCONFIRMED.
-
-Usage:
-    cd poc/ctrl-wheels
-    python3 -m pytest test_ctrl_wheels_relay.py -v
-"""
+"""Unit tests for the ctrl-wheels relay, using an injected fake clock."""
 
 import dataclasses
 import inspect

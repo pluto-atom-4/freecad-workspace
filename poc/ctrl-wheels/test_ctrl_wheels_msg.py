@@ -1,32 +1,5 @@
 #!/usr/bin/env python3
-"""
-Unit tests for the WHL2 twin-wheel line protocol in ctrl_wheels_msg.
-
-SIM ONLY. The suite pins the API that ctrl_wheels_msg.py implements:
-WhlError(ValueError), Whl (single-wheel, 5 fields), checksum(body), PREFIX
-== "WHL2", FIELD_COUNT == 7, the frozen dataclass
-Whl2(seq, t_us, model_rad_s, raw_l, raw_r, state), format_whl2(Whl2) -> str,
-parse_line(str) -> Whl2 (WHL2 only) and split(Whl2) -> (Whl, Whl). It covers
-format, parse, the reject rules and split. step_lines and main are covered by
-test_ctrl_wheels_msg_steps.py.
-
-Golden origin: the accept and reject lines below are copied as literals from
-CONTRACT.md S7 (poc/ctrl-wheels). The "-0 model" case uses the real float
--0.0. Expected values are never taken from the implementation.
-
-Chip-side signs are UNCONFIRMED (the rawR negation). The net direction with the bridge and
-Webots signs at +1/+1 is owner-observed (2026-11-06, sim only); the forward-positive model
-definition is in CONTRACT.md S2.
-Nothing here is validated on real hardware.
-
-The reverse-direction reject ("WHL2 line against the single-wheel WHL v1
-parser") is planned in the BRC and FW follow-up. It is not tested in this
-directory, because the single-wheel v1 parser is not present here.
-
-Usage:
-    cd poc/ctrl-wheels
-    python3 -m pytest test_ctrl_wheels_msg.py -v
-"""
+"""Unit tests for the WHL2 twin-wheel line protocol."""
 
 import dataclasses
 import sys
@@ -56,12 +29,7 @@ INT32_MAX_LITERAL = 2147483647
 
 
 def _with_checksum(body):
-    """Return body + "*HH" + newline, with HH the XOR of the body bytes.
-
-    The XOR is written out here on purpose, so these tests do not reuse the
-    implementation's checksum(). It is used only for bodies that must pass the
-    checksum and then fail a field rule.
-    """
+    """Return body + "*HH" + newline, with HH the XOR of the body bytes."""
     csum = 0
     for c in body:
         csum ^= ord(c)

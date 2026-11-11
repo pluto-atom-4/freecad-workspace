@@ -66,18 +66,18 @@ Open:
 
 ## Origins
 
-Copied and renamed from `poc/ctrl-wheel` (`ctrl_wheel_*` to `ctrl_wheels_*`, `fake_wheel` to `fake_wheels`), then changed for the two-wheel twin. What the headers and CONTRACT.md show:
+Copied and renamed from `poc/ctrl-wheel` (`ctrl_wheel_*` to `ctrl_wheels_*`, `fake_wheel` to `fake_wheels`), then changed for the two-wheel twin. What the module docstrings (full text in `DOCSTRINGS_ARCHIVE.md`) and CONTRACT.md show:
 
-- `ctrl_wheels_msg.py`: the header calls it the sim-only twin of the WHL2 protocol. It keeps the single-wheel `Whl` and `format_whl` for the bridge tests, and notes that the single-wheel module has no 20-character model-text guard.
-- `ctrl_wheels_udp.py`: the header says "Sim-only twin of the single-wheel module". The nested exact-key rule is new for v2 (CONTRACT.md S3).
+- `ctrl_wheels_msg.py`: the module docstring (`DOCSTRINGS_ARCHIVE.md`, `ctrl_wheels_msg.py`, `module`) calls it the sim-only twin of the WHL2 protocol. It keeps the single-wheel `Whl` and `format_whl` for the bridge tests, and notes that the single-wheel module has no 20-character model-text guard.
+- `ctrl_wheels_udp.py`: the module docstring (`DOCSTRINGS_ARCHIVE.md`, `ctrl_wheels_udp.py`, `module`) says "Sim-only twin of the single-wheel module". The nested exact-key rule is new for v2 (CONTRACT.md S3).
 - `ctrl_wheels_relay.py`: CONTRACT.md S5 gives the single-wheel `ctrl_wheel_relay.py` rules. The twin applies one state and one stale flag to both wheels.
 - `ctrl_wheels_log.py`: CONTRACT.md S6 gives the single-wheel column tuple and the twin's column changes.
-- `ctrl_wheels_bridge.py`: the header says the serial helpers (`DofSerialError`, the URL open with retry, and the read and sync loop) are copied, not imported, from `poc/esp32-dof/monitor/dof_serial.py`. So the RFC2217 open and retry and the line reader come from there. The rest is the twin bridge.
-- `fake_wheels.py`: the header calls it the headless twin fake of the Webots controller. CONTRACT.md S4 names the single-wheel fake wheel as the source of the reserved-port rule, which this twin writes out as a literal set.
-- `webots/controllers/ctrl_wheels/ctrl_wheels.py`: the header says it speaks CONTRACT S3 and S4 and matches the single-wheel controller's stop behaviour. It drives two wheels.
-- `webots/controllers/ctrl_wheels/sensor_read.py`: the header names the servo-wheel-dof POC (issue #263). The sibling README calls it a byte copy of the servo-wheel-dof file. That byte copy was not diffed here.
+- `ctrl_wheels_bridge.py`: the module docstring (`DOCSTRINGS_ARCHIVE.md`, `ctrl_wheels_bridge.py`, `module`) says the serial helpers (`DofSerialError`, the URL open with retry, and the read and sync loop) are copied, not imported, from `poc/esp32-dof/monitor/dof_serial.py`. So the RFC2217 open and retry and the line reader come from there. The rest is the twin bridge.
+- `fake_wheels.py`: the module docstring (`DOCSTRINGS_ARCHIVE.md`, `fake_wheels.py`, `module`) calls it the headless twin fake of the Webots controller. CONTRACT.md S4 names the single-wheel fake wheel as the source of the reserved-port rule, which this twin writes out as a literal set.
+- `webots/controllers/ctrl_wheels/ctrl_wheels.py`: the module docstring (`DOCSTRINGS_ARCHIVE.md`, `ctrl_wheels.py`, `module`) says it speaks CONTRACT S3 and S4 and matches the single-wheel controller's stop behaviour. It drives two wheels.
+- `webots/controllers/ctrl_wheels/sensor_read.py`: the module docstring (`DOCSTRINGS_ARCHIVE.md`, `sensor_read.py`, `module`; now a one-liner, so this copy differs from its servo-wheel-dof source in docstrings) names the servo-wheel-dof POC (issue #263). The sibling README calls it a byte copy of the servo-wheel-dof file. That byte copy was not diffed here.
 - `webots/worlds/ctrl_wheels.wbt`: the header (see World notes, Header of `ctrl_wheels.wbt`) said "Twin of ctrl_wheel.wbt". The wbt has no header now: it was stripped in #558, and the archived text is in World notes. The two hinges sit at mirrored offsets (local z +-0.050, track 10.0 cm), the body is two boxes with an 8 mm gap, and the Robot is rotated -90 degrees about x (the single-wheel world uses +90, per its header). The track and the second box were changed after the first build of this world (PR #538). The Robot is now the physics root (a free body, PR #553).
-- Test files: each header names the module it pins. They were written for the twin and were not diffed against the sibling tests.
+- Test files: each module docstring (full text in `DOCSTRINGS_ARCHIVE.md`) names the module it pins. They were written for the twin and were not diffed against the sibling tests.
 
 ## Sign convention
 
@@ -164,7 +164,7 @@ Exit codes: 0 when the run finishes (EOF, duration or Ctrl-C during the run). A 
   - Anything else is a restart: missed 0, the new `BridgeStats` field `restarts` (the last `BridgeStats` field; in the stderr summary line it comes just before `send_errors`) goes up by 1, one stderr log line is written, and the baseline moves to the new seq and `t_us`.
   - The CSV is unchanged (19 columns).
   - The thresholds (40 ms frame, 1 s slack, 1 s reorder) are UNMEASURED guesses for the 50 Hz firmware.
-  - Known limits, one line each, detailed in the module docstring of `ctrl_wheels_bridge.py` (the list "Known limits", items (i) to (vi)):
+  - Known limits, one line each, detailed in `DOCSTRINGS_ARCHIVE.md`, `ctrl_wheels_bridge.py`, `module` (the list "Known limits", items (i) to (vi)):
     - (i) `seq` goes back while `t_us` goes forward: read as a restart.
     - (ii) a restart whose new seq is 0..32767 behind the baseline, with first `t_us` within 1 s below the old one, is read as a reorder.
     - (iii) that case is noticed only when `t_us` or `seq` passes the old baseline, within about 1 s of lines; missed stays 0 meanwhile.
@@ -172,7 +172,7 @@ Exit codes: 0 when the run finishes (EOF, duration or Ctrl-C during the run). A 
     - (v) a real outage longer than `(missed + 1) * 40 ms + 1 s` is logged as a restart and its missed frames are not counted.
     - (vi) the thresholds are unmeasured.
 - One command per WHL2 line: each accepted line gives one UDP command to both wheels and one CSV row with its own `whl_*` cells.
-- Stops are not latches. A state other than 0, or a stale relay, sends 0.0 to both wheels with stale 1. A fresh state-0 line resumes. The bridge's stale rule uses the host clock (200 ms). The Webots controller also stops both wheels after 0.2 s of sim time without a valid command. A Webots pause stops sim time, so that watchdog does not fire during a pause (the controller header, known limit (a)).
+- Stops are not latches. A state other than 0, or a stale relay, sends 0.0 to both wheels with stale 1. A fresh state-0 line resumes. The bridge's stale rule uses the host clock (200 ms). The Webots controller also stops both wheels after 0.2 s of sim time without a valid command. A Webots pause stops sim time, so that watchdog does not fire during a pause (`DOCSTRINGS_ARCHIVE.md`, `ctrl_wheels.py`, `module`, known limit (a)).
 - `unmatched_echoes`: the sibling README expected a non-zero count from the echo cadence. That expectation has not been checked for this twin.
 - CSV empty cells: an empty echo cell means no echo matched that row (`echo_cmd_seq`, `sim_t_s`, the angle and velocity cells, `host_rtt_ms`). `echo_cmd_seq` is also empty when the echo sends a null `cmd_seq_echo`, which is the case before the first command. `vel_rad_s_l` and `vel_rad_s_r` are empty when that wheel's velocity is null, which the controller sends on its first step.
 - Webots world: the direction with signs +1/+1 was owner-reported OK on the old track (2026-11-06), on the earlier body (2026-11-07, track 10.0 cm) and on `ctrl_wheels.wbt` (2026-11-08, owner-reported, sim only), see Status and Sign convention. The motor limits (`maxVelocity 3.5`, `maxTorque 1e-3`) are owner-chosen for this simulation, per World notes, Header of `ctrl_wheels.wbt`, and were not checked here.

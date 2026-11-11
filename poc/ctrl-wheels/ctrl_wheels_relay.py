@@ -1,28 +1,5 @@
 #!/usr/bin/env python3
-"""
-ctrl-wheels relay (issue FW #450): holds the latest WHL sample and decides
-what wheel velocity to pass on, with a stale and hold rule.
-
-SIM ONLY. This relay is not a control loop and makes no balance claim.
-The net direction with the bridge and Webots signs at +1/+1 is owner-observed (2026-11-06,
-sim only); the chip-side sign convention is UNCONFIRMED. The stale rule uses the host wall clock
-(time.monotonic by default, injected in tests), not the device t_us.
-
-Rules (pure logic, no sockets, no threads, no sleeping):
-- poll() before the first on_whl() returns None (nothing to send).
-- A sample with state != 0 (hold or bus down) gives RelayOut(0.0, 1).
-- age >= stale_s since the latest on_whl() gives RelayOut(0.0, 1).
-- A non-finite model_rad_s (nan, inf, -inf) on a fresh state-0 sample is a
-  fault and gives RelayOut(0.0, 1). Without this, min() would pass nan to
-  the clamp and return +clamp. Defence in depth: the formatter and parse_line
-  both reject non-finite values, so this branch only triggers for a Whl built
-  directly in code.
-- Otherwise RelayOut(clamp(sign * model_rad_s), 0). Sign is applied before
-  the symmetric clamp.
-
-Usage: the caller feeds Whl samples with on_whl() and reads poll() at
-POLL_S intervals. The caller owns the transport and the timing.
-"""
+"""Relay that holds the latest WHL sample and applies a stale and hold rule."""
 
 from __future__ import annotations
 

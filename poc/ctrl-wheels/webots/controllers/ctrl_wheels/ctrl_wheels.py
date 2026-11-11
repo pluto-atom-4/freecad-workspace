@@ -1,51 +1,5 @@
 #!/usr/bin/env python3
-"""
-ctrl_wheels -- Webots controller for the twin-wheel ctrl-wheels relay simulation.
-
-SIM ONLY. Nothing here is validated on hardware, and it makes no balance claim.
-Webots side: with SIGN_LEFT/SIGN_RIGHT +1/+1 and the bridge signs +1/+1 the net
-direction was owner-observed (2026-11-06, sim only; old +-0.026 track; repeated on ctrl_wheels.wbt 2026-11-08, owner-reported). The sign of each wheel against
-the firmware (chip side) is UNCONFIRMED. Beyond that direction check, runtime
-behaviour in Webots is NOT CHECKED.
-
-Webots controller for the twin-wheel ctrl-wheels simulation. It speaks the v2 wire
-format of poc/ctrl-wheels/CONTRACT.md (sections S3 and S4).
-It binds the UDP command port CMD_PORT (127.0.0.1:5018) and drains it every step,
-keeps the newest valid v2 command, and drives the two wheel motors with
-setVelocity. It reads at most 1024 datagrams per step (MAX_DATAGRAMS_PER_STEP),
-processes each in arrival order, and the newest valid one wins. A backlog deeper
-than the bound is read on later steps (not discarded), so a sim-time watchdog
-cannot see the wall-clock age of queued commands. The bound is a chosen value, not
-measured; not verified in Webots. The watchdog age is measured in simulated
-time from the step in which the newest command was processed. This differs from
-CONTRACT.md S5 (host clock, bridge side) on purpose, same as the single-wheel
-controller; not verified in Webots at faster-than-real-time.
-Known limits (documented only, no code change, owner decision):
-(a) A Webots pause stops simulated time, so the 0.2 s sim-time watchdog does not
-fire during a pause.
-(b) The command socket is a plain Linux UDP socket with no SO_RCVBUF tuning and no
-timestamps. If its receive buffer fills, the kernel drops the NEWEST datagrams, so
-a stop (stale=1) sent during a stall can be lost, and the controller may apply a
-command from before the stall for up to STALE_SIM_S of simulated time after resume.
-(c) The intended guard during a pause is the bridge's host-clock stale=1
-(CONTRACT.md S5), not this controller. The single-wheel controller behaves the
-same. Sim-only, the bound is unmeasured, not verified in Webots.
-Both wheels get 0 rad/s when no valid command has arrived, when the
-newest command carries stale=1, or when the newest valid command is STALE_SIM_S
-or more old in simulated time. A failed or non-finite sensor read also stops both
-motors and skips that step's log line, echo and angle update. Each normal step it
-sends ONE echo datagram to 127.0.0.1:5017 (ECHO_ADDR). Send failures are ignored
-and counted, never raised. The wire format is contract v2 in
-poc/ctrl-wheels/CONTRACT.md (sections S3 and S4).
-
-Only the Webots-specific import is `controller`; the sensor maths lives in
-sensor_read.py so it stays importable outside Webots.
-
-Device names (must match the twin world ctrl_wheels.wbt, case-sensitive, #510).
-The names below match webots/worlds/ctrl_wheels.wbt:
-    RotationalMotor: "wheel_motor_left", "wheel_motor_right"
-    PositionSensor:  "wheel_sensor_left", "wheel_sensor_right"
-"""
+"""Webots controller for the twin-wheel ctrl-wheels relay simulation."""
 
 import json
 import math
@@ -114,15 +68,7 @@ def _is_real(value) -> bool:
 
 
 def _parse_cmd(data: bytes):
-    """Return (cmd_seq, left_rad_s, right_rad_s, stale) for a valid v2 command, else None.
-
-    Checks match ctrl_wheels_udp.decode_cmd: exact key sets at the top level and
-    inside "wheels", "v" must be the JSON integer 2, booleans are refused where
-    numbers are expected, NaN and Infinity tokens are refused, ints must be JSON
-    ints, duplicate keys are refused. The wheel values are not clamped here; the
-    clamp is applied when the command is applied. Any malformed input returns None
-    and never raises.
-    """
+    """Return the command fields of a valid v2 command, else None."""
     try:
         obj = json.loads(data.decode("utf-8"), parse_constant=_reject_constant,
                          object_pairs_hook=_no_duplicate_keys)
@@ -157,8 +103,7 @@ def _clamp(value: float) -> float:
 
 
 def _open_socket(port: int) -> socket.socket:
-    """Bind a non-blocking UDP socket. Deliberately NO SO_REUSEADDR: on Linux it
-    would let two listeners share the port and silently split datagrams."""
+    """Bind a non-blocking UDP socket, deliberately without SO_REUSEADDR."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.bind((HOST, port))
