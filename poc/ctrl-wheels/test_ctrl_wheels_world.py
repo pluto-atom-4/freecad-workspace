@@ -256,3 +256,29 @@ def test_wheel_physics_mass(world, low):
 
 def test_no_stale_026_in_code(world):
     assert "0.026" not in world
+
+
+def test_hinge_axis_is_z_on_both_wheels(world):
+    for low in ("left", "right"):
+        assert _vec(_hinge(world, low), "axis") == pytest.approx((0.0, 0.0, 1.0), abs=ABS)
+
+
+def test_wheel_endpoints_have_no_rotation_field(world):
+    for low in ("left", "right"):
+        endpoint = _block(_hinge(world, low), r"endPoint\s+Solid\s*\{")
+        assert not re.search(r"\brotation\b", endpoint), low
+
+
+def test_wheel_bounding_cylinder_radius_and_height(world):
+    for low in ("left", "right"):
+        endpoint = _block(_hinge(world, low), r"endPoint\s+Solid\s*\{")
+        bounding = _block(endpoint, r"boundingObject\s+Cylinder\s*\{")
+        r = re.search(r"\bradius\s+" + NUM, bounding)
+        h = re.search(r"\bheight\s+" + NUM, bounding)
+        assert r and float(r.group(1)) == pytest.approx(WHEEL_RADIUS, abs=ABS), low
+        assert h and float(h.group(1)) == pytest.approx(WHEEL_HEIGHT, abs=ABS), low
+
+
+def test_robot_controller_is_ctrl_wheels(world):
+    robot = _block(world, r"DEF\s+CTRL_WHEELS\s+Robot\s*\{")
+    assert re.findall(r'\bcontroller\s+"([^"]*)"', robot) == ["ctrl_wheels"]
