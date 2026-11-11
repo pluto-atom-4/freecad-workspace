@@ -98,10 +98,9 @@ _RECONNECT_DELAY_S = 1.0
 _WAIT_HEARTBEAT_S = 10.0
 _URL_WAIT_CAP_S = 300.0
 _SEQ_HALF = SEQ_MOD // 2
-# Restart rule (F22). All three are unmeasured guesses for the 50 Hz firmware; see the module docstring.
-_REORDER_BACK_US = 1_000_000  # a seq going back with t_us stepping back by less than this is a repeat or reorder
-_FWD_SLACK_US = 1_000_000  # extra t_us allowed on a forward step, on top of the frame period
-_FRAME_US_MAX = 40_000  # largest expected t_us step per frame
+_REORDER_BACK_US = 1_000_000
+_FWD_SLACK_US = 1_000_000
+_FRAME_US_MAX = 40_000
 
 
 class DofSerialError(serial.SerialException):
@@ -121,11 +120,8 @@ class BridgeStats:
     restarts: int = 0
 
     def __post_init__(self) -> None:
-        # BridgeStats has no send-error or source-error field, so these are plain attributes.
         self.send_errors = 0
-        self.source_error: str | None = None  # text of a line source error that ended the run
-        # Set True in run_bridge's finally (every exit after the reader thread has started); a reader
-        # failure after that is a consequence of shutdown (the caller closes the port next).
+        self.source_error: str | None = None
         self.closing = False
         self.closing_lock = threading.Lock()
 
@@ -154,15 +150,13 @@ def _close_quietly(ser) -> None:
 def _open_first(port: str, baud: int, timeout_s: float):
     try:
         return serial.serial_for_url(port, baud, timeout=timeout_s)
-    except OSError as exc:  # SerialException is an OSError
+    except OSError as exc:
         raise DofSerialError(
             f"cannot open serial port {port!r}: {exc}. Check the device path and, on Linux, that you are in the 'dialout' group: "
             f"sudo usermod -aG dialout $USER (then log out and back in).") from exc
 
 
 def _open_url_waiting(port: str, baud: int, timeout_s: float, deadline: float | None):
-    # Returns an open port, or None when deadline passes first;
-    # raises DofSerialError when _URL_WAIT_CAP_S passes first.
     cap_deadline = time.monotonic() + _URL_WAIT_CAP_S
     attempt = 0
     last_text = None
@@ -190,17 +184,14 @@ def _open_url_waiting(port: str, baud: int, timeout_s: float, deadline: float | 
 
 
 def _open_serial(port: str, baud: int, timeout_s: float, deadline: float | None):
-    # Opens now. Device paths raise DofSerialError at once. URL ports return None
-    # when deadline passes first, and raise DofSerialError after _URL_WAIT_CAP_S.
     if _is_url(port):
         return _open_url_waiting(port, baud, timeout_s, deadline)
     return _open_first(port, baud, timeout_s)
 
 
 def _read_serial(ser, port: str, deadline: float | None) -> Iterator[str]:
-    # Owns ser: closed when the generator finishes or is closed.
     buf = bytearray()
-    synced = False  # discard through first "\n" after open
+    synced = False
     try:
         while True:
             if deadline is not None and time.monotonic() >= deadline:
@@ -209,7 +200,7 @@ def _read_serial(ser, port: str, deadline: float | None) -> Iterator[str]:
                 data = ser.read(max(1, min(ser.in_waiting, _READ_CHUNK)))
             except OSError as exc:
                 raise DofSerialError(f"{port!r}: read failed: {exc}") from exc
-            if not data:  # read timeout: keep looping
+            if not data:
                 continue
             buf += data
             while True:
@@ -218,7 +209,7 @@ def _read_serial(ser, port: str, deadline: float | None) -> Iterator[str]:
                     break
                 raw = bytes(buf[:i])
                 del buf[:i + 1]
-                if not synced:  # first fragment after open
+                if not synced:
                     synced = True
                     continue
                 line = raw.decode("ascii", errors="replace").strip()
@@ -228,7 +219,7 @@ def _read_serial(ser, port: str, deadline: float | None) -> Iterator[str]:
                 buf.clear()
             elif len(buf) > _MAX_BUF_BYTES:
                 buf.clear()
-                synced = False  # noise run: drop, resync at next "\n"
+                synced = False
     finally:
         _close_quietly(ser)
 
@@ -272,9 +263,9 @@ def _read_lines(lines: Iterable[str], out: queue.Queue, finished: threading.Even
     try:
         for line in lines:
             out.put(line)
-    except KeyboardInterrupt:  # Ctrl-C ends the source like EOF
+    except KeyboardInterrupt:
         pass
-    except BaseException as exc:  # the line source ends the run; it does not crash the bridge
+    except BaseException as exc:
         with stats.closing_lock:
             if not stats.closing:
                 stats.source_error = f"{type(exc).__name__}: {exc}"
@@ -337,8 +328,6 @@ class _Run:
         try:
             self.cmd_tx.sendto(payload, self.cmd_addr)
         except OSError as exc:
-            # Nothing reached the wire: no pending row, and last_cmd_stale is unchanged
-            # so finish() still sends its stop.
             self.stats.send_errors += 1
             _log(f"command {seq} send failed: {exc}")
             return
@@ -365,12 +354,11 @@ class _Run:
             dt = (w2.t_us - self.last_whl_t_us) % (T_US_MAX + 1)
             back = (self.last_whl_t_us - w2.t_us) % (T_US_MAX + 1)
             if gap < _SEQ_HALF and dt <= (gap + 1) * _FRAME_US_MAX + _FWD_SLACK_US:
-                # forward: count the gap and move on
                 missed = gap
                 self.last_whl_seq = w2.seq
                 self.last_whl_t_us = w2.t_us
             elif gap >= _SEQ_HALF and back < _REORDER_BACK_US:
-                pass  # repeat or reorder: not a gap; the baseline keeps the highest seq and its t_us
+                pass
             else:
                 self.stats.restarts += 1
                 _log(f"firmware restart detected (seq {self.last_whl_seq} -> {w2.seq})")
@@ -390,7 +378,6 @@ class _Run:
         self._send(left, right, stale, w2=w2, missed=missed)
 
     def check_silence(self) -> None:
-        # One stale command per episode when either relay goes stale without a new line.
         out_l = self.relay_l.poll()
         out_r = self.relay_r.poll()
         either = (out_l is not None and out_l.stale == 1) or (out_r is not None and out_r.stale == 1)
@@ -530,21 +517,12 @@ def run_bridge(
     return stats
 
 
-# ---------------------------------------------------------------------------
-# Command line. SIM ONLY. The sign flips are only --sign-left and --sign-right, through Relay.
-# ---------------------------------------------------------------------------
-
-# The CLI refuses only 5006 (the single-wheel servo_wheel_dof port), for either port.
-# The full reserved set of CONTRACT.md S4 binds tests and the fake wheel, not this CLI;
-# the bridge owns 5017/5018 by default and other ports are the caller's responsibility.
 _RESERVED_PORT = 5006
 _LOOPBACK = "127.0.0.1"
 _SERIAL_READ_TIMEOUT_S = 0.05
 
 
 def _stdin_lines() -> Iterator[str]:
-    # sys.stdin is read when iteration starts, so a replaced stdin is honoured.
-    # Ctrl-C while reading ends the source; main then sends the final stale command.
     try:
         for raw in sys.stdin:
             line = raw.strip()
@@ -691,7 +669,6 @@ def _check_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> No
 
 
 def _open_source(args: argparse.Namespace, deadline: float | None):
-    # Returns (lines, ser). ser is None for --stdin. Raises DofSerialError on failure.
     if args.stdin:
         return _stdin_lines(), None
     ser = _open_serial(args.port, args.baud, _SERIAL_READ_TIMEOUT_S, deadline)
@@ -701,8 +678,6 @@ def _open_source(args: argparse.Namespace, deadline: float | None):
 
 
 def _route_sigint(stop: threading.Event) -> Callable[[], None]:
-    # Ctrl-C ends the loop through stop_event, so the summary still prints.
-    # Signals can only be set from the main thread; elsewhere this is a no-op.
     if threading.current_thread() is not threading.main_thread():
         return lambda: None
     previous = signal.getsignal(signal.SIGINT)
@@ -762,23 +737,18 @@ def main(argv: list[str] | None = None) -> int:
             stats = run_bridge(
                 lines, relay_l, relay_r, (_LOOPBACK, args.cmd_port), sock, log,
                 duration_s=args.duration, echo_timeout_s=args.echo_timeout, stop_event=stop)
-            # Snapshot is taken before the port is closed below; stats.closing is the real guard
-            # against the reader's late failure.
             source_error = stats.source_error
         except KeyboardInterrupt:
             _log("interrupted during shutdown; no summary")
             return 0
         except OSError as exc:
-            # Normally the CSV write (for example disk full). An OSError from the command socket
-            # creation in _Run.__init__ also escapes run_bridge and lands here, so it is reported
-            # with this same "cannot write --record" text.
             _log(f"cannot write --record {args.record!r}: {exc}")
             return 2
         finally:
             restore_sigint()
             try:
                 log.close()
-            except OSError as exc:  # flush on close can fail (for example disk full)
+            except OSError as exc:
                 close_error = exc
             finally:
                 sock.close()

@@ -142,11 +142,6 @@ def pipe_stdin(monkeypatch):
         thread.join(timeout=2.0)
 
 
-# ---------------------------------------------------------------------------
-# Parser defaults and accepted values
-# ---------------------------------------------------------------------------
-
-
 def test_defaults_via_parse_args():
     args = build_parser().parse_args(["--stdin", "--record", "out.csv"])
     assert args.stdin is True
@@ -199,11 +194,6 @@ def test_sign_left_and_right_accept_plus_and_minus_one(left_text, right_text):
     assert args.sign_right == int(right_text)
     assert type(args.sign_left) is int
     assert type(args.sign_right) is int
-
-
-# ---------------------------------------------------------------------------
-# Usage errors (SystemExit 2, no CSV created)
-# ---------------------------------------------------------------------------
 
 
 def test_neither_port_nor_stdin_refused(tmp_path):
@@ -290,11 +280,6 @@ def test_echo_timeout_above_10_seconds_refused(tmp_path, text):
     assert not record.exists()
 
 
-# ---------------------------------------------------------------------------
-# --record and --overwrite
-# ---------------------------------------------------------------------------
-
-
 def test_existing_csv_refused_without_overwrite(tmp_path, capsys):
     record = tmp_path / "out.csv"
     original = b"sentinel,do-not-touch\n"
@@ -320,11 +305,6 @@ def test_overwrite_replaces_existing_csv(tmp_path):
         header = next(csv.reader(fh))
     assert header == list(COLUMNS)
     assert b"old,content" not in record.read_bytes()
-
-
-# ---------------------------------------------------------------------------
-# Runtime errors returning 2, and KeyboardInterrupt returning 0
-# ---------------------------------------------------------------------------
 
 
 def test_missing_device_path_returns_2_with_message(tmp_path, capsys):
@@ -425,11 +405,6 @@ def test_csv_write_error_returns_2_and_closes_run(tmp_path, monkeypatch, capsys)
     assert "No space left on device" in capsys.readouterr().err
     with open(record, newline="", encoding="utf-8") as fh:
         assert next(csv.reader(fh)) == list(COLUMNS)
-
-
-# ---------------------------------------------------------------------------
-# End to end: real FakeWheel, real loopback UDP, real clock
-# ---------------------------------------------------------------------------
 
 
 def test_stdin_end_to_end_logs_rows_and_summary(tmp_path, monkeypatch, capsys):
@@ -572,11 +547,6 @@ def test_v1_whl_line_on_stdin_is_a_bad_line(tmp_path, monkeypatch, capsys):
     assert re.search(r"whl_lines=0\b", err)
 
 
-# ---------------------------------------------------------------------------
-# Script entry point
-# ---------------------------------------------------------------------------
-
-
 def test_script_help_runs_as_program():
     script = Path(__file__).resolve().parent / "ctrl_wheels_bridge.py"
     proc = subprocess.run(
@@ -615,7 +585,7 @@ class _HeldStdin:
 
     def __init__(self, release):
         self._release = release
-        self.yielded = threading.Event()  # set once the first line has been handed out
+        self.yielded = threading.Event()
         self._sent = False
 
     def __iter__(self):
@@ -695,7 +665,7 @@ def test_clean_ctrl_c_prints_nothing_after_the_summary(tmp_path, capsys):
     thread's failed read must not log 'line source stopped' after the summary. The SIGINT lands
     while the reader thread is live, so the port is closed mid-read."""
     for i in range(8):
-        for _ in range(300):  # a reader left over from the previous run must be gone first
+        for _ in range(300):
             if not _reader_threads():
                 break
             time.sleep(0.01)
@@ -715,7 +685,7 @@ def test_clean_ctrl_c_prints_nothing_after_the_summary(tmp_path, capsys):
             helper.join(timeout=5.0)
         assert seen.is_set(), f"run {i}: the reader thread never appeared, no SIGINT was sent"
         assert rc == 0, f"run {i}"
-        for _ in range(500):  # the reader must be gone, so a late 'line source stopped' is seen
+        for _ in range(500):
             if not _reader_threads():
                 break
             time.sleep(0.01)

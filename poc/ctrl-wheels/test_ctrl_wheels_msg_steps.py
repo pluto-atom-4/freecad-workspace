@@ -28,13 +28,11 @@ from pathlib import Path
 
 import pytest
 
-# Add the script directory to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ctrl_wheels_msg import Whl2, WhlError, main, parse_line, step_lines
 
 
-# Default signs pinned by this test file (UNCONFIRMED, see the module docstring).
 SIGNS = {"sign_l": 1, "sign_r": -1}
 
 
@@ -67,8 +65,6 @@ class TestStepLinesTwinContents:
     """Test: field values of the yielded WHL2 lines."""
 
     def test_lines_parse_back_for_value_one(self):
-        # 1.0 rad/s -> 1.0 * 60 / (2 pi) = 9.5493 rpm -> / 0.229 = 41.70 -> round = 42.
-        # Line i: seq i, t_us i * 20000 (50 Hz), model 1.0, raw_l +42, raw_r -42, state 0.
         lines = _run(1.0, 5.0)
         for i, line in enumerate(lines):
             w = parse_line(line)
@@ -82,12 +78,12 @@ class TestStepLinesTwinContents:
     @pytest.mark.parametrize(
         "value,raw_l,raw_r",
         [
-            (0.5, 21, -21),      # 0.5 -> 20.85 -> 21
-            (-0.5, -21, 21),     # mirrored signs
-            (-1.0, -42, 42),     # mirrored signs
-            (3.0, 125, -125),    # 3.0 -> 125.1 -> clamped to +125 before the sign
-            (-3.0, -125, 125),   # clamped to -125 before the sign
-            (100.0, 125, -125),  # far above the cap, clamped to +125 then signed
+            (0.5, 21, -21),
+            (-0.5, -21, 21),
+            (-1.0, -42, 42),
+            (3.0, 125, -125),
+            (-3.0, -125, 125),
+            (100.0, 125, -125),
             (-100.0, -125, 125),
         ],
     )
@@ -99,14 +95,11 @@ class TestStepLinesTwinContents:
         assert w.raw_r == raw_r
 
     def test_model_is_not_clamped(self):
-        # The clamp applies to raw only; model carries the value as given.
         lines = _run(100.0, 0.02)
         assert parse_line(lines[0]).model_rad_s == 100.0
 
     @pytest.mark.parametrize("value", [1e11, -1e11])
     def test_large_value_in_model_range_clamps_raw(self, value):
-        # The raw clamp (+-125) happens before the sign; the model text of these
-        # values is still within the 20-character supported range.
         expected_l = 125 if value > 0 else -125
         lines = _run(value, 0.02)
         w = parse_line(lines[0])
@@ -115,17 +108,15 @@ class TestStepLinesTwinContents:
 
     @pytest.mark.parametrize("value", [1e308, -1e308, 1e13, -1e12])
     def test_value_outside_model_range_is_refused(self, value):
-        # The formatter refuses a model whose %.6f text exceeds 20 characters
-        # (ctrl_wheels_msg supported range); the raw clamp cannot hide that.
         with pytest.raises(WhlError):
             _run(value, 0.02)
 
     @pytest.mark.parametrize(
         "sign_l,sign_r,raw_l,raw_r",
         [
-            (1, 1, 42, 42),      # equal signs give equal raws
+            (1, 1, 42, 42),
             (-1, -1, -42, -42),
-            (-1, 1, -42, 42),    # swapped signs
+            (-1, 1, -42, 42),
         ],
     )
     def test_sign_parameters_apply_to_raw(self, sign_l, sign_r, raw_l, raw_r):
@@ -168,11 +159,6 @@ class TestStepLinesTwinSeqAndTime:
         assert t == [i * 10000 for i in range(10)]
 
     def test_t_us_wraps_mod_2_32(self):
-        # rate 1 Hz -> t step 1_000_000 us. Line i has t = (i * 1e6) mod 2**32,
-        # with 2**32 = 4294967296.
-        #   i=4293 -> 4293000000 (below 2**32, unchanged)
-        #   i=4294 -> 4294000000 (below 2**32, unchanged)
-        #   i=4295 -> 4295000000 - 4294967296 = 32704
         lines = _run(0.0, 4296.0, rate_hz=1.0)
         assert len(lines) == 4296
         t = [parse_line(lines[i]).t_us for i in (4293, 4294, 4295)]
@@ -195,8 +181,6 @@ class TestStepLinesTwinPacing:
         assert sleeps == []
 
     def test_realtime_true_paces_with_injected_clock(self):
-        # Clock frozen at 0 and 50 Hz: line i is due at i * 0.02 s. Line 0 has
-        # delay 0 (not > 0, no sleep), so the sleeps are for lines 1..4.
         sleeps = []
         lines = _run(
             1.0,
@@ -234,7 +218,6 @@ class TestStepLinesTwinRefusals:
 
     @pytest.mark.parametrize("rate", [1e7, 1e300])
     def test_period_below_one_us_refused(self, rate):
-        # round(1e6 / rate) == 0 for these rates; must raise before any line.
         with pytest.raises(WhlError):
             _run(0.0, 0.1, rate_hz=rate)
 
@@ -289,7 +272,6 @@ class TestMainCli:
         assert w.raw_r == 42
 
     def test_state_out_of_choices_exits_2(self):
-        # argparse rejects --state 3 (choices 0, 1, 2) with SystemExit(2).
         with pytest.raises(SystemExit) as exc:
             main(["--step", "1.0", "--seconds", "0.02", "--no-sleep", "--state", "3"])
         assert exc.value.code == 2

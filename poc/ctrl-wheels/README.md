@@ -176,3 +176,110 @@ Exit codes: 0 when the run finishes (EOF, duration or Ctrl-C during the run). A 
 - CSV empty cells: an empty echo cell means no echo matched that row (`echo_cmd_seq`, `sim_t_s`, the angle and velocity cells, `host_rtt_ms`). `echo_cmd_seq` is also empty when the echo sends a null `cmd_seq_echo`, which is the case before the first command. `vel_rad_s_l` and `vel_rad_s_r` are empty when that wheel's velocity is null, which the controller sends on its first step.
 - Webots world: the direction with signs +1/+1 was owner-reported OK on the old track (2026-11-06), on the earlier body (2026-11-07, track 10.0 cm) and on `ctrl_wheels.wbt` (2026-11-08, owner-reported, sim only), see Status and Sign convention. The motor limits (`maxVelocity 3.5`, `maxTorque 1e-3`) are owner-chosen for this simulation, per the world header, and were not checked here.
 - Sim only. Not hardware-validated.
+
+## World notes
+
+Comments removed from the sources by #557, kept here verbatim so the caveats are not lost. Cites like `file:NN` below name the file as it was before the strip; line numbers in the sources have shifted.
+
+### Header of `webots/worlds/ctrl_wheels.wbt` (was lines 3-34)
+
+```
+# Twin of ctrl_wheel.wbt for the ctrl-wheels relay sim (freecad-workspace #501, umbrella #482).
+# Two velocity-driven wheels on a free body. SIM ONLY. No balance claim.
+# Wheel direction: README Sign convention (owner-reported, sim only).
+#
+# WHY (mass, centre of mass, skid size and skid-to-floor clearance 0.5 mm are GUESSES, none measured):
+# - Robot is the physics root: when only the wheels had physics under a kinematic Robot (console
+#   warning, #544), wheels and boxes may have moved apart.
+# - boundingObject: without a collision shape the body cannot rest on the floor. The two skids are
+#   the lowest body points and should stop the pitch that the motor reaction torque would cause.
+# - centerOfMass below the axle: meant to keep the body hanging level.
+# - contactMaterial body with friction 0: so the skids slide. Wheel-vs-floor keeps default friction.
+#
+# HOW TO USE (human, in Webots): drive with ctrl_wheels_msg through the bridge, see poc/ctrl-wheels/README.md.
+# The robot is free and rolls away (distance: README Status). Use File > Reload World between runs.
+# Sim only, never run on hardware.
+#
+# HAZARDS:
+# - Robot rotation is -90 degrees about x (ctrl_wheel.wbt uses +90, do not copy it): Robot-frame z
+#   is the world +y axle, Robot-frame y is world DOWN.
+# - Per side, HingeJoint anchor and endPoint translation must equal each other (0.050 or -0.050 =
+#   body box centre 0.024 + half size 0.020 + half wheel height 0.006). Do not rotate a wheel
+#   Solid: a Webots Cylinder axis is local z, the same as the hinge axis.
+# - Wheel inner face touches the body box face (0.044, no clearance): contact not measured;
+#   friction 0 intended.
+# - Units rad/s and N.m. The controller clamps to 3.0 rad/s (CLAMP_RAD_S,
+#   webots/controllers/ctrl_wheels/ctrl_wheels.py:71); maxVelocity 3.5 does not limit commands
+#   up to 3.0. maxTorque 1e-3 is not a servo spec.
+# - The robot can roll away and off the 2 m floor.
+# - test_ctrl_wheels_world.py pins this file. Device names are exact, case-sensitive.
+# - UNVERIFIED in Webots R2025a: Box nodes inside a boundingObject Group; ContactProperties effect.
+
+WorldInfo {
+```
+
+### `webots/controllers/ctrl_wheels/ctrl_wheels.py`
+
+Trailing comment on `CLAMP_RAD_S = 3.0` (was line 71):
+
+```
+# UNVERIFIED: symmetric clamp applied to each commanded wheel velocity
+```
+
+Sign comment above `SIGN_LEFT` (was lines 73-79):
+
+```
+# Sign per wheel. Observed by the owner (2026-11-06, sim only) with the bridge signs and these
+# constants all +1/+1: a positive command turned both wheels the same sense, rolling toward +x.
+# Only that combined default was observed; the two places were not tested separately. The world
+# design (discussion 266) intends a positive command to roll both wheels forward. The firmware-side mirror
+# for the two servo chips is a separate sign path and is not checked against this.
+# The bridge applies its own per-wheel sign to the model before it sends a command;
+# do not flip the same wheel on both sides, because the two flips would cancel.
+```
+
+Before `Robot()` (was line 190) and before the motor setup (was lines 229-230):
+
+```
+    # Plain Robot: nothing here needs Supervisor powers (NOT CHECKED in Webots).
+    # Velocity mode. NOT CHECKED in Webots: the position-infinity then
+    # setVelocity sequence is the standard RotationalMotor idiom, not run here.
+```
+
+Datagram read loop (was lines 258-266):
+
+```
+            # Read at most MAX_DATAGRAMS_PER_STEP (1024) datagrams per step and process each
+            # in arrival order, so the newest valid command wins and a stop in the tail is
+            # honoured. Invalid datagrams count toward the bound. A backlog deeper than the
+            # bound is read on later steps (not discarded), so a sim-time watchdog cannot
+            # see the wall-clock age of queued commands. The bound is a chosen value, not
+            # measured; not verified in Webots. There
+            # is no sender authentication: any local sender that reaches 127.0.0.1:5018
+            # can send commands (single-wheel behaviour, kept on purpose).
+            # Invalid datagrams are counted and ignored, and they do not reset the watchdog.
+```
+
+### `ctrl_wheels_msg.py` (was lines 78-80)
+
+```
+# Firmware's own step cap (SIM ONLY). step_lines clamps to it; the wire does not.
+RAW_CAP = 125
+# UNVERIFIED against the XL330 e-Manual (BRC lib/dxl_units marks it the same way).
+```
+
+### `ctrl_wheels_bridge.py` (was line 101)
+
+```
+# Restart rule (F22). All three are unmeasured guesses for the 50 Hz firmware; see the module docstring.
+_REORDER_BACK_US = 1_000_000  # a seq going back with t_us stepping back by less than this is a repeat or reorder
+_FWD_SLACK_US = 1_000_000  # extra t_us allowed on a forward step, on top of the frame period
+_FRAME_US_MAX = 40_000  # largest expected t_us step per frame
+```
+
+### `test_ctrl_wheels_fake.py` (was lines 52-53)
+
+```
+# First-order lag factor, written here from guessed values (not in CONTRACT.md;
+# retuning breaks these tests): dt / (tau + dt).
+```

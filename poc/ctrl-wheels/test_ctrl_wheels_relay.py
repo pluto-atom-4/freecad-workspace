@@ -20,7 +20,6 @@ from pathlib import Path
 
 import pytest
 
-# Add the script directory to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ctrl_wheels_msg import Whl
@@ -187,7 +186,7 @@ class TestStaleBoundary:
         relay.on_whl(_whl(model=0.75, state=0))
         clk.advance(0.125)
         assert relay.poll() == RelayOut(wheel_rad_s=0.75, stale=0)
-        clk.advance(0.125)  # total age 0.25 exactly
+        clk.advance(0.125)
         assert relay.poll() == RelayOut(wheel_rad_s=0.0, stale=1)
 
     def test_age_measured_from_latest_on_whl(self):
@@ -195,8 +194,8 @@ class TestStaleBoundary:
         relay = Relay(clock=clk, stale_s=0.25)
         relay.on_whl(_whl(model=0.5, seq=0))
         clk.advance(0.125)
-        relay.on_whl(_whl(model=0.6, seq=1))  # re-arms the arrival time
-        clk.advance(0.125)  # age of latest sample is 0.125, first is 0.25
+        relay.on_whl(_whl(model=0.6, seq=1))
+        clk.advance(0.125)
         assert relay.poll() == RelayOut(wheel_rad_s=0.6, stale=0)
 
     def test_stale_output_is_zero_with_stale_flag(self):

@@ -34,7 +34,6 @@ from pathlib import Path
 
 import pytest
 
-# Add the script directory to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ctrl_wheels_msg
@@ -50,8 +49,6 @@ from ctrl_wheels_msg import (
 )
 
 
-# Limits written out as test literals on purpose. They are not imported from
-# the module, so a change there cannot silently move the expected values.
 SEQ_LIMIT = 65536
 T_US_LIMIT = 4294967295
 INT32_MIN_LITERAL = -2147483648
@@ -71,8 +68,6 @@ def _with_checksum(body):
     return f"{body}*{csum:02X}\n"
 
 
-# Accept goldens: (expected Whl2, exact line). Whl2 field order is
-# seq, t_us, model_rad_s, raw_l, raw_r, state. Copied from CONTRACT.md S7.
 GOLDEN_ACCEPT = [
     (Whl2(1, 1000000, 0.5, 10, 12, 0), "WHL2,1,1000000,0.500000,10,12,0*48\n"),
     (Whl2(2, 1020000, 0.5, 10, -10, 0), "WHL2,2,1020000,0.500000,10,-10,0*66\n"),
@@ -104,16 +99,6 @@ GOLDEN_ACCEPT_IDS = [
     "int32_extremes",
 ]
 
-# Reject goldens that apply to the WHL2 parser. Four entries (six_fields,
-# eight_fields, state_3, nan_model) are altered WHL2 bodies whose HH is correct
-# over the altered body. bad_hh is the only entry with a wrong HH, on purpose:
-# its body is the same as the reverse-direction case in CONTRACT.md S7, whose
-# correct HH is 56, and this literal uses 57. whl_v1_line is a whole
-# single-wheel WHL v1 line (prefix WHL, 6 fields) with its own HH, not an
-# altered WHL2 body; it is refused by the prefix and field count.
-# The checksum is compared first, so a wrong HH would hide the rule under test.
-# The reverse case (WHL2 line against the single-wheel v1 parser) is not tested
-# here; see the module docstring.
 GOLDEN_REJECT = [
     ("six_fields", "WHL2,20,1200000,0.500000,10,-10*4A\n"),
     ("eight_fields", "WHL2,20,1200000,0.500000,10,-10,0,0*4A\n"),
@@ -166,7 +151,6 @@ class TestChecksum:
         assert checksum("") == 0
 
     def test_golden_body(self):
-        # Body of the accept golden "WHL2,1,1000000,0.500000,10,12,0*48".
         assert checksum("WHL2,1,1000000,0.500000,10,12,0") == 0x48
 
     def test_non_ascii_rejected(self):
@@ -202,13 +186,10 @@ class TestFormat:
             format_whl2(Whl2(0, 0, bad, 0, 0, 0))
 
     def test_bool_model_refused(self):
-        # Implementation: _model_to_float refuses bool before the float check.
         with pytest.raises(WhlError):
             format_whl2(Whl2(0, 0, True, 0, 0, 0))
 
     def test_int_model_accepted_as_float(self):
-        # Implementation: an int model (not bool) is converted by float() and
-        # printed with %.6f, so 5 prints as 5.000000.
         assert format_whl2(Whl2(0, 0, 5, 0, 0, 0)).startswith("WHL2,0,0,5.000000,0,0,0*")
 
     @pytest.mark.parametrize(
@@ -236,7 +217,6 @@ class TestFormat:
             format_whl2(Whl2(0, 0, 1e300, 0, 0, 0))
 
     def test_huge_model_refused_in_v1_format(self):
-        # format_whl shares _model_text, so the same length guard applies.
         with pytest.raises(WhlError):
             format_whl(Whl(0, 0, 1e300, 0, 0))
 
@@ -295,7 +275,6 @@ class TestFormat:
         assert format_whl2(Whl2(SEQ_LIMIT + 1, 0, 0.0, 0, 0, 0)).startswith("WHL2,1,0,")
 
     def test_negative_seq_wraps_to_65535(self):
-        # Python -1 % 65536 == 65535, per the contract's "mod 65536".
         assert format_whl2(Whl2(-1, 0, 0.0, 0, 0, 0)).startswith("WHL2,65535,0,")
 
     def test_negative_raw_r_kept_as_written(self):
@@ -366,14 +345,11 @@ class TestParse:
             parse_line("WHL2,1,1000000,0.500000,10,12,0\n")
 
     def test_two_star_markers_rejected(self):
-        # The HH is correct over the body that still contains the first '*'.
-        # The state token "0*48" is then refused by the digit pattern.
         inner = "WHL2,1,1000000,0.500000,10,12,0*48"
         with pytest.raises(WhlError):
             parse_line(_with_checksum(inner))
 
     def test_lowercase_hex_rejected(self):
-        # Golden line 8 has HH 6C; lowercase must be rejected.
         with pytest.raises(WhlError):
             parse_line("WHL2,8,1140000,0.750000,15,-15,0*6c\n")
 
@@ -390,7 +366,6 @@ class TestParse:
             parse_line("WHL2,1,1000000,0.500000,10,12,0*GG\n")
 
     def test_wrong_hh_on_valid_body_rejected(self):
-        # Golden line 1 has HH 48; 49 is wrong.
         with pytest.raises(WhlError):
             parse_line("WHL2,1,1000000,0.500000,10,12,0*49\n")
 
@@ -444,12 +419,10 @@ class TestParse:
         ids=["inf", "neg_inf", "exponent_overflow"],
     )
     def test_infinite_model_token_rejected(self, tok):
-        # "1e400" parses to inf in float(), so the finite check refuses it.
         with pytest.raises(WhlError):
             parse_line(_with_checksum(f"WHL2,1,1000000,{tok},10,12,0"))
 
     def test_model_token_over_20_chars_rejected(self):
-        # A finite model whose token is 21 characters is refused by the length cap.
         tok = "-1000000000000.000000"
         assert len(tok) == 21
         with pytest.raises(WhlError):
@@ -469,8 +442,6 @@ class TestParse:
 
     @pytest.mark.parametrize("pos", ["seq", "t_us", "model", "raw_l", "raw_r"])
     def test_five_thousand_digit_token_raises_whl_error(self, pos):
-        # A checksum-valid line with a 5000-digit token must raise WhlError,
-        # not ValueError from int() or float(), and the message must not carry the digits.
         fields = {
             "seq": "1",
             "t_us": "1000000",
@@ -497,16 +468,10 @@ class TestParse:
         ids=["seq_plus_refused", "t_us_plus_refused", "state_plus_refused"],
     )
     def test_plus_sign_refused_on_seq_t_us_state(self, body):
-        # Pinned current behaviour, inherited from the single-wheel parser:
-        # a leading "+" is refused on seq, t_us and state. CONTRACT.md S8 leaves
-        # the "+" question open; these tests document what the code does now.
         with pytest.raises(WhlError):
             parse_line(_with_checksum(body))
 
     def test_plus_sign_accepted_on_raw_and_model(self):
-        # Pinned current behaviour, inherited from the single-wheel parser:
-        # a leading "+" is accepted on raw_l, raw_r (signed integer pattern)
-        # and on the model token (float()). CONTRACT.md S8 leaves this open.
         w = parse_line(_with_checksum("WHL2,1,1000000,+0.5,+5,+12,0"))
         assert w == Whl2(1, 1000000, 0.5, 5, 12, 0)
 

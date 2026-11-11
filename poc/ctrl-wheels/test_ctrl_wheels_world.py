@@ -159,8 +159,6 @@ def test_boxes_have_no_physics_or_bounding_object(world, side):
     assert "Physics" not in block
 
 
-# Strips the hinge `children [...]` so wheel nodes cannot match; Robot translation/rotation
-# lookups still need canonical field order (translation before boundingObject).
 def _robot_own(world: str) -> str:
     robot = _block(world, r"DEF\s+CTRL_WHEELS\s+Robot\s*\{")
     for m in re.finditer(r"\bchildren\s*\[", robot):
@@ -217,7 +215,6 @@ def test_skids_mirrored_and_clear_floor(world):
     assert skids[0][0] == pytest.approx((-SKID_X, SKID_Y, 0.0), abs=ABS)
     assert skids[1][0] == pytest.approx((+SKID_X, SKID_Y, 0.0), abs=ABS)
     own = _robot_own(world)
-    # Robot rotation -90 deg about x puts Robot-frame y DOWN; axle height must equal wheel radius.
     rot = re.search(r"\brotation\s+" + NUM + r"\s+" + NUM + r"\s+" + NUM + r"\s+" + NUM, own)
     assert rot, "no Robot rotation"
     axis_angle = tuple(float(g) for g in rot.groups())

@@ -68,19 +68,14 @@ from dataclasses import dataclass
 
 PREFIX = "WHL2"
 FIELD_COUNT = 7
-# Prefix of the single-wheel WHL v1 line written by format_whl (6 fields).
 _V1_PREFIX = "WHL"
 SEQ_MOD = 65536
 T_US_MAX = 2**32 - 1
 INT32_MIN = -(2**31)
 INT32_MAX = 2**31 - 1
 STATES = (0, 1, 2)
-# Firmware's own step cap (SIM ONLY). step_lines clamps to it; the wire does not.
 RAW_CAP = 125
-# UNVERIFIED against the XL330 e-Manual (BRC lib/dxl_units marks it the same way).
 RAW_RPM_PER_UNIT = 0.229
-# Longest token the parser looks at. Longer tokens are refused before any
-# int() or float() call, so a huge digit string cannot reach Python's int limit.
 _MAX_TOKEN_LEN = 20
 
 _UINT_RE = re.compile(r"[0-9]+")
@@ -172,7 +167,6 @@ def _parse_int(name: str, tok: str) -> int:
 
 def _parse_float(name: str, tok: str) -> float:
     _check_token_len(name, tok)
-    # Reject any whitespace and underscores before float() sees the token.
     if any(c.isspace() for c in tok):
         raise WhlError(f"{name} has embedded whitespace: {_show(tok)}")
     if "_" in tok:

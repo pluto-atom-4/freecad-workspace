@@ -57,8 +57,6 @@ COLUMNS = (
     "missed_whl",
 )
 
-# Documentation data for humans. It is read only by test_ctrl_wheels_log.py, which pins its keys to COLUMNS,
-# so adding a column needs a description here. It is not used at run time.
 COLUMN_DOC = {
     "host_t_s": "host wall-clock seconds at the row, 3 decimals",
     "whl_seq": "wheel telemetry sequence number from the device (WHL2 seq)",
@@ -148,7 +146,7 @@ class CsvLog:
         self._writer = csv.writer(self._fh, lineterminator="\n")
         try:
             self._writer.writerow(COLUMNS)
-            self._fh.flush()  # header visible on disk at once; a crash keeps the rows so far
+            self._fh.flush()
         except BaseException:
             self._release()
             raise
@@ -159,7 +157,7 @@ class CsvLog:
             raise ValueError("write_row on a closed CsvLog")
         cells = _row_cells(row)
         self._writer.writerow(cells)
-        self._fh.flush()  # a live relay log: keep rows on disk if the run is killed
+        self._fh.flush()
 
     def close(self):
         """Close the log. Safe to call more than once."""

@@ -29,7 +29,6 @@ from pathlib import Path
 
 import pytest
 
-# Add the script directory to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ctrl_wheels_log import COLUMN_DOC, COLUMNS, CsvLog
@@ -57,7 +56,6 @@ EXPECTED_COLUMNS = (
     "missed_whl",
 )
 
-# Integer columns (contract S6, decimal integers, a float is refused).
 INT_COLUMNS = (
     "whl_seq",
     "whl_t_us",
@@ -70,7 +68,6 @@ INT_COLUMNS = (
     "missed_whl",
 )
 
-# Float columns (contract S6, %.6f except host_t_s and host_rtt_ms, %.3f).
 FLOAT_COLUMNS = (
     "host_t_s",
     "whl_model_rad_s",
@@ -84,7 +81,6 @@ FLOAT_COLUMNS = (
     "host_rtt_ms",
 )
 
-# Columns that are empty when the row has no echo (contract S6).
 NO_ECHO_KEYS = (
     "echo_cmd_seq",
     "sim_t_s",
@@ -97,8 +93,6 @@ NO_ECHO_KEYS = (
 
 HEADER = list(EXPECTED_COLUMNS)
 
-# One row with every column set. Values are hand-chosen; the expected text
-# is written out below, not derived from the implementation.
 FULL_ROW_VALUES = {
     "host_t_s": 1.5,
     "whl_seq": 7,
@@ -143,7 +137,6 @@ FULL_ROW_TEXT = [
     "0",
 ]
 
-# A command with no echo: the seven NO_ECHO_KEYS are empty.
 NO_ECHO_VALUES = {
     "host_t_s": 2.0,
     "whl_seq": 8,
@@ -483,8 +476,6 @@ class TestAtomicRow:
     def test_refused_row_leaves_no_partial_line(self, tmp_path):
         path = tmp_path / "atomic.csv"
         bad = _full_row()
-        # missed_whl is the last column: every earlier cell is valid and
-        # would be written if the row were not validated before writing.
         bad["missed_whl"] = 1.5
         log = CsvLog(path)
         log.write_row(_full_row())

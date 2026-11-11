@@ -61,7 +61,7 @@ class SensorReading:
     """Validated, timestamped sensor sample."""
     t_s: float
     angle_rad: float
-    velocity_rad_s: Optional[float]  # None if no previous sample was available
+    velocity_rad_s: Optional[float]
 
 
 def _validate_finite(value: float, name: str) -> float:
