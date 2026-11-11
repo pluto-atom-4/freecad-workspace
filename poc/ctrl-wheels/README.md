@@ -27,7 +27,7 @@ Open:
 
 - Wheel sign: bridge and Webots signs at +1/+1 gave an owner-reported net direction in Webots (2026-11-06 on the old track, 2026-11-07 on the earlier body, 2026-11-08 on `ctrl_wheels.wbt`, see Status; sim only); chip-side signs still UNCONFIRMED (see Sign convention).
 - Latency: UNMEASURED. `host_rtt_ms` includes up to one simulation step and one bridge poll.
-- Physics numbers in `ctrl_wheels.wbt` (mass, centerOfMass, skid size and clearance, friction setting) are guesses, not measured; see the world header.
+- Physics numbers in `ctrl_wheels.wbt` (mass, centerOfMass, skid size and clearance, friction setting) are guesses, not measured; see World notes, Header of `ctrl_wheels.wbt`.
 - Velocity spikes in the first samples after a start (cause unknown); see Sign convention.
 
 ## Links
@@ -75,7 +75,7 @@ Copied and renamed from `poc/ctrl-wheel` (`ctrl_wheel_*` to `ctrl_wheels_*`, `fa
 - `fake_wheels.py`: the header calls it the headless twin fake of the Webots controller. CONTRACT.md S4 names the single-wheel fake wheel as the source of the reserved-port rule, which this twin writes out as a literal set.
 - `webots/controllers/ctrl_wheels/ctrl_wheels.py`: the header says it speaks CONTRACT S3 and S4 and matches the single-wheel controller's stop behaviour. It drives two wheels.
 - `webots/controllers/ctrl_wheels/sensor_read.py`: the header names the servo-wheel-dof POC (issue #263). The sibling README calls it a byte copy of the servo-wheel-dof file. That byte copy was not diffed here.
-- `webots/worlds/ctrl_wheels.wbt`: the header says "Twin of ctrl_wheel.wbt". The two hinges sit at mirrored offsets (local z +-0.050, track 10.0 cm), the body is two boxes with an 8 mm gap, and the Robot is rotated -90 degrees about x (the single-wheel world uses +90, per its header). The track and the second box were changed after the first build of this world (PR #538). The Robot is now the physics root (a free body, PR #553).
+- `webots/worlds/ctrl_wheels.wbt`: the header (see World notes, Header of `ctrl_wheels.wbt`) says "Twin of ctrl_wheel.wbt". The two hinges sit at mirrored offsets (local z +-0.050, track 10.0 cm), the body is two boxes with an 8 mm gap, and the Robot is rotated -90 degrees about x (the single-wheel world uses +90, per its header). The track and the second box were changed after the first build of this world (PR #538). The Robot is now the physics root (a free body, PR #553).
 - Test files: each header names the module it pins. They were written for the twin and were not diffed against the sibling tests.
 
 ## Sign convention
@@ -86,7 +86,7 @@ There are three sign places. They are independent, and nothing proves that they 
 2. Bridge side: `--sign-left` and `--sign-right`, default +1 each, applied to the model value before the +-3.0 clamp. The raw columns of the line never reach the command; the bridge sends the model only.
 3. Webots controller: `SIGN_LEFT = 1` and `SIGN_RIGHT = 1`, fixed constants in `ctrl_wheels.py`.
 
-Flip one side only, and in one place. A bridge flip and a controller flip on the same wheel would cancel each other (the controller's own comment says so). The Webots defaults of +1/+1 follow the intended world design. The owner observed in the Webots 3D view (2026-11-06, sim only) that with +1/+1 a positive command turns both wheels about world +y in the same sense and they roll toward +x (viewed from each wheel's outside they look opposite; viewed from one side, same sense). That observation was made on the old track (wheels at local z +-0.026, one body box). The owner repeated it with wheels at +-0.050 on 2026-11-07 (sim only, earlier body, see Status): a positive command turned both wheels in the same sense and they rolled toward +x, a negative command rolled toward -x. Old-track CSVs sign_pos.csv (positive command run) and sign_neg.csv (negative command run, both signs +1; not the `--sign-right -1` run) (owner-local, not committed) show both velocity columns +1.000/+1.000 and -1.000/-1.000, angle change about +9.45 and -9.47 rad over about 9.5 s of sim time. On the earlier body (2026-11-07, owner-reported), h1_pos.csv and h1_neg.csv (owner-local, not committed, one run each, 300 rows each, 0 stale rows) show the same pattern: both velocity columns +1.000/+1.000 and -1.000/-1.000, angle change +5.50 and -5.66 rad over about 5.5 s and 5.7 s of sim time, left and right identical (an earlier-body figure). A deleted physics-root experiment world (added in PR #546, deleted in PR #555, git history only) was run first; the owner reported on 2026-11-08, in issues #544 and #545, that left and right were no longer identical there: left-right angle gap about 0.042 rad, velocity transients up to 3.96 rad/s. The 3.96 rad/s transients come from the deleted experiment world (as reported in #544 and #545); the start-up samples on `ctrl_wheels.wbt` are in the Velocity column note below. Neither speed is a worst case. The 0.042 rad left-right gap is also from the deleted experiment world (a position gap, not a speed); it is not the same measurement as the 0.0402 rad run A peak on `ctrl_wheels.wbt` in Status, and the two worlds are not comparable. On `ctrl_wheels.wbt` (owner-reported, 2026-11-08, sim only, #552): +1.0 rad/s rolled the Robot toward +x and -1.0 rad/s (after a reload) toward -x; the figures are in Status. A run with `--sign-right -1` (commands +1/-1) gave erratic wheel velocities up to about 20 rad/s, above the 3.5 rad/s motor limit: physics instability, cause not investigated, not a recommended setting. That run was on the old track and is untested on the free body. Chip-side signs (rawL=+raw, rawR=-raw) stay UNCONFIRMED.
+Flip one side only, and in one place. A bridge flip and a controller flip on the same wheel would cancel each other (see World notes, `ctrl_wheels.py` sign comment). The Webots defaults of +1/+1 follow the intended world design. The owner observed in the Webots 3D view (2026-11-06, sim only) that with +1/+1 a positive command turns both wheels about world +y in the same sense and they roll toward +x (viewed from each wheel's outside they look opposite; viewed from one side, same sense). That observation was made on the old track (wheels at local z +-0.026, one body box). The owner repeated it with wheels at +-0.050 on 2026-11-07 (sim only, earlier body, see Status): a positive command turned both wheels in the same sense and they rolled toward +x, a negative command rolled toward -x. Old-track CSVs sign_pos.csv (positive command run) and sign_neg.csv (negative command run, both signs +1; not the `--sign-right -1` run) (owner-local, not committed) show both velocity columns +1.000/+1.000 and -1.000/-1.000, angle change about +9.45 and -9.47 rad over about 9.5 s of sim time. On the earlier body (2026-11-07, owner-reported), h1_pos.csv and h1_neg.csv (owner-local, not committed, one run each, 300 rows each, 0 stale rows) show the same pattern: both velocity columns +1.000/+1.000 and -1.000/-1.000, angle change +5.50 and -5.66 rad over about 5.5 s and 5.7 s of sim time, left and right identical (an earlier-body figure). A deleted physics-root experiment world (added in PR #546, deleted in PR #555, git history only) was run first; the owner reported on 2026-11-08, in issues #544 and #545, that left and right were no longer identical there: left-right angle gap about 0.042 rad, velocity transients up to 3.96 rad/s. The 3.96 rad/s transients come from the deleted experiment world (as reported in #544 and #545); the start-up samples on `ctrl_wheels.wbt` are in the Velocity column note below. Neither speed is a worst case. The 0.042 rad left-right gap is also from the deleted experiment world (a position gap, not a speed); it is not the same measurement as the 0.0402 rad run A peak on `ctrl_wheels.wbt` in Status, and the two worlds are not comparable. On `ctrl_wheels.wbt` (owner-reported, 2026-11-08, sim only, #552): +1.0 rad/s rolled the Robot toward +x and -1.0 rad/s (after a reload) toward -x; the figures are in Status. A run with `--sign-right -1` (commands +1/-1) gave erratic wheel velocities up to about 20 rad/s, above the 3.5 rad/s motor limit: physics instability, cause not investigated, not a recommended setting. That run was on the old track and is untested on the free body. Chip-side signs (rawL=+raw, rawR=-raw) stay UNCONFIRMED.
 
 Velocity column note (owner-reported, 2026-11-08, sim only, #552): the velocity column in the CSV is a controller-side finite difference in `sensor_read.py` ((angle_now - angle_prev) / dt), not a Webots velocity sensor. In the first samples after a start the CSV shows single-sample jumps, for example: run A row 5 (0.096 s) left 3.512 rad/s (right 0.99996); run A also dips to -0.242 rad/s on both wheels at 0.048 s; run B redo rows 2 and 3: -4.596 rad/s on both wheels, then +2.117 (left) and +2.113 (right) (angle -0.032, -0.1055, -0.0717). Cause unknown: real wheel angle motion or a sensor or timestep artifact; the 16 ms and 32 ms tick mix is only a guess. Settled velocities and final angles are as listed in Status. Do not read a start-up velocity sample as a wheel speed.
 
@@ -174,14 +174,14 @@ Exit codes: 0 when the run finishes (EOF, duration or Ctrl-C during the run). A 
 - Stops are not latches. A state other than 0, or a stale relay, sends 0.0 to both wheels with stale 1. A fresh state-0 line resumes. The bridge's stale rule uses the host clock (200 ms). The Webots controller also stops both wheels after 0.2 s of sim time without a valid command. A Webots pause stops sim time, so that watchdog does not fire during a pause (the controller header, known limit (a)).
 - `unmatched_echoes`: the sibling README expected a non-zero count from the echo cadence. That expectation has not been checked for this twin.
 - CSV empty cells: an empty echo cell means no echo matched that row (`echo_cmd_seq`, `sim_t_s`, the angle and velocity cells, `host_rtt_ms`). `echo_cmd_seq` is also empty when the echo sends a null `cmd_seq_echo`, which is the case before the first command. `vel_rad_s_l` and `vel_rad_s_r` are empty when that wheel's velocity is null, which the controller sends on its first step.
-- Webots world: the direction with signs +1/+1 was owner-reported OK on the old track (2026-11-06), on the earlier body (2026-11-07, track 10.0 cm) and on `ctrl_wheels.wbt` (2026-11-08, owner-reported, sim only), see Status and Sign convention. The motor limits (`maxVelocity 3.5`, `maxTorque 1e-3`) are owner-chosen for this simulation, per the world header, and were not checked here.
+- Webots world: the direction with signs +1/+1 was owner-reported OK on the old track (2026-11-06), on the earlier body (2026-11-07, track 10.0 cm) and on `ctrl_wheels.wbt` (2026-11-08, owner-reported, sim only), see Status and Sign convention. The motor limits (`maxVelocity 3.5`, `maxTorque 1e-3`) are owner-chosen for this simulation, per World notes, Header of `ctrl_wheels.wbt`, and were not checked here.
 - Sim only. Not hardware-validated.
 
 ## World notes
 
 Comments removed from the sources by #557, kept here verbatim so the caveats are not lost. Cites like `file:NN` below name the file as it was before the strip; line numbers in the sources have shifted.
 
-### Header of `webots/worlds/ctrl_wheels.wbt` (was lines 3-34)
+### Header of `webots/worlds/ctrl_wheels.wbt` (was lines 3-32)
 
 ```
 # Twin of ctrl_wheel.wbt for the ctrl-wheels relay sim (freecad-workspace #501, umbrella #482).
@@ -282,4 +282,73 @@ _FRAME_US_MAX = 40_000  # largest expected t_us step per frame
 ```
 # First-order lag factor, written here from guessed values (not in CONTRACT.md;
 # retuning breaks these tests): dt / (tau + dt).
+```
+
+### `ctrl_wheels_bridge.py` stripped caveats (was lines 340-341, 537-539, 772-774)
+
+Pre-strip lines 340-341 (send-failure comment):
+
+```
+            Nothing reached the wire: no pending row, and last_cmd_stale is unchanged
+            so finish() still sends its stop.
+```
+
+Pre-strip lines 537-539 (command-line port comment):
+
+```
+The CLI refuses only 5006 (the single-wheel servo_wheel_dof port), for either port.
+The full reserved set of CONTRACT.md S4 binds tests and the fake wheel, not this CLI;
+the bridge owns 5017/5018 by default and other ports are the caller's responsibility.
+```
+
+Pre-strip lines 772-774 (socket-creation OSError comment):
+
+```
+            Normally the CSV write (for example disk full). An OSError from the command socket
+            creation in _Run.__init__ also escapes run_bridge and lands here, so it is reported
+            with this same "cannot write --record" text.
+```
+
+### `fake_wheels.py` stripped caveats (was lines 71, 192-194)
+
+Pre-strip lines 71 (loopback and unauthenticated comment):
+
+```
+The command port is unauthenticated (CONTRACT.md S4 default is 127.0.0.1): loopback only.
+```
+
+Pre-strip lines 192-194 (bare except rationale):
+
+```
+            By design: step() never raises, a failed echo is dropped. The encode
+            cannot fail today: cmd_seq is the decoded int (not clamped), and
+            json encode and decode share the same int-to-text digit limit.
+```
+
+### `webots/controllers/ctrl_wheels/ctrl_wheels.py` stripped caveats (was lines 85-87, 225, 319-325)
+
+Pre-strip lines 85-87 (wire key-name contract):
+
+```
+Wire key names. These are a contract with ctrl_wheels_udp.py in poc/ctrl-wheels,
+which this controller cannot import (the controller directory is outside the
+Python path in Webots). Change a key name in both files together or not at all.
+```
+
+Pre-strip lines 225 (PositionSensor timestep note):
+
+```
+    PositionSensor must be enabled at the sim timestep, or getValue() -> nan.
+```
+
+Pre-strip lines 319-325 (echo contract):
+
+```
+            ONE echo datagram per step. KEY NAMES ARE A CONTRACT with
+            ctrl_wheels_udp.py in poc/ctrl-wheels (cannot be imported here):
+            v, cmd_seq_echo, sim_t_s, left/right with angle_rad and vel_rad_s.
+            cmd_seq_echo is the seq of the newest valid command accepted so far
+            (null before the first one), even if the watchdog has since stopped the
+            wheels. Failures (ValueError from non-finite floats, OSError from send)
+            are counted and never raised, so Webots is never stalled.
 ```
