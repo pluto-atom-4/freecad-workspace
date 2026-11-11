@@ -242,6 +242,7 @@ def open_serial_lines(
 
     Device paths raise DofSerialError at the first next(). URL ports (containing
     "://") retry the first open every 1 s for up to 300 s or max_duration_s.
+    Test-covered helper, not on the CLI path (main() does not call it).
     """
     if not isinstance(port, str) or port.strip() == "":
         raise ValueError(f"port must be a non-empty str, got {port!r}")

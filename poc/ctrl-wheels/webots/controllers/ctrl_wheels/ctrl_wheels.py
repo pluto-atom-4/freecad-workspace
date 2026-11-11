@@ -4,7 +4,7 @@ ctrl_wheels -- Webots controller for the twin-wheel ctrl-wheels relay simulation
 
 SIM ONLY. Nothing here is validated on hardware, and it makes no balance claim.
 Webots side: with SIGN_LEFT/SIGN_RIGHT +1/+1 and the bridge signs +1/+1 the net
-direction was owner-observed (2026-11-06, sim only). The sign of each wheel against
+direction was owner-observed (2026-11-06, sim only; old +-0.026 track; repeated on ctrl_wheels.wbt 2026-11-08, owner-reported). The sign of each wheel against
 the firmware (chip side) is UNCONFIRMED. Beyond that direction check, runtime
 behaviour in Webots is NOT CHECKED.
 
