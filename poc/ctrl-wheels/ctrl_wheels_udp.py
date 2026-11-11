@@ -59,11 +59,8 @@ from dataclasses import dataclass
 
 
 HOST = "127.0.0.1"
-# Contract constants (CONTRACT.md S4). Not referenced in this module; the bridge
-# (task F14) imports them.
 PORT_CMD = 5018
 PORT_ECHO = 5017
-# SIM ONLY. Per-wheel speed clamp in rad/s, applied on encode and on decode.
 WHEEL_CLAMP_RAD_S = 3.0
 STALE_SET = (0, 1)
 VERSION = 2
@@ -99,9 +96,6 @@ class Echo:
     vel_rad_s_r: float | None
 
 
-# Ints wider than this many bits are shown by size only. 1024 bits is about 309
-# decimal digits, well under CPython's int-to-text limit (never below 640 when set),
-# so repr() of anything at or below this width cannot raise.
 _SHOW_MAX_BITS = 1024
 
 
@@ -216,7 +210,6 @@ def _dump(payload: dict[str, object]) -> bytes:
     try:
         text = json.dumps(payload, separators=(",", ":"), allow_nan=False)
     except (ValueError, OverflowError) as exc:
-        # ValueError also covers CPython's int-to-text digit limit for huge ints.
         raise UdpMsgError(f"message cannot be encoded: {exc}") from exc
     return text.encode("utf-8")
 
@@ -318,8 +311,6 @@ def drain_all(sock: socket.socket) -> list[bytes]:
         try:
             data, _addr = sock.recvfrom(RECV_BUFSIZE)
         except OSError:
-            # Covers BlockingIOError (no datagram pending on a non-blocking socket)
-            # and any other receive error: stop draining, never block.
             break
         payloads.append(data)
     return payloads

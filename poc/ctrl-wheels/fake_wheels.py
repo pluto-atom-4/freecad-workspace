@@ -64,11 +64,8 @@ from ctrl_wheels_udp import (
     open_listener,
 )
 
-# CONTRACT.md S4, written out as a literal set on purpose. Do not derive it from a range.
 _RESERVED_PORTS = frozenset({5005, 5006, 5007, 5008, 5017, 5018})
-# Stale window of CONTRACT.md S5, in sim seconds.
 STALE_S = 0.200
-# The command port is unauthenticated (CONTRACT.md S4 default is 127.0.0.1): loopback only.
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
 
 
@@ -189,9 +186,6 @@ class FakeWheel:
             )
             self._echo_tx.sendto(payload, self._echo_addr)
         except (OSError, UdpMsgError):
-            # By design: step() never raises, a failed echo is dropped. The encode
-            # cannot fail today: cmd_seq is the decoded int (not clamped), and
-            # json encode and decode share the same int-to-text digit limit.
             pass
 
     def close(self) -> None:

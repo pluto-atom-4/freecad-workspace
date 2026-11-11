@@ -182,11 +182,6 @@ def live_wheel(echo_rx):
     wheel.close()
 
 
-# ---------------------------------------------------------------------------
-# open_serial_lines helpers (no hardware)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("port", ["rfc2217://localhost:4002", "loop://"])
 def test_is_url_true_for_scheme_ports(port):
     assert _is_url(port) is True
@@ -214,11 +209,6 @@ def test_unreachable_url_ends_at_max_duration_without_long_wait(monkeypatch):
     elapsed = time.monotonic() - t0
     assert lines == []
     assert elapsed < 2.0
-
-
-# ---------------------------------------------------------------------------
-# Pinned API
-# ---------------------------------------------------------------------------
 
 
 def test_run_bridge_signature_pinned():
@@ -264,14 +254,7 @@ def test_bridge_stats_fields_pinned():
     ]
 
 
-# ---------------------------------------------------------------------------
-# Integration: real FakeWheel, real loopback sockets, real clock
-# ---------------------------------------------------------------------------
-
-
 def test_fifty_hz_step_logs_rows_with_echoes(tmp_path, echo_rx, live_wheel):
-    # step_lines writes raw_l positive and raw_r negative; both wheels must still
-    # follow the model forward-positive.
     lines = step_lines(0.5, 1.2, rate_hz=50.0, realtime=True)
     stats, path = _run(tmp_path, lines, live_wheel.cmd_addr, echo_rx)
     rows = _rows(path)
@@ -305,17 +288,11 @@ def test_echo_match_with_real_fake_wheel_fills_both_wheels(tmp_path, echo_rx, li
         assert r["angle_rad_r"] != ""
         assert r["sim_t_s"] != ""
         assert float(r["host_rtt_ms"]) >= 0.0
-    # The fake wheel lags first-order, so only some rows reach the model value.
     assert any(
         r["vel_rad_s_l"] != "" and r["vel_rad_s_r"] != ""
         and float(r["vel_rad_s_l"]) > 0.3 and float(r["vel_rad_s_r"]) > 0.3
         for r in echoed
     )
-
-
-# ---------------------------------------------------------------------------
-# Command content (deterministic lines, no echoes)
-# ---------------------------------------------------------------------------
 
 
 def test_state_zero_line_sends_model_to_both_wheels_and_logs_raws(tmp_path, cmd_rx, echo_rx):
@@ -394,7 +371,6 @@ def test_relay_signs_apply_per_wheel(tmp_path, cmd_rx, echo_rx):
 
 @pytest.mark.parametrize("model, expected", [(5.0, 3.0), (-5.0, -3.0)])
 def test_each_wheel_is_clamped_to_three(tmp_path, cmd_rx, echo_rx, model, expected):
-    # The relays are given a wide clamp so the bridge itself must limit the command.
     _stats, path = _run(
         tmp_path,
         [_line(0, model=model)],
@@ -431,11 +407,6 @@ def test_either_relay_stale_stops_both_wheels(tmp_path, cmd_rx, echo_rx, stale_s
     assert float(row["cmd_right_rad_s"]) == 0.0
 
 
-# ---------------------------------------------------------------------------
-# Sequence tracking (deterministic lines, no echoes)
-# ---------------------------------------------------------------------------
-
-
 def test_seq_gap_is_counted_as_missed_whl(tmp_path, cmd_rx, echo_rx):
     seqs = [0, 1, 2, 6, 7]
     stats, path = _run(
@@ -448,7 +419,6 @@ def test_seq_gap_is_counted_as_missed_whl(tmp_path, cmd_rx, echo_rx):
 
 
 def test_seq_wrap_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
-    # t_us keeps counting across the seq wrap, as the device does.
     seqs = [65534, 65535, 1]
     stats, path = _run(
         tmp_path, [_line(s, t_us=i * 20000) for i, s in enumerate(seqs)], cmd_rx.getsockname(), echo_rx
@@ -459,8 +429,6 @@ def test_seq_wrap_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
 
 
 def test_seq_reorder_is_not_a_gap(tmp_path, cmd_rx, echo_rx):
-    # 7 arrives before 6: the late 6 is a reorder (0), and 8 is measured from
-    # the highest seq seen (7), so it is not a gap either.
     seqs = [5, 7, 6, 8]
     stats, path = _run(
         tmp_path, [_line(s) for s in seqs], cmd_rx.getsockname(), echo_rx
@@ -510,7 +478,6 @@ def test_restart_with_low_old_seq_is_detected_and_later_gap_counted(tmp_path, cm
         _line(10, t_us=3_100_000),
     ]
     stats, path = _run(tmp_path, lines, cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05)
-    # _by_seq keeps the last row per seq, so seq 10 is the one after the restart.
     by_seq = _by_seq(_rows(path))
     assert int(by_seq[10]["missed_whl"]) == 7
     assert stats.restarts == 1
@@ -518,8 +485,6 @@ def test_restart_with_low_old_seq_is_detected_and_later_gap_counted(tmp_path, cm
 
 
 def test_legit_seq_wrap_with_continuing_t_us_is_not_a_restart(tmp_path, cmd_rx, echo_rx):
-    # Kept separate from test_seq_wrap_is_not_a_gap: that test uses seqs [65534, 65535, 1]
-    # (seq 0 skipped, missed 1), so its inputs differ from this one.
     seqs = [65534, 65535, 0]
     stats, path = _run(
         tmp_path, [_line(s, t_us=i * 20000) for i, s in enumerate(seqs)], cmd_rx.getsockname(), echo_rx
@@ -531,7 +496,6 @@ def test_legit_seq_wrap_with_continuing_t_us_is_not_a_restart(tmp_path, cmd_rx, 
 
 
 def test_t_us_wrap_with_continuing_seq_is_not_a_restart(tmp_path, cmd_rx, echo_rx):
-    # 4294947296 + 20000 == 2**32, so the next t_us is 0 after a wrap.
     stats, path = _run(
         tmp_path,
         [_line(5, t_us=4_294_947_296), _line(6, t_us=0)],
@@ -562,7 +526,6 @@ def test_real_gap_after_restart_is_counted(tmp_path, cmd_rx, echo_rx):
 
 
 def test_large_back_step_in_t_us_is_a_restart(tmp_path, cmd_rx, echo_rx):
-    # 2.4e9 us is a back step of about 40 minutes (past 2**31 us). The rule has no 36-minute threshold.
     seq_t = [(100, 2_400_000_000), (0, 2_900_000), (1, 2_920_000)]
     stats, _path = _run(
         tmp_path, [_line(s, t_us=t) for s, t in seq_t], cmd_rx.getsockname(), echo_rx
@@ -575,7 +538,6 @@ def test_restart_is_reported_in_summary_line(tmp_path, cmd_rx, capsys, monkeypat
     text = "\n".join([_line(50000, t_us=1_000_000_000), _line(0, t_us=2_900_000)]) + "\n"
     monkeypatch.setattr(sys, "stdin", io.StringIO(text))
     real_open_listener = ctrl_wheels_bridge.open_listener
-    # main() binds the echo socket on --echo-port; this wrapper binds port 0 instead, so no fixed port is used.
     monkeypatch.setattr(ctrl_wheels_bridge, "open_listener", lambda _port: real_open_listener(0))
     rc = ctrl_wheels_bridge.main([
         "--stdin",
@@ -592,7 +554,6 @@ def test_restart_is_reported_in_summary_line(tmp_path, cmd_rx, capsys, monkeypat
 
 @pytest.mark.parametrize("gap", [0, 5])
 def test_forward_bound_is_inclusive(tmp_path, cmd_rx, echo_rx, gap):
-    # Forward bound for a gap: (gap + 1) * 40_000 + 1_000_000 us. Equal to the bound is forward.
     bound = (gap + 1) * 40_000 + 1_000_000
     stats, path = _run(
         tmp_path, [_line(0, t_us=0), _line(gap + 1, t_us=bound)], cmd_rx.getsockname(), echo_rx,
@@ -606,7 +567,6 @@ def test_forward_bound_is_inclusive(tmp_path, cmd_rx, echo_rx, gap):
 
 @pytest.mark.parametrize("gap", [0, 5])
 def test_forward_bound_plus_one_is_a_restart(tmp_path, cmd_rx, echo_rx, gap):
-    # One microsecond over the forward bound is not forward, so the line is a restart.
     bound = (gap + 1) * 40_000 + 1_000_000 + 1
     stats, _path = _run(
         tmp_path, [_line(0, t_us=0), _line(gap + 1, t_us=bound)], cmd_rx.getsockname(), echo_rx,
@@ -617,7 +577,6 @@ def test_forward_bound_plus_one_is_a_restart(tmp_path, cmd_rx, echo_rx, gap):
 
 
 def test_forward_gap_32767_is_counted_at_the_bound(tmp_path, cmd_rx, echo_rx):
-    # Largest forward gap (32767 < half of 65536), with the t_us step at the bound 32768 * 40_000 + 1_000_000.
     bound = 32768 * 40_000 + 1_000_000
     stats, path = _run(
         tmp_path, [_line(0, t_us=0), _line(32768, t_us=bound)], cmd_rx.getsockname(), echo_rx,
@@ -630,8 +589,6 @@ def test_forward_gap_32767_is_counted_at_the_bound(tmp_path, cmd_rx, echo_rx):
 
 
 def test_gap_32768_is_not_a_forward_gap(tmp_path, cmd_rx, echo_rx):
-    # Gap 32768 is not below half, so the forward branch is closed. t_us goes forward, so the
-    # back step is about 2**32 and the line is a restart.
     stats, path = _run(
         tmp_path, [_line(0, t_us=0), _line(32769, t_us=32769 * 20_000)], cmd_rx.getsockname(), echo_rx,
         echo_timeout_s=0.05,
@@ -644,7 +601,6 @@ def test_gap_32768_is_not_a_forward_gap(tmp_path, cmd_rx, echo_rx):
 
 @pytest.mark.parametrize("back_us, restarts", [(999_999, 0), (1_000_000, 1)])
 def test_back_step_threshold_is_one_second(tmp_path, cmd_rx, echo_rx, back_us, restarts):
-    # A seq going back is a reorder while t_us steps back by less than 1 s (999_999 us), and a restart at 1_000_000 us.
     stats, _path = _run(
         tmp_path, [_line(100, t_us=2_000_000), _line(99, t_us=2_000_000 - back_us)],
         cmd_rx.getsockname(), echo_rx, echo_timeout_s=0.05,
@@ -654,7 +610,6 @@ def test_back_step_threshold_is_one_second(tmp_path, cmd_rx, echo_rx, back_us, r
 
 
 def test_seq_back_with_t_us_forward_is_a_restart(tmp_path, cmd_rx, echo_rx):
-    # Known limit (i) in the bridge docstring: a seq going back while t_us goes forward is a restart.
     stats, path = _run(
         tmp_path, [_line(100, t_us=2_000_000), _line(99, t_us=2_020_000)], cmd_rx.getsockname(), echo_rx,
         echo_timeout_s=0.05,
@@ -666,9 +621,6 @@ def test_seq_back_with_t_us_forward_is_a_restart(tmp_path, cmd_rx, echo_rx):
 
 
 def test_restart_within_1s_below_old_t_us_is_read_as_reorder_until_t_passes(tmp_path, cmd_rx, echo_rx):
-    # Pins known limits (ii) and (iii): a restart to a seq 0..32767 behind the baseline whose t_us is
-    # within 1 s BELOW the old one is read as a reorder (no restart yet); the next line, whose t_us is
-    # ABOVE the old baseline, is then read as the restart. Both lines count missed 0.
     stats, path = _run(
         tmp_path,
         [_line(100, t_us=2_000_000), _line(0, t_us=1_990_000), _line(1, t_us=2_010_000)],
@@ -682,8 +634,6 @@ def test_restart_within_1s_below_old_t_us_is_read_as_reorder_until_t_passes(tmp_
 
 
 def test_reorder_window_upper_edge_32767_behind_is_a_reorder(tmp_path, cmd_rx, echo_rx):
-    # Pins the upper edge of known limit (ii): a seq 32767 behind the baseline (gap 32768) with t_us
-    # 10 ms below is read as a reorder, so no restart.
     stats, path = _run(
         tmp_path,
         [_line(32768, t_us=2_000_000), _line(1, t_us=1_990_000)],
@@ -694,8 +644,6 @@ def test_reorder_window_upper_edge_32767_behind_is_a_reorder(tmp_path, cmd_rx, e
 
 
 def test_seq_32768_behind_is_a_restart_not_a_reorder(tmp_path, cmd_rx, echo_rx):
-    # Pins the edge just outside known limit (ii): a seq 32768 behind the baseline (gap 32767) is not
-    # in the reorder window; the t_us step fails the forward bound, so it is a restart at once.
     stats, path = _run(
         tmp_path,
         [_line(32768, t_us=2_000_000), _line(0, t_us=1_990_000)],
@@ -706,9 +654,6 @@ def test_seq_32768_behind_is_a_restart_not_a_reorder(tmp_path, cmd_rx, echo_rx):
 
 
 def test_restart_read_as_reorder_is_noticed_when_new_seq_passes_old_baseline(tmp_path, cmd_rx, echo_rx):
-    # Pins limit (iii), second route: baseline seq 100, restart line seq 0 (read as reorder), then
-    # seq 101 with t_us still BELOW the old baseline: forward gap 0 with a backward t_us fails the
-    # forward bound, so it is a restart. Missed stays 0.
     stats, path = _run(
         tmp_path,
         [_line(100, t_us=2_000_000), _line(0, t_us=1_900_000), _line(101, t_us=1_950_000)],
@@ -719,9 +664,6 @@ def test_restart_read_as_reorder_is_noticed_when_new_seq_passes_old_baseline(tmp
 
 
 def test_restart_from_high_old_seq_with_t_us_slightly_below_is_still_a_restart(tmp_path, cmd_rx, echo_rx):
-    # Known limit (ii): the reorder reading needs the new seq to be 0..32767 behind the baseline. From
-    # a high old seq (50000 -> 0 looks like a forward wrap, gap 15535) the t_us step fails the forward
-    # bound, so it is a restart at once even though t_us is only 0.5 s below.
     stats, path = _run(
         tmp_path,
         [_line(50000, t_us=1_000_000_000), _line(0, t_us=999_500_000)],
@@ -734,9 +676,6 @@ def test_restart_from_high_old_seq_with_t_us_slightly_below_is_still_a_restart(t
 
 
 def test_late_frame_after_forward_jump_is_a_known_false_restart(tmp_path, cmd_rx, echo_rx):
-    # Pins a KNOWN LIMIT (bridge docstring, known limit iv), not a goal. A late frame more than 1 s
-    # behind the baseline, after a forward jump, is read as a restart; the next live frame then
-    # counts a false missed 61. If the rule changes, this test is expected to change with it.
     lines = [_line(n, t_us=n * 20000) for n in range(101)]
     lines += [
         _line(161, t_us=3_200_000),
@@ -767,13 +706,7 @@ def test_v1_whl_line_is_a_bad_line_and_sends_no_motion_command(tmp_path, cmd_rx,
     assert stats.bad_lines == 1
     assert stats.whl_lines == 0
     assert _rows(path) == []
-    # Only the closing stop reaches the wire.
     assert _pairs(_wire_cmds(cmd_rx)) == [(0.0, 0.0, 1)]
-
-
-# ---------------------------------------------------------------------------
-# Stale and state handling
-# ---------------------------------------------------------------------------
 
 
 def test_state_one_line_sends_zero_stale_command(tmp_path, cmd_rx, echo_rx):
@@ -812,10 +745,6 @@ def test_silence_gives_one_stale_command_then_fresh_resumes(tmp_path, echo_rx):
         resumed_at.append(time.monotonic())
         yield _line(1, model=0.5)
 
-    # Echo tap: FakeWheel sends its echoes here; the tap records each echoed
-    # (vel_rad_s_l, vel_rad_s_r) (public decode_echo) and forwards the bytes
-    # unchanged to the bridge's echo socket. The CSV keeps only one echo per
-    # command, so it cannot show the decay during the silence.
     tap = open_listener(0)
     tap_tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     samples: list[tuple[float, float, float]] = []
@@ -875,11 +804,6 @@ def test_silence_gives_one_stale_command_then_fresh_resumes(tmp_path, echo_rx):
     assert before_resume
     assert before_resume[-1][0] < 0.1
     assert before_resume[-1][1] < 0.1
-
-
-# ---------------------------------------------------------------------------
-# Stop conditions
-# ---------------------------------------------------------------------------
 
 
 def test_duration_stops_loop_and_sends_final_stale(tmp_path, cmd_rx, echo_rx):
@@ -1024,11 +948,6 @@ def test_source_error_before_the_run_ended_is_still_recorded(tmp_path, cmd_rx, e
     assert "line source stopped: early failure" in err
 
 
-# ---------------------------------------------------------------------------
-# Echo handling
-# ---------------------------------------------------------------------------
-
-
 def test_bad_and_unmatched_echoes_counted_and_rows_flush_empty(tmp_path, cmd_rx, echo_rx):
     addr = echo_rx.getsockname()
     tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1040,7 +959,6 @@ def test_bad_and_unmatched_echoes_counted_and_rows_flush_empty(tmp_path, cmd_rx,
         tx.close()
 
     def _linger():
-        # Keep the run alive long enough for the bridge to drain echo_rx.
         yield _line(0)
         time.sleep(0.1)
 
@@ -1060,11 +978,6 @@ def test_bad_and_unmatched_echoes_counted_and_rows_flush_empty(tmp_path, cmd_rx,
     assert rows[0]["vel_rad_s_l"] == ""
     assert rows[0]["vel_rad_s_r"] == ""
     assert rows[0]["host_rtt_ms"] == ""
-
-
-# ---------------------------------------------------------------------------
-# CSV contract
-# ---------------------------------------------------------------------------
 
 
 def test_csv_header_is_ctrl_wheels_log_columns(tmp_path, cmd_rx, echo_rx):

@@ -45,12 +45,9 @@ from ctrl_wheels_udp import (  # noqa: E402
 from fake_wheels import FakeWheel  # noqa: E402
 
 
-# CONTRACT.md S4, written out as a literal set on purpose. Do not derive it from a range.
 RESERVED_PORTS = frozenset({5005, 5006, 5007, 5008, 5017, 5018})
 DT_S = 0.016
 TAU_S = 0.05
-# First-order lag factor, written here from guessed values (not in CONTRACT.md;
-# retuning breaks these tests): dt / (tau + dt).
 LAG = DT_S / (TAU_S + DT_S)
 TOL = 0.1
 
@@ -230,7 +227,6 @@ def test_left_and_right_commanded_differently_give_different_angles(
     last = _run(wheel, tx, echo_rx, 30, 1, 1.0, -0.5)[-1]
     assert last.angle_rad_l > 0.0
     assert last.angle_rad_r < 0.0
-    # Both wheels obey the same linear lag, so the angles scale with the commands.
     assert last.angle_rad_r == pytest.approx(-0.5 * last.angle_rad_l, rel=1e-9)
 
 
@@ -258,8 +254,6 @@ def test_right_command_does_not_move_left_wheel(make_wheel, echo_rx, tx):
 
 def test_command_above_clamp_is_limited_to_3_per_wheel(make_wheel, echo_rx, tx):
     wheel = make_wheel()
-    # Raw bytes, not encode_cmd: encode_cmd clamps on the sender side and would
-    # skip the decoder clamp this test is about.
     raw = json.dumps(
         {"v": 2, "cmd_seq": 1, "wheels": {"left": 5.0, "right": -5.0}, "stale": 0}
     ).encode("utf-8")
@@ -275,9 +269,6 @@ def test_single_cmd_goes_stale_after_0_2_s_sim_on_both_wheels(make_wheel, echo_r
     wheel = make_wheel()
     _send(tx, wheel, encode_cmd(1, 1.0, 1.0, 0))
     echoes = [_step_one(wheel, echo_rx) for _ in range(80)]
-    # A command is accepted at the start of a step. Step k (1-based) sees an age
-    # of (k - 1) * DT_S, so the age first reaches 0.2 s on step 14:
-    # 12 * 0.016 = 0.192 (not stale), 13 * 0.016 = 0.208 (stale).
     targets = [1.0] * 13 + [0.0] * 67
     _assert_leg_path(echoes, "left", targets)
     _assert_leg_path(echoes, "right", targets)
@@ -288,9 +279,6 @@ def test_single_cmd_goes_stale_after_custom_stale_s_0_1(make_wheel, echo_rx, tx)
     wheel = make_wheel(stale_s=0.1)
     _send(tx, wheel, encode_cmd(1, 1.0, 1.0, 0))
     echoes = [_step_one(wheel, echo_rx) for _ in range(40)]
-    # ceil(0.1 / 0.016) = 7. Step k (1-based) sees an age of (k - 1) * DT_S, so
-    # the age first reaches 0.1 s on step 8: 6 * 0.016 = 0.096 (not stale),
-    # 7 * 0.016 = 0.112 (stale).
     targets = [1.0] * 7 + [0.0] * 33
     _assert_leg_path(echoes, "left", targets)
     _assert_leg_path(echoes, "right", targets)
@@ -319,12 +307,9 @@ def test_stale_zeroes_both_wheels_when_they_were_commanded_differently(
     assert all(e.cmd_seq_echo == 2 for e in stopped)
 
 
-# Datagrams the fake must ignore: the same refusals as the module decoder
-# (ctrl_wheels_udp.decode_cmd raises UdpMsgError, and the fake skips them).
 BAD_DATAGRAMS = [
     b"\xff\xfe not a datagram",
     b'{"cmd_seq":1}',
-    # A single-wheel v1 command: no "v", keys cmd_seq, wheel_rad_s, stale.
     json.dumps({"cmd_seq": 1, "wheel_rad_s": 1.0, "stale": 0}).encode("utf-8"),
     b'{"v":2.0,"cmd_seq":1,"wheels":{"left":1.0,"right":1.0},"stale":0}',
     b'{"v":1,"cmd_seq":1,"wheels":{"left":1.0,"right":1.0},"stale":0}',
@@ -506,7 +491,5 @@ def test_reserved_echo_port_is_refused(port):
 
 @pytest.mark.parametrize("port", [5009, 5016, 5019])
 def test_ports_next_to_the_reserved_set_are_accepted_as_echo_addr(port):
-    # Guards against deriving the reserved set from a range such as 5005..5018.
-    # Only the echo address is given here; nothing binds it.
     wheel = FakeWheel(echo_addr=("127.0.0.1", port))
     wheel.close()

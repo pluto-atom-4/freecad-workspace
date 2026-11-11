@@ -60,37 +60,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sensor_read import SensorReadError, read_sensor  # noqa: E402
 
 HOST = "127.0.0.1"
-CMD_PORT = 5018  # UDP command port, host -> sim. Never 5006; 5017 is the echo port.
-ECHO_ADDR = ("127.0.0.1", 5017)  # sensor echo destination (bridge side); send only, no bind
+CMD_PORT = 5018
+ECHO_ADDR = ("127.0.0.1", 5017)
 MOTOR_LEFT_NAME = "wheel_motor_left"
 MOTOR_RIGHT_NAME = "wheel_motor_right"
 SENSOR_LEFT_NAME = "wheel_sensor_left"
 SENSOR_RIGHT_NAME = "wheel_sensor_right"
 TAG = "ctrl_wheels"
-PROTOCOL_VERSION = 2  # the "v" value of both the command and the echo (CONTRACT.md S3)
-CLAMP_RAD_S = 3.0  # UNVERIFIED: symmetric clamp applied to each commanded wheel velocity
-STALE_SIM_S = 0.2  # simulated seconds without a fresh valid command before both wheels stop
-# Sign per wheel. Observed by the owner (2026-11-06, sim only) with the bridge signs and these
-# constants all +1/+1: a positive command turned both wheels the same sense, rolling toward +x.
-# Only that combined default was observed; the two places were not tested separately. The world
-# design (discussion 266) intends a positive command to roll both wheels forward. The firmware-side mirror
-# for the two servo chips is a separate sign path and is not checked against this.
-# The bridge applies its own per-wheel sign to the model before it sends a command;
-# do not flip the same wheel on both sides, because the two flips would cancel.
+PROTOCOL_VERSION = 2
+CLAMP_RAD_S = 3.0
+STALE_SIM_S = 0.2
 SIGN_LEFT = 1
 SIGN_RIGHT = 1
 RECV_BUFSIZE = 65535
-MAX_DATAGRAMS_PER_STEP = 1024  # read bound per simulation step; a deeper backlog is read on later steps
+MAX_DATAGRAMS_PER_STEP = 1024
 
-# Wire key names. These are a contract with ctrl_wheels_udp.py in poc/ctrl-wheels,
-# which this controller cannot import (the controller directory is outside the
-# Python path in Webots). Change a key name in both files together or not at all.
 CMD_KEYS = frozenset({"v", "cmd_seq", "wheels", "stale"})
 WHEELS_KEYS = frozenset({"left", "right"})
 
 
 def _say(msg: str, err: bool = False) -> None:
-    # flush=True: Webots pipes stdout; without it lines can appear late or never.
     print(f"{TAG}: {msg}", file=sys.stderr if err else sys.stdout, flush=True)
 
 
@@ -99,7 +88,6 @@ def _fmt(value) -> str:
 
 
 def _log(t_s: float, angle_l: float, vel_l, angle_r: float, vel_r) -> None:
-    # flush=True: Webots pipes stdout; without it lines can appear late or never.
     print(f"{TAG}: t={t_s:.4f} angle_rad_l={angle_l:.6f} velocity_rad_s_l={_fmt(vel_l)} "
           f"angle_rad_r={angle_r:.6f} velocity_rad_s_r={_fmt(vel_r)}", flush=True)
 
@@ -109,7 +97,6 @@ def _reject_constant(name: str):
 
 
 def _no_duplicate_keys(pairs):
-    # Same strictness as ctrl_wheels_udp.py: a repeated key at any depth is invalid.
     obj = {}
     for key, value in pairs:
         if key in obj:
@@ -119,7 +106,6 @@ def _no_duplicate_keys(pairs):
 
 
 def _is_int(value) -> bool:
-    # type() is used on purpose: bool is a subclass of int and must not pass.
     return type(value) is int
 
 
@@ -157,9 +143,6 @@ def _parse_cmd(data: bytes):
         stale = obj["stale"]
         if not _is_int(stale) or stale not in (0, 1):
             return None
-        # float() raises OverflowError for a JSON int too large for a float; that is
-        # caught by the except clause below. A JSON float literal such as 1e400
-        # parses to inf without an error, and the isfinite check below refuses it.
         left = float(left_raw)
         right = float(right_raw)
         if not (math.isfinite(left) and math.isfinite(right)):
@@ -187,7 +170,6 @@ def _open_socket(port: int) -> socket.socket:
 
 
 def main() -> int:
-    # Plain Robot: nothing here needs Supervisor powers (NOT CHECKED in Webots).
     robot = Robot()
     timestep = int(robot.getBasicTimeStep())
 
@@ -222,17 +204,13 @@ def main() -> int:
          f"motors {MOTOR_LEFT_NAME} and {MOTOR_RIGHT_NAME}, "
          f"sensors {SENSOR_LEFT_NAME} and {SENSOR_RIGHT_NAME}")
 
-    # PositionSensor must be enabled at the sim timestep, or getValue() -> nan.
     sensor_left.enable(timestep)
     sensor_right.enable(timestep)
 
-    # Velocity mode. NOT CHECKED in Webots: the position-infinity then
-    # setVelocity sequence is the standard RotationalMotor idiom, not run here.
     for motor in (motor_left, motor_right):
         motor.setPosition(float("inf"))
         motor.setVelocity(0.0)
 
-    # Newest valid command. All four stay None until the first valid datagram.
     last_cmd_seq = None
     last_cmd_left = None
     last_cmd_right = None
@@ -240,12 +218,10 @@ def main() -> int:
     last_msg_sim_t = None
     ignored_count = 0
 
-    # Previous sample per wheel and the shared previous timestamp for the velocity.
     angle_prev_left = None
     angle_prev_right = None
     t_prev_s = None
 
-    # Plain UDP socket for the sensor echo. No bind, non-blocking, send only.
     echo_sock = None
     echo_fail_count = 0
 
@@ -255,20 +231,11 @@ def main() -> int:
         while robot.step(timestep) != -1:
             t_s = robot.getTime()
 
-            # Read at most MAX_DATAGRAMS_PER_STEP (1024) datagrams per step and process each
-            # in arrival order, so the newest valid command wins and a stop in the tail is
-            # honoured. Invalid datagrams count toward the bound. A backlog deeper than the
-            # bound is read on later steps (not discarded), so a sim-time watchdog cannot
-            # see the wall-clock age of queued commands. The bound is a chosen value, not
-            # measured; not verified in Webots. There
-            # is no sender authentication: any local sender that reaches 127.0.0.1:5018
-            # can send commands (single-wheel behaviour, kept on purpose).
-            # Invalid datagrams are counted and ignored, and they do not reset the watchdog.
             drained = 0
             while drained < MAX_DATAGRAMS_PER_STEP:
                 try:
                     data, _addr = sock.recvfrom(RECV_BUFSIZE)
-                except OSError:  # includes BlockingIOError: nothing more pending
+                except OSError:
                     break
                 drained += 1
                 parsed = _parse_cmd(data)
@@ -281,8 +248,6 @@ def main() -> int:
                 last_cmd_seq, last_cmd_left, last_cmd_right, last_cmd_stale = parsed
                 last_msg_sim_t = t_s
 
-            # Stale or missing command: both wheels stop. Watchdog time is simulation
-            # time, not wall time.
             if (last_cmd_left is None or last_cmd_stale == 1
                     or (t_s - last_msg_sim_t) >= STALE_SIM_S):
                 v_left = 0.0
@@ -307,7 +272,6 @@ def main() -> int:
                     t_prev_s=t_prev_s,
                 )
             except SensorReadError as exc:
-                # Never leave the last velocities latched on a bad read.
                 motor_left.setVelocity(0.0)
                 motor_right.setVelocity(0.0)
                 _say(f"ERROR: sensor read failed ({exc}); both velocities 0, step skipped",
@@ -316,13 +280,6 @@ def main() -> int:
             _log(reading_l.t_s, reading_l.angle_rad, reading_l.velocity_rad_s,
                  reading_r.angle_rad, reading_r.velocity_rad_s)
 
-            # ONE echo datagram per step. KEY NAMES ARE A CONTRACT with
-            # ctrl_wheels_udp.py in poc/ctrl-wheels (cannot be imported here):
-            # v, cmd_seq_echo, sim_t_s, left/right with angle_rad and vel_rad_s.
-            # cmd_seq_echo is the seq of the newest valid command accepted so far
-            # (null before the first one), even if the watchdog has since stopped the
-            # wheels. Failures (ValueError from non-finite floats, OSError from send)
-            # are counted and never raised, so Webots is never stalled.
             try:
                 payload = json.dumps(
                     {"v": PROTOCOL_VERSION,
@@ -343,7 +300,6 @@ def main() -> int:
             angle_prev_right = reading_r.angle_rad
             t_prev_s = reading_l.t_s
     finally:
-        # Best effort: never leave the last velocities latched on exit or on an exception.
         for name, motor in (("left", motor_left), ("right", motor_right)):
             if motor is None:
                 continue
