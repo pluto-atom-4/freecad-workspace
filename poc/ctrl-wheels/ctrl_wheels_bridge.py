@@ -1,67 +1,5 @@
 #!/usr/bin/env python3
-"""
-ctrl-wheels WHL2 twin bridge: reads WHL2 lines from a serial source, splits each
-into a left and a right single-wheel sample, feeds one Relay per wheel, sends one
-UDP v2 command (both wheels) per accepted line to the headless ctrl_wheels
-stand-in and logs one CSV row per WHL2 line plus one per silence episode
-(ctrl_wheels_log.COLUMNS).
-
-The command uses the model velocity only, forward-positive on both wheels; the
-raw columns of the line are logged but never drive a command. If either relay is
-stale or the state is not 0, both wheels get (0.0, 0.0) with stale 1 (they stop
-together). That stop is not a latch: a fresh state-0 line resumes. Each wheel is
-clamped to +-3.0 silently. A line that is not WHL2 is a bad line.
-
-Sequence rule (F22). A forward step (seq gap below half the 16-bit range, and the t_us
-step is at most (missed + 1) x 40 ms plus 1 s) counts its gap as missed_whl. A seq that
-goes back (gap at or above half) while t_us goes back by less than 1 s is a repeat or
-reorder: missed 0, and the baseline stays at the highest seq seen. Anything else is a
-firmware restart: missed 0, stats.restarts +1, one log line, and the baseline moves to the
-new seq and t_us. Known limits (thresholds: _REORDER_BACK_US, _FWD_SLACK_US, _FRAME_US_MAX):
-(i) a seq that goes back while t_us goes forward is read as a restart (both counters are
-monotonic in the firmware);
-(ii) a restart is read as a reorder only when the new seq is 0 to 32767 behind the baseline
-(mod 65536; 0 behind is a repeat) AND its first t_us is within 1 s BELOW the old t_us (a restart from a high old seq,
-where the new seq looks like a forward wrap, or with a t_us above the old one, is a restart);
-(iii) a restart that is read as a reorder (ii) is only noticed when t_us passes the old
-baseline or the new seq passes the old baseline, whichever comes first, up to 1 s of lines
-later, and those lines count missed 0;
-(iv) a LATE frame more than 1 s of t_us behind the baseline, after a forward jump of 1 s or
-more, is read as a restart and the next live frame then adds a false missed count (example:
-frames 0..100, then seq 161 at +1.2 s, then the late seq 100: one false restart and a false
-61 missed); this edge is accepted because the firmware stream is in order (only a replay or
-relay could reorder), and a stricter rule (second consecutive line before accepting a
-restart) was left out;
-(v) a real outage longer than (missed + 1) x 40 ms plus 1 s is logged as a restart and its
-missed frames are not counted (accepted for the sim CSV);
-(vi) all thresholds are unmeasured guesses for the 50 Hz firmware.
-
-Command line: build_parser() and main(argv) -> int. Run from poc/ctrl-wheels:
-    python3 -m ctrl_wheels_msg --step 0.5 --seconds 5 | python3 ctrl_wheels_bridge.py --stdin --record ac1.csv
-    python3 ctrl_wheels_bridge.py --port rfc2217://localhost:4002 --record ac1.csv
-Exactly one of --port / --stdin. --record is required; an existing file is refused
-unless --overwrite. Exit codes: 0 run finished (EOF or Ctrl-C), 2 usage error, a failed
-source (at open, or mid-run: the 'line source stopped' line is logged BEFORE the summary)
-or a --record error. A receive error stops that drain pass only; the next poll drains again, and the run still ends normally.
-Ctrl-C while run_bridge is running ends the run through stop_event, prints the summary and
-returns 0. Ctrl-C while waiting to open the source returns 0 without a summary. A KeyboardInterrupt
-raised inside run_bridge's shutdown returns 0 without a summary. A Ctrl-C during startup (after the
-source opens, before the SIGINT handler is installed) or during the final cleanup (after the handler
-is restored) is not handled and ends with a traceback and a non-zero exit.
-An unreachable URL with --duration returns 2 on purpose: nothing was ever opened, so the
-run is a failed source, not a clean finish.
-
-SIM ONLY. The bridge is a relay, not a control loop, and makes no balance claim.
-With the bridge and Webots signs at their defaults +1/+1, both wheels rolled toward +x in an
-owner-observed Webots run (2026-11-06, sim only); the chip-side signs are UNCONFIRMED.
-The signs are flipped only through the Relay sign argument,
-which the CLI exposes as --sign-left and --sign-right (the only sign flips in the CLI).
-Latency is UNMEASURED: host_rtt_ms is wall time, not link latency.
-
-The serial helpers (DofSerialError, _is_url, _open_first, _open_url_waiting,
-_close_quietly and the read and sync loop) are copied, not imported, from
-poc/esp32-dof/monitor/dof_serial.py in this repo, with no reconnect loop.
-"""
+"""Twin WHL2 bridge: serial or stdin lines to UDP v2 commands and a CSV log."""
 
 from __future__ import annotations
 
@@ -238,12 +176,7 @@ def open_serial_lines(
     timeout_s: float = 0.05,
     max_duration_s: float | None = None,
 ) -> Iterator[str]:
-    """Yield stripped non-empty lines from a serial port or pyserial URL.
-
-    Device paths raise DofSerialError at the first next(). URL ports (containing
-    "://") retry the first open every 1 s for up to 300 s or max_duration_s.
-    Test-covered helper, not on the CLI path (main() does not call it).
-    """
+    """Yield stripped non-empty lines from a serial port or pyserial URL."""
     if not isinstance(port, str) or port.strip() == "":
         raise ValueError(f"port must be a non-empty str, got {port!r}")
     if isinstance(baud, bool) or not isinstance(baud, int) or baud <= 0:
@@ -445,32 +378,7 @@ def run_bridge(
     echo_timeout_s: float = 0.5,
     stop_event: threading.Event | None = None,
 ) -> BridgeStats:
-    """Relay WHL2 lines to the wheels over UDP and log one CSV row per WHL2 line (plus one per silence episode).
-
-    relay_l and relay_r are single-wheel Relay instances. One command (both wheels)
-    per WHL2 line. A line with state != 0, or with either relay stale, sends
-    (0.0, 0.0) with stale 1 and its own row: one per line, not one per episode.
-    The stop is not a latch; a fresh state-0 line resumes. A stale command from
-    silence (no new line) is sent once per silence episode. Raw columns are logged
-    only.
-    Rows are written on echo match or after echo_timeout_s with no echo. The run
-    ends on duration_s, stop_event, or an exhausted line source (after draining).
-    A line source that raises (other than KeyboardInterrupt) also ends the run; its
-    error text is kept in BridgeStats.source_error. Once the run loop has ended (including
-    the final settle wait, and after run_bridge returns or raises) a failure of the line source is
-    ignored (neither logged nor recorded); a failure before that still sets
-    stats.source_error and is logged.
-    A final stale command is sent unless the last command was already stale. It is
-    not logged as a CSV row, so cmds_sent can exceed the row count by one.
-    UDP send errors are counted in BridgeStats.send_errors, not raised. A command whose
-    send failed is not counted in cmds_sent, gets no CSV row and does not change the
-    stale state, so the final stop is still attempted.
-    cmd_seq is an unbounded counter with no wrap (the Webots controller accepts any
-    non-negative int).
-    The injected clock drives echo timing (echo timeouts, host_rtt_ms) and duration_s
-    only; Relay uses its own clock. A clock that never advances makes settle loop
-    forever, so library callers must advance it.
-    """
+    """Relay WHL2 lines to the wheels over UDP and log one CSV row per line."""
     if duration_s is not None and (
             isinstance(duration_s, bool) or not isinstance(duration_s, (int, float))
             or not math.isfinite(duration_s) or duration_s <= 0):

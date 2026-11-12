@@ -1,28 +1,5 @@
 #!/usr/bin/env python3
-"""
-Tests for the twin ctrl-wheels bridge (ctrl_wheels_bridge). The bridge module is
-in this directory; these tests pin its API.
-
-The bridge reads WHL2 lines, splits each into a left and a right single-wheel
-sample (ctrl_wheels_msg.split), feeds one Relay per wheel, and sends one UDP v2
-command per accepted line. It uses the model velocity only, forward-positive on
-both wheels; the raw columns of the line are logged but never drive a command.
-If either relay is stale, or the state is not 0, both wheels get (0.0, 0.0) with
-stale 1 (they stop together). That stop is not a latch: a fresh state-0 sample
-resumes. Each wheel is clamped to +-3.0 silently.
-
-Integration tests use real loopback UDP sockets, a real FakeWheel in a thread
-and the real clock, each well under 3 s. Every socket uses port 0 (ephemeral).
-Ports 5005-5008, 5017 and 5018 are never bound here.
-
-SIM ONLY. net direction with the bridge and Webots signs at +1/+1 owner-observed (2026-11-06, sim only);
-chip-side signs UNCONFIRMED. The model values are UNVERIFIED. Nothing here
-validates a real wheel, a balance loop or a serial device. open_serial_lines is
-tested only for paths that need no hardware.
-
-Usage (run from poc/ctrl-wheels):
-    python3 -m pytest test_ctrl_wheels_bridge.py -v
-"""
+"""Tests for the twin ctrl-wheels bridge API."""
 
 from __future__ import annotations
 
@@ -65,10 +42,7 @@ from fake_wheels import FakeWheel  # noqa: E402
 
 
 def _line(seq, model=0.5, state=0, raw_l=10, raw_r=-10, t_us=None):
-    """One stripped WHL2 line (no newline), as the bridge's reader passes it.
-
-    t_us defaults to seq * 20000 (no restart, no wrap); pass it explicitly for restart and wrap tests.
-    """
+    """Build one stripped WHL2 line as the bridge's reader passes it."""
     if t_us is None:
         t_us = (seq * 20000) % (2**32)
     return format_whl2(

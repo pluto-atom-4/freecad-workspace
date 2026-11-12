@@ -1,26 +1,5 @@
 #!/usr/bin/env python3
-"""
-Unit tests for fake_wheels.FakeWheel, the headless twin stand-in for the Webots
-ctrl_wheels controller.
-
-Pinned API:
-    FakeWheel(echo_addr, cmd_port=0, tau_s=0.05, dt_s=0.016, stale_s=0.2,
-              clamp=3.0, host="127.0.0.1")
-    .cmd_addr, .step(), .close(), .run_background(stop_event) -> Thread
-
-Contract: poc/ctrl-wheels/CONTRACT.md S3 (UDP v2 command and echo shapes) and
-S4 (the reserved port set is the literal set {5005, 5006, 5007, 5008, 5017, 5018},
-never a range). Tests bind only ephemeral ports (0) on the loopback address.
-
-SIM ONLY. The sign convention is UNCONFIRMED (CONTRACT.md S2). The fake applies
-each wheel's command as given, so any sign is the bridge's job, not the fake's.
-The model values (tau, dt, stale window) are guessed values, not in CONTRACT.md;
-retuning them breaks these tests. Nothing here validates a real
-wheel or a balance loop.
-
-Usage (run from poc/ctrl-wheels):
-    python3 -m pytest test_ctrl_wheels_fake.py -v
-"""
+"""Unit tests for fake_wheels.FakeWheel, the headless twin stand-in."""
 
 from __future__ import annotations
 
@@ -111,10 +90,7 @@ def _run(
     right_rad_s: float,
     stale: int = 0,
 ) -> list:
-    """Model the real bridge: re-send the same v2 command before every step.
-
-    Returns the decoded echoes, one per step.
-    """
+    """Re-send the same v2 command before every step and return the echoes."""
     echoes = []
     for _ in range(n):
         _send(tx, wheel, encode_cmd(cmd_seq, left_rad_s, right_rad_s, stale))
@@ -125,11 +101,7 @@ def _run(
 
 
 def _expected_path(targets):
-    """Per-step velocity and angle for a list of per-step targets.
-
-    Written from the guessed model, not from fake_wheels.py: velocity starts at
-    0 and angle at 0; each step v += (target - v) * LAG, then angle += v * DT_S.
-    """
+    """Per-step velocity and angle for a list of per-step targets."""
     vel = 0.0
     angle = 0.0
     vels = []
@@ -150,12 +122,7 @@ def _leg(echo, side: str):
 
 
 def _assert_leg_path(echoes, side: str, targets) -> None:
-    """Check one wheel of every echo against the first-order path.
-
-    The velocity on the first step is None: CONTRACT.md S3 allows a null
-    vel_rad_s, and the first-step null is this fake's choice (no previous
-    angle). Index 0 checks for None and the rest compare numbers.
-    """
+    """Check one wheel of every echo against the first-order path."""
     assert len(echoes) == len(targets), f"expected {len(targets)} echoes"
     vels, angles = _expected_path(targets)
     for k, echo in enumerate(echoes):

@@ -1,25 +1,5 @@
 #!/usr/bin/env python3
-"""
-Unit tests for the ctrl-wheels CSV log writer (ctrl_wheels_log), task F09
-(freecad-workspace #493, umbrella #482).
-
-SIM ONLY. Not hardware-validated. Chip-side signs UNCONFIRMED; Webots +1/+1 owner-observed (2026-11-06, sim only).
-
-This suite pins contract S6 of poc/ctrl-wheels/CONTRACT.md for ctrl_wheels_log:
-the 19-column tuple, the column docs, the cell formatting rules (int columns,
-float columns with %.6f and %.3f), the refusals (bool, NaN, inf, values out of
-float range, unknown columns), the atomic-row rule, and the file and close
-behaviour. The expected text is hand-written. The column tuple is duplicated
-here by design. When the contract changes, edit the contract and this test
-together.
-
-Every test writes only under pytest's tmp_path, never to a real path, and
-opens no network port.
-
-Usage:
-    cd poc/ctrl-wheels
-    python3 -m pytest test_ctrl_wheels_log.py -v
-"""
+"""Unit tests for the ctrl-wheels CSV log writer."""
 
 import csv
 import io
@@ -183,10 +163,7 @@ def _full_row():
 
 
 def _no_echo_row(missing):
-    """Command with no echo.
-
-    missing=True omits the NO_ECHO_KEYS; missing=False sets them to None.
-    """
+    """Build a command row with no echo."""
     row = dict(NO_ECHO_VALUES)
     if not missing:
         for name in NO_ECHO_KEYS:
@@ -403,11 +380,7 @@ class TestColumnOrder:
 
 
 class TestUnknownKey:
-    """Test: an unknown key is refused and nothing is written.
-
-    The single-wheel names are included as a drift guard: they must not be
-    accepted by the twin writer.
-    """
+    """Test: an unknown key is refused and nothing is written."""
 
     @pytest.mark.parametrize(
         "key",

@@ -1,35 +1,4 @@
-"""
-CSV log writer for the ctrl-wheels twin-wheel proof of concept (freecad-workspace
-#494, task F10, under umbrella FW #482). Contract: poc/ctrl-wheels/CONTRACT.md, S6.
-
-SIM ONLY. Not hardware-validated. Chip-side signs UNCONFIRMED; the
-bridge/Webots default +1/+1 net direction was owner-observed 2026-11-06
-(sim only). Latency UNMEASURED.
-
-One row per host tick, 19 columns. Columns are fixed by COLUMNS and written in
-that order, whatever the key order of the input mapping. A row is fully
-validated before anything is written, so a rejected row leaves no partial line.
-
-whl_raw_l and whl_raw_r are the raw goal velocities the planned firmware writes
-to each chip, taken from the WHL2 line. They are not a servo readback. This log
-does not range-check whl_raw_l or whl_raw_r to int32: it accepts any Python int
-in an int column. The int32 range is enforced by the WHL2 parser,
-ctrl_wheels_msg.parse_line (CONTRACT.md S1); this log does not repeat that check.
-
-Cell rules:
-- None or a missing key gives an empty cell.
-- bool, NaN and inf are refused with ValueError.
-- Float columns use "%.6f", except host_t_s and host_rtt_ms which use "%.3f".
-- Integer columns are written as decimal integers.
-
-host_rtt_ms: wall-clock milliseconds from sending the command with cmd_seq to
-receiving the echo whose cmd_seq_echo equals that cmd_seq. It includes up to one
-simulation step (16 ms in the world file and in fake_wheels, UNVERIFIED for Webots)
-and one bridge poll, so it is NOT a pure link latency. Empty when no echo has
-arrived.
-
-echo_cmd_seq: the value of the echo JSON key cmd_seq_echo.
-"""
+"""CSV log writer for the ctrl-wheels twin-wheel proof of concept."""
 
 import csv
 import math
@@ -127,12 +96,7 @@ def _row_cells(row):
 
 
 class CsvLog:
-    """CSV writer for ctrl-wheels rows. The header is written on construction.
-
-    A str or os.PathLike target is opened and owned: it is closed by close().
-    With overwrite=False an existing path raises FileExistsError.
-    Any other target is a caller-owned file object: it is flushed, never closed.
-    """
+    """CSV writer for ctrl-wheels rows; writes the header on construction."""
 
     def __init__(self, target, overwrite=False):
         self._closed = False

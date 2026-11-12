@@ -1,59 +1,5 @@
 #!/usr/bin/env python3
-"""
-WHL2 twin-wheel line protocol (ctrl_wheels_msg) for the ctrl-wheels POC:
-formatter and parser for the two-wheel line, the single-wheel Whl type it
-splits into, and a step-input generator (step_lines) that yields WHL2 lines via
-format_whl2 (Whl and format_whl are kept for the bridge tests).
-
-SIM ONLY. This is a sim-only twin. Nothing here is validated on real hardware
-or against a real receiver. The sign conventions are UNCONFIRMED: the Webots net
-direction at +1/+1 is owner-observed (2026-11-06, sim only), the chip-side
-rawR negation is UNCONFIRMED (the planned firmware writes rawR already
-negated), and "forward-positive" for model is the contract's definition
-only (CONTRACT.md S2 in this directory).
-
-Line format of the twin (WHL2, ASCII, one line per sample, CONTRACT.md S1):
-    WHL2,<seq>,<t_us>,<model %.6f>,<rawL>,<rawR>,<state>*<HH>\\n
-
-Protocol details (WHL2):
-- seq: uint16 sequence number, wraps at 65536 (format takes seq mod 65536);
-  the parser rejects 65536 or more
-- t_us: uint32 device microseconds (0 .. 2^32-1)
-- model: model plant velocity in rad/s, %.6f. The formatter refuses a
-  non-finite value (WhlError). The parser rejects any non-finite model token
-  (nan, inf, -inf, an overflowing exponent such as 1e400).
-  The formatter writes 0.000000 for a -0 model; the parser accepts -0.000000
-- rawL, rawR: signed decimal integers, int32 range. The wire accepts any int32
-  value; the +-125 cap (RAW_CAP) is a firmware step cap and is applied only by
-  step_lines, not by the wire
-- state: 0 run, 1 hold after a fall, 2 bus down; one state for the pair
-- HH: 2-digit UPPERCASE hex XOR checksum of the body (from the leading W up to
-  the *). The checksum is compared before the field count, prefix and tokens
-- Line terminator: \\n on output; the parser accepts exactly one trailing \\n,
-  \\r\\n, or no terminator
-
-Supported range: every token is at most 20 characters (_MAX_TOKEN_LEN), and
-the formatter refuses a model whose %.6f text is longer than that. So the
-formatter and parser round-trip a model whose %.6f text is at most 20
-characters: positive values up to 9999999999999.999999 and negative values down
-to -999999999999.999999. A value whose text is longer (including one that
-rounds up to a longer text) is refused by the formatter and by the parser.
-This is a simulation wheel velocity in rad/s, far inside the range. The v1
-formatter (format_whl) shares the guard; the single-wheel module in
-poc/ctrl-wheel has no 20-character model-text guard.
-
-Single-wheel names kept for the split: Whl (seq, t_us, model_rad_s, raw, state)
-and format_whl, which writes the single-wheel WHL v1 line (prefix WHL, 6 fields).
-Both stay because split() returns Whl and the bridge tests still use format_whl.
-step_lines (the --step CLI) yields WHL2 lines through format_whl2.
-Its left and right raws are the clamped raw with the sign applied: sign_l and
-sign_r, default +1 and -1, SIM ONLY, UNCONFIRMED. parse_line accepts WHL2 only.
-
-Usage (run from poc/ctrl-wheels):
-    python3 -m ctrl_wheels_msg --step 1.0 --seconds 5
-    python3 -m ctrl_wheels_msg --step 1.0 --seconds 5 --no-sleep
-    python3 -m ctrl_wheels_msg --step 1.0 --seconds 5 --sign-left 1 --sign-right -1 --state 0
-"""
+"""WHL2 twin-wheel line protocol: formatter, parser and step generator."""
 
 from __future__ import annotations
 
@@ -181,11 +127,7 @@ def _parse_float(name: str, tok: str) -> float:
 
 
 def _model_text(model: float) -> str:
-    """Format a finite model with %.6f, normalising -0.000000 to 0.000000.
-
-    Refuses a text longer than _MAX_TOKEN_LEN, because the parser would refuse
-    that token. The message names the length, not the value.
-    """
+    """Format a finite model value with %.6f, turning -0.000000 into 0.000000."""
     model_str = f"{model:.6f}"
     if model_str == "-0.000000":
         model_str = "0.000000"
@@ -248,24 +190,7 @@ def format_whl(w: Whl) -> str:
 
 
 def parse_line(line: str) -> Whl2:
-    """
-    Parse one WHL2 line. Accepts exactly one trailing \\n, one trailing \\r\\n,
-    or no terminator. Any other trailing characters (a doubled terminator or a
-    lone \\r) stay in the line and are refused by the checks below.
-
-    The checksum is compared first, then the field count (7), the prefix
-    (WHL2), then each token. A WHL v1 line (6 fields) is refused by the field
-    count. Integer tokens are checked against an explicit pattern before int()
-    is called, so "1_0" and "+" alone are refused. A leading "+" on raw and
-    model is inherited from the single-wheel parser and is not decided
-    (CONTRACT.md S1, S8). Float tokens are checked for
-    whitespace and underscores, then float(), and must be finite. Every token
-    is refused above 20 characters before any conversion. raw_l and raw_r must
-    fit int32.
-
-    Raises:
-        WhlError: on any malformed, mis-checksummed or out-of-range line.
-    """
+    """Parse one WHL2 line into a Whl2, or raise WhlError."""
     if line.endswith("\r\n"):
         line = line[:-2]
     elif line.endswith("\n"):
@@ -323,11 +248,7 @@ def parse_line(line: str) -> Whl2:
 
 
 def split(w: Whl2) -> tuple[Whl, Whl]:
-    """Split a twin sample into (left, right) single-wheel samples.
-
-    seq, t_us, model_rad_s and state are shared. The left Whl takes raw_l and
-    the right Whl takes raw_r, both as written (no clamp, no sign change).
-    """
+    """Split a twin sample into (left, right) single-wheel samples."""
     left = Whl(seq=w.seq, t_us=w.t_us, model_rad_s=w.model_rad_s, raw=w.raw_l, state=w.state)
     right = Whl(seq=w.seq, t_us=w.t_us, model_rad_s=w.model_rad_s, raw=w.raw_r, state=w.state)
     return left, right
@@ -358,18 +279,7 @@ def step_lines(
     sign_r: int = -1,
     state: int = 0,
 ) -> Iterator[str]:
-    """
-    Yield WHL2 twin lines holding a constant model value for `seconds` at `rate_hz`.
-
-    Every line carries the same state (0, 1 or 2). seq counts up from start_seq
-    (taken mod 65536). t_us steps by round(1e6 / rate_hz) and wraps at 2^32 like
-    the device. A step below 1 us is refused (WhlError). model is value_rad_s
-    as given. raw is the value converted to raw units, clamped to +-RAW_CAP
-    before the sign is applied, then rounded. raw_l = sign_l * raw and
-    raw_r = sign_r * raw. The signs are SIM ONLY and UNCONFIRMED.
-    When realtime is True, each line is released against the injected clock
-    by sleeping with the injected sleep.
-    """
+    """Yield WHL2 twin lines holding a constant model value for a duration."""
     value = float(value_rad_s)
     if not math.isfinite(value):
         raise WhlError(f"step value must be finite, got {value_rad_s!r}")

@@ -1,53 +1,5 @@
 #!/usr/bin/env python3
-"""
-Headless twin fake of the Webots ctrl_wheels controller.
-
-SIM ONLY. Headless stand-in for the twin Webots controller at
-poc/ctrl-wheels/webots/controllers/ctrl_wheels/ctrl_wheels.py, which is the real
-counterpart. The controller and this fake both speak the v2 wire format
-(ctrl_wheels_udp.py); no run of this fake against the real controller is claimed. This file
-is not a Webots model and makes no physics claim. The wheel sign convention is
-UNCONFIRMED (CONTRACT.md S2) and the fake applies each wheel's command as given,
-so any sign belongs to the bridge. The model values (tau, dt, clamp, stale
-window) are guesses. For tests only. Nothing here validates a real wheel or a
-balance loop.
-
-Wire (CONTRACT.md S3, UDP v2, one compact JSON datagram per message):
-    cmd  in  on the command port (default 5018 in the real setup):
-         {"v":2,"cmd_seq":<int>,"wheels":{"left":<float>,"right":<float>},"stale":<0|1>}
-    echo out to echo_addr (default port 5017 in the real setup):
-         {"v":2,"cmd_seq_echo":<int or null>,"sim_t_s":<float>,
-          "left":{"angle_rad":<float>,"vel_rad_s":<float or null>},
-          "right":{"angle_rad":<float>,"vel_rad_s":<float or null>}}
-    Decoding and encoding go through ctrl_wheels_udp. A datagram that fails to
-    decode (including any v1 command) is skipped without a reply.
-
-Two independent first-order wheels, left and right. Each step (dt_s of sim time):
-    target = 0 if no command has been accepted yet, if the accepted command has
-             stale == 1, or if the sim age since it was accepted is at least
-             stale_s; otherwise the command for that wheel, limited to +-clamp.
-    velocity += (target - velocity) * (dt_s / (tau_s + dt_s))    first-order lag
-    angle    += velocity * dt_s
-    sim time += dt_s
-    vel_rad_s is the finite difference of angle, None on the first step (no
-    previous angle yet). CONTRACT.md S3 allows a null vel_rad_s; the first-step
-    null is this fake's choice.
-
-The stale window uses sim time on purpose, so tests are deterministic. CONTRACT.md
-S5 defines the age on the host clock, so this is a deliberate difference.
-
-Ports (CONTRACT.md S4): the reserved set is the literal set {5005, 5006, 5007,
-5008, 5017, 5018}. This module refuses to bind a reserved command port, and it
-refuses a reserved echo port in echo_addr. It must not be derived from a range.
-Ports must be ints in 0..65535. Port 0 (ephemeral) is meant for tests.
-The command port is unauthenticated, so host must be "127.0.0.1" or "localhost"
-(the default is 127.0.0.1); any other host raises ValueError before binding.
-
-Usage (run from poc/ctrl-wheels):
-    python3 -m pytest test_ctrl_wheels_fake.py -v
-
-step() is not thread-safe: drive it from one thread only.
-"""
+"""Headless twin fake of the Webots ctrl_wheels controller."""
 
 from __future__ import annotations
 
@@ -70,8 +22,7 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
 
 
 class FakeWheel:
-    """SIM ONLY headless twin ctrl_wheels stand-in. Applies each wheel's command as given; any sign
-    belongs to the bridge. Model values guessed."""
+    """Headless twin ctrl_wheels stand-in that applies each wheel command as given."""
 
     def __init__(
         self,
@@ -151,10 +102,7 @@ class FakeWheel:
         return max(-self._limit, min(self._limit, wheel_rad_s))
 
     def step(self) -> None:
-        """Advance one dt_s tick and send one echo. Never raises.
-
-        An echo can be dropped if the encode or send fails.
-        """
+        """Advance one dt_s tick and send one echo; never raises."""
         self._accept_commands()
         if self._stopped():
             target_l = 0.0

@@ -1,27 +1,5 @@
 #!/usr/bin/env python3
-"""
-Tests for the WHL2 twin step generator step_lines and the main CLI in
-ctrl_wheels_msg.
-
-SIM ONLY. These tests pin the WHL2 step generator (line format, counts, seq and
-t_us counters, raw mapping and clamp, pacing), its sign and state defaults, its
-refusals (WhlError for bad arguments) and the main() option handling.
-
-The chip raw signs are UNCONFIRMED. The sign_l=+1 and sign_r=-1 defaults pinned
-here are not verified against hardware (CONTRACT.md S2). The Webots +1/+1 direction
-was owner-observed on 2026-11-06 (sim only); this file does not test it.
-
-Expected values are written by hand from the contract and from _raw_for
-(rad/s * 60 / (2 pi) / 0.229, clamped to +-125, then rounded). They are not
-computed with the implementation.
-
-Pure Python, needs pytest. The module under test is a flat module in
-poc/ctrl-wheels and is imported by bare name.
-
-Usage:
-    cd poc/ctrl-wheels
-    python3 -m pytest test_ctrl_wheels_msg_steps.py -v
-"""
+"""Tests for the WHL2 step generator step_lines and the msg main CLI."""
 
 import sys
 from pathlib import Path

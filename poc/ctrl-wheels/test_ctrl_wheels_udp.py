@@ -1,41 +1,5 @@
 #!/usr/bin/env python3
-"""
-Unit tests for the UDP v2 JSON messages of the ctrl-wheels bridge (ctrl_wheels_udp).
-
-SIM ONLY. Tests for the UDP v2 messages of ctrl_wheels_udp: encoders, strict
-decoders, the loopback listener and the drain helper.
-
-What the suite pins: poc/ctrl-wheels/CONTRACT.md, section S3 (the v2 command
-and echo shapes, the exact-key-set rule at every level, the integer version
-tag v == 2, the +-3.0 clamp on the command wheels only, the nulls allowed in
-the echo, no explicit upper bound on cmd_seq) and section S4 (command port
-5018, echo port 5017, asserted as values). The literal reserved port set of S4
-belongs to the code that binds the ports, not to this module, so it is not
-tested here.
-
-CONTRACT.md S3 says only "JSON integer, 0 or more" and is silent on huge values.
-The refusal of an int past Python's int-to-text limit with UdpMsgError, on
-encode and on decode, is an implementation choice of ctrl_wheels_udp, pinned
-here; it is not a contract rule.
-
-Assumption: the four int-to-text tests size their inputs from
-sys.get_int_max_str_digits() at import time (limit + 1 digits). They are
-skipped when that limit is 0 (unlimited) or when the interpreter has no such
-limit. The default CPython limit is 4300 digits.
-
-Stdlib plus pytest. Tests bind only 127.0.0.1 port 0
-(ephemeral). The production ports are asserted as values and never bound.
-
-The golden byte literals in TestGolden are hand-written. They follow the key
-order of the contract and the float text that json.dumps produces for a Python
-float (repr, so 3.0 is written as "3.0" and 12.5 as "12.5"). They were not
-produced by running the implementation, so a wrong encoder cannot pass them by
-copying its own output.
-
-Usage:
-    cd poc/ctrl-wheels
-    python3 -m pytest test_ctrl_wheels_udp.py -v
-"""
+"""Unit tests for the UDP v2 JSON messages of the bridge."""
 
 import dataclasses
 import json

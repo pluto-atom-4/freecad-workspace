@@ -1,33 +1,5 @@
 #!/usr/bin/env python3
-"""
-Tests for the ctrl-wheels bridge command line (ctrl_wheels_bridge.main and
-build_parser), WHL2 twin form. These tests pin its contract.
-
-CLI contract pinned here:
-    exactly one of --port PORT / --stdin; --record CSV (required);
-    --overwrite; --sign-left {1,-1} (default 1); --sign-right {1,-1} (default 1);
-    --duration SECONDS (> 0);
-    --cmd-port N (default 5018); --echo-port N (default 5017);
-    --baud N (default 115200); --echo-timeout SECONDS (default 0.5).
---sign alone is refused: it is an ambiguous prefix of --sign-left and --sign-right.
---sign-left and --sign-right are bridge-side signs applied to the model velocity
-(Relay sign). They are not the chip raw signs of the generator ctrl_wheels_msg
-(--sign-left/--sign-right there default +1/-1). The bridge ignores the raw columns.
-The CLI never latches: a fresh state-0 line resumes after a stop.
-Parsed attribute names: port, stdin, record, overwrite, sign_left, sign_right,
-duration, cmd_port, echo_port, baud, echo_timeout.
-
-Ports: 5005-5008, 5017 and 5018 are never bound by a test. The CLI refuses only
-5006; the defaults 5017/5018 are accepted by its checks. Ports used in tests are
-ephemeral (bound to port 0, read back, closed). Refusal tests pass fixed
-non-reserved numbers because usage errors happen before any socket is bound.
-
-SIM ONLY. net direction with the bridge and Webots signs at +1/+1 owner-observed (2026-11-06, sim only); chip-side signs UNCONFIRMED; the model values are UNVERIFIED. Nothing
-here validates a real wheel, a balance loop or a serial device.
-
-Usage (run from poc/ctrl-wheels):
-    python3 -m pytest test_ctrl_wheels_bridge_cli.py -v
-"""
+"""Tests for the ctrl-wheels bridge command line (main and build_parser)."""
 
 from __future__ import annotations
 
@@ -221,8 +193,7 @@ def test_sign_other_than_plus_or_minus_one_refused(tmp_path, flag, text):
 
 
 def test_old_sign_flag_refused_as_ambiguous_prefix(tmp_path):
-    """--sign is a prefix of both --sign-left and --sign-right, so argparse abbreviation
-    matching refuses it as ambiguous; it is not a silent alias."""
+    """The old --sign flag is refused as an ambiguous prefix, not aliased."""
     record = tmp_path / "out.csv"
     _assert_usage_error(_argv(record, 40001, 40002, "--sign", "1"), record)
 
@@ -444,10 +415,7 @@ def test_stdin_end_to_end_logs_rows_and_summary(tmp_path, monkeypatch, capsys):
 @pytest.mark.parametrize("sign_right", [1, -1])
 @pytest.mark.parametrize("sign_left", [1, -1])
 def test_sign_flags_flip_each_echoed_wheel_velocity(tmp_path, pipe_stdin, sign_left, sign_right):
-    """--sign-left/--sign-right are bridge-side signs on the model velocity, SIM ONLY.
-    Chip-side signs UNCONFIRMED; net direction at +1/+1 owner-observed. The input uses the
-    generator's default raws (+1 left, -1 right); the bridge
-    ignores raw, so each echoed wheel follows its own sign flag alone."""
+    """Each sign flag flips only its own echoed wheel velocity."""
     record = tmp_path / "sign.csv"
     cmd_port, echo_port = _two_free_ports()
     wheel = FakeWheel(("127.0.0.1", echo_port), cmd_port=cmd_port)
@@ -644,9 +612,7 @@ def _reader_threads():
 
 
 def _sigint_when_reader_runs(cancel: threading.Event, seen: threading.Event) -> None:
-    """Wait (bounded, 3 s) until the bridge's line reader thread runs, set seen, pause a fixed
-    0.05 s and send SIGINT unless cancel is set. If the reader thread never appears, no SIGINT
-    is sent and seen stays unset, so the test fails (main then ends on its --duration)."""
+    """Send SIGINT once the bridge's line reader thread is running."""
     deadline = time.monotonic() + 3.0
     while time.monotonic() < deadline and not cancel.is_set():
         if _reader_threads():
@@ -661,9 +627,7 @@ def _sigint_when_reader_runs(cancel: threading.Event, seen: threading.Event) -> 
 
 
 def test_clean_ctrl_c_prints_nothing_after_the_summary(tmp_path, capsys):
-    """After a clean stop on a pyserial loop:// loopback source, the reader
-    thread's failed read must not log 'line source stopped' after the summary. The SIGINT lands
-    while the reader thread is live, so the port is closed mid-read."""
+    """A clean Ctrl-C stop logs nothing after the summary."""
     for i in range(8):
         for _ in range(300):
             if not _reader_threads():
@@ -700,8 +664,7 @@ def test_clean_ctrl_c_prints_nothing_after_the_summary(tmp_path, capsys):
 
 
 def test_midrun_source_failure_line_comes_before_the_summary(tmp_path, monkeypatch, capsys):
-    """A real mid-run source failure is still logged,
-    before the summary, and returns 2."""
+    """A mid-run source failure is logged before the summary and returns 2."""
     record = tmp_path / "midrun_fail.csv"
     cmd_port, echo_port = _two_free_ports()
 
